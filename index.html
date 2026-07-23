@@ -13907,36 +13907,62 @@ window.addEventListener('load', AdsDashboardApp.init);
 
   const requestApi = async (target, password, responseType = 'json') => {
     const path = normalizeApiTarget(target);
-    let response;
-    try {
-      response = await fetch(`${API_ORIGIN}${path}`, {
-        method: 'GET',
-        headers: { 'X-Dashboard-Password': password },
-        cache: 'no-store',
-      });
-    } catch (networkError) {
-      const error = new Error(`无法连接私有云接口：${networkError?.message || '网络错误'}`);
-      error.path = path;
-      throw error;
+    const maxAttempts = 4;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 240000);
+      try {
+        const response = await fetch(`${API_ORIGIN}${path}`, {
+          method: 'GET',
+          headers: { 'X-Dashboard-Password': password },
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        let payload = null;
+        if (responseType === 'json') {
+          try { payload = text ? JSON.parse(text) : null; } catch (_) {}
+        }
+        if (response.ok) {
+          clearTimeout(timeoutId);
+          return {
+            payload: responseType === 'json' ? payload : text,
+            response,
+            path,
+          };
+        }
+
+        const detail = payload?.error || text || `HTTP ${response.status}`;
+        const error = new Error(`${detail} · ${path}`);
+        error.status = response.status;
+        error.path = path;
+        lastError = error;
+        const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500;
+        if (!retryable || attempt >= maxAttempts) throw error;
+        const retryAfter = Number(response.headers.get('Retry-After') || 0);
+        await new Promise(resolve => setTimeout(resolve, retryAfter > 0 ? retryAfter * 1000 : 900 * (2 ** (attempt - 1))));
+      } catch (networkError) {
+        clearTimeout(timeoutId);
+        if (networkError?.status && networkError.status < 500 && networkError.status !== 408 && networkError.status !== 425 && networkError.status !== 429) {
+          throw networkError;
+        }
+        lastError = networkError;
+        if (attempt >= maxAttempts) break;
+        await new Promise(resolve => setTimeout(resolve, 900 * (2 ** (attempt - 1))));
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
 
-    const text = await response.text();
-    let payload = null;
-    if (responseType === 'json') {
-      try { payload = text ? JSON.parse(text) : null; } catch (_) {}
-    }
-    if (!response.ok) {
-      const detail = payload?.error || text || `HTTP ${response.status}`;
-      const error = new Error(`${detail} · ${path}`);
-      error.status = response.status;
-      error.path = path;
-      throw error;
-    }
-    return {
-      payload: responseType === 'json' ? payload : text,
-      response,
-      path,
-    };
+    const detail = lastError?.name === 'AbortError'
+      ? '单个文件请求超过 4 分钟'
+      : (lastError?.message || '网络错误');
+    const error = new Error(`无法连接私有云接口（已重试 ${maxAttempts} 次）：${detail}`);
+    error.status = lastError?.status;
+    error.path = path;
+    throw error;
   };
 
   const apiFetchJson = async (path, password) => (await requestApi(path, password, 'json')).payload;
@@ -14027,51 +14053,94 @@ window.addEventListener('load', AdsDashboardApp.init);
       state.manifest = manifest;
       sessionSafe.set(SESSION_KEY, password);
 
-      const csvFiles = [];
-      let fetchedRows = 0;
-      let redactedFiles = 0;
-      for (let index = 0; index < entries.length; index += 1) {
-        const entry = entries[index];
-        const label = `${displayScope(entry.storeId || scope)} · ${entry.month || entry.filename || index + 1}`;
-        setStatus(`正在下载 ${label}（${index + 1}/${entries.length}）…`);
-        const loaded = await fetchManifestEntry(entry, password, scope);
-        csvFiles.push(loaded.file);
-        fetchedRows += Number(loaded.rowCount || 0);
-        if (loaded.redacted) redactedFiles += 1;
-        await sleepFrame();
-      }
-
       const cloudImporter = window.__LR_IMPORT_MULTIPLE_FILES__;
       if (typeof cloudImporter !== 'function') {
         throw new Error('网页导入桥接未初始化，请强制刷新页面后重试');
       }
-
+      const directImporter = window.__LR_IMPORT_TRANSACTION_FILE__;
       const mergeSelect = byId('mergeMode');
       const previousMerge = mergeSelect?.value || 'append';
-      if (mergeSelect) mergeSelect.value = 'replace';
-      setStatus(`已下载 ${entries.length} 个文件，正在按 ${displayScope(scope)} 范围建立分析索引…`);
-      let importSummary = null;
+      const batchSize = 4;
+      const batchCount = Math.ceil(entries.length / batchSize);
+      let fetchedRows = 0;
+      let redactedFiles = 0;
+      let importedRows = 0;
+      let adsRows = 0;
+      let transactionRows = 0;
+      const quarantineItems = [];
+      let firstBatch = true;
+
       try {
-        importSummary = await cloudImporter(csvFiles);
+        for (let batchStart = 0; batchStart < entries.length; batchStart += batchSize) {
+          const batchNumber = Math.floor(batchStart / batchSize) + 1;
+          const batchEntries = entries.slice(batchStart, batchStart + batchSize);
+          const batchFiles = [];
+
+          for (let localIndex = 0; localIndex < batchEntries.length; localIndex += 1) {
+            const entry = batchEntries[localIndex];
+            const globalIndex = batchStart + localIndex;
+            const label = `${displayScope(entry.storeId || scope)} · ${entry.month || entry.filename || globalIndex + 1}`;
+            setStatus(`正在下载 ${label}（${globalIndex + 1}/${entries.length}）· 第 ${batchNumber}/${batchCount} 批…`);
+            try {
+              const loaded = await fetchManifestEntry(entry, password, scope);
+              batchFiles.push(loaded.file);
+              fetchedRows += Number(loaded.rowCount || 0);
+              if (loaded.redacted) redactedFiles += 1;
+            } catch (entryError) {
+              const filename = entry.filename || entry.url || `第 ${globalIndex + 1} 个文件`;
+              const wrapped = new Error(`${filename}（${globalIndex + 1}/${entries.length}）加载失败：${entryError?.message || entryError}`);
+              wrapped.status = entryError?.status;
+              wrapped.path = entryError?.path;
+              throw wrapped;
+            }
+            await sleepFrame();
+          }
+
+          if (mergeSelect) mergeSelect.value = firstBatch ? 'replace' : 'append';
+          setStatus(`已下载 ${batchStart + batchFiles.length}/${entries.length} 个文件，正在导入第 ${batchNumber}/${batchCount} 批并释放原始文件内存…`);
+          const summary = await cloudImporter(batchFiles);
+          let batchAccepted = Number(summary?.acceptedRows || 0);
+          const batchAds = Number(summary?.adsRows || 0);
+          let batchTransactions = Number(summary?.transactionRows || 0);
+          const batchExpectsAds = batchEntries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+          const batchExpectsTransactions = batchEntries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
+
+          if (batchExpectsTransactions && !batchTransactions) {
+            if (typeof directImporter !== 'function') throw new Error('联合交易专用导入桥接未初始化，请强制刷新页面');
+            for (let index = 0; index < batchEntries.length; index += 1) {
+              const dataType = String(batchEntries[index]?.dataType || '').toLowerCase().replace(/[^a-z]/g, '');
+              if (dataType !== 'transactions') continue;
+              const result = await directImporter(batchFiles[index]);
+              const rows = Number(result?.rows || 0);
+              batchTransactions += rows;
+              batchAccepted += rows;
+            }
+          }
+
+          if (Array.isArray(summary?.quarantine)) quarantineItems.push(...summary.quarantine);
+          const batchQuarantine = (summary?.quarantine || [])
+            .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
+            .slice(0, 3)
+            .join('；');
+          if ((batchExpectsAds && !batchAds) || (batchExpectsTransactions && !batchTransactions)) {
+            const missingType = batchExpectsAds && !batchAds ? '广告数据' : '联合交易数据';
+            throw new Error(`第 ${batchNumber}/${batchCount} 批未写入${missingType}${batchQuarantine ? `：${batchQuarantine}` : ''}`);
+          }
+
+          importedRows += batchAccepted;
+          adsRows += batchAds;
+          transactionRows += batchTransactions;
+          firstBatch = false;
+          batchFiles.length = 0;
+          await new Promise(resolve => setTimeout(resolve, 180));
+        }
       } finally {
         if (mergeSelect) mergeSelect.value = previousMerge;
       }
-      const importedRows = Number(importSummary?.acceptedRows || 0);
-      const adsRows = Number(importSummary?.adsRows || 0);
-      let transactionRows = Number(importSummary?.transactionRows || 0);
+
       const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
       const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
-      if (expectsTransactions && !transactionRows) {
-        const directImporter = window.__LR_IMPORT_TRANSACTION_FILE__;
-        if (typeof directImporter !== 'function') throw new Error('联合交易专用导入桥接未初始化，请强制刷新页面');
-        for (let index = 0; index < entries.length; index += 1) {
-          const dataType = String(entries[index]?.dataType || '').toLowerCase().replace(/[^a-z]/g, '');
-          if (dataType !== 'transactions') continue;
-          const result = await directImporter(csvFiles[index]);
-          transactionRows += Number(result?.rows || 0);
-        }
-      }
-      const quarantineText = (importSummary?.quarantine || [])
+      const quarantineText = quarantineItems
         .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
         .slice(0, 3)
         .join('；');
