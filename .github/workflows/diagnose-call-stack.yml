@@ -1,5 +1,5 @@
 name: Diagnose Import Call Stack
-# Trigger diagnostic after workflow creation
+# Extract import helpers and risky large-array operations
 
 on:
   push:
@@ -43,9 +43,13 @@ jobs:
                   out.append(f'{i}: {line}')
 
           anchors = [
-              'const importMultipleFiles', 'async function importMultipleFiles',
-              'function importMultipleFiles', 'window.__LR_IMPORT_MULTIPLE_FILES__',
-              'AdsStore.all', 'AdsStore.transactions', 'acceptedRows',
+              'const importMultipleFiles', 'window.__LR_IMPORT_MULTIPLE_FILES__',
+              'const appendArray', 'function appendArray',
+              'const dedupeRows', 'function dedupeRows',
+              'const processInChunks', 'function processInChunks',
+              'const compactArrayInPlace', 'function compactArrayInPlace',
+              'const dedupeByKeyInPlace', 'function dedupeByKeyInPlace',
+              'out.push(...kept)', 'item.rows.push(...',
           ]
           for anchor in anchors:
               out.append(f'\n=== anchor: {anchor} ===')
@@ -53,16 +57,22 @@ jobs:
               if not hits:
                   out.append('NOT FOUND')
                   continue
-              for hit in hits[:6]:
-                  start = max(0, hit - 35)
-                  end = min(len(lines), hit + 100)
+              for hit in hits[:8]:
+                  start = max(0, hit - 45)
+                  end = min(len(lines), hit + 120)
                   for index in range(start, end):
                       out.append(f'{index + 1}: {lines[index]}')
                   out.append('---')
 
+          out.append('\n=== fixed source slices ===')
+          for start, end in [(6460,6575),(7360,7460),(5980,6135)]:
+              out.append(f'--- source lines {start}-{end} ---')
+              for index in range(start - 1, min(end, len(lines))):
+                  out.append(f'{index + 1}: {lines[index]}')
+
           Path('.diagnostics').mkdir(exist_ok=True)
           Path('.diagnostics/call-stack-context.txt').write_text('\n'.join(out) + '\n', encoding='utf-8')
-          print('\n'.join(out[:300]))
+          print('\n'.join(out[:350]))
           PY
 
       - name: Commit diagnostic
@@ -71,6 +81,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .diagnostics/call-stack-context.txt
           if ! git diff --cached --quiet; then
-            git commit -m "Record import call stack diagnostic"
+            git commit -m "Expand import call stack diagnostic"
             git push
           fi
