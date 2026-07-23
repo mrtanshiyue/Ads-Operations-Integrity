@@ -1,0 +1,75 @@
+name: Diagnose Import Call Stack
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/diagnose-call-stack.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract risky import code
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('index.html')
+          text = path.read_text(encoding='utf-8')
+          lines = text.splitlines()
+          out = []
+
+          patterns = [
+              r'push\(\.\.\.', r'unshift\(\.\.\.', r'splice\([^\n]*\.\.\.',
+              r'Math\.(?:max|min)\(\.\.\.', r'Object\.assign\([^\n]*\.\.\.',
+              r'\.concat\(\.\.\.', r'Array\.from\(',
+          ]
+          combined = re.compile('|'.join(patterns))
+          out.append('=== risky spread / large-argument calls ===')
+          for i, line in enumerate(lines, 1):
+              if combined.search(line):
+                  out.append(f'{i}: {line}')
+
+          anchors = [
+              'const importMultipleFiles', 'async function importMultipleFiles',
+              'function importMultipleFiles', 'window.__LR_IMPORT_MULTIPLE_FILES__',
+              'AdsStore.all', 'AdsStore.transactions', 'acceptedRows',
+          ]
+          for anchor in anchors:
+              out.append(f'\n=== anchor: {anchor} ===')
+              hits = [i for i, line in enumerate(lines) if anchor in line]
+              if not hits:
+                  out.append('NOT FOUND')
+                  continue
+              for hit in hits[:6]:
+                  start = max(0, hit - 35)
+                  end = min(len(lines), hit + 100)
+                  for index in range(start, end):
+                      out.append(f'{index + 1}: {lines[index]}')
+                  out.append('---')
+
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/call-stack-context.txt').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          print('\n'.join(out[:300]))
+          PY
+
+      - name: Commit diagnostic
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .diagnostics/call-stack-context.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record import call stack diagnostic"
+            git push
+          fi
