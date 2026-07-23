@@ -1,5 +1,5 @@
 name: Deploy Ads Operations Integrity
-# Redeploy marker: private warehouse cloud loader V3
+# Redeploy marker: cloud CSV importer compatibility 2026-07-23
 
 on:
   push:
