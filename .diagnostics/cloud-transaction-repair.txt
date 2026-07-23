@@ -1,0 +1,7 @@
+PATCH robust transaction column map
+PATCH relaxed transaction detection
+PATCH filename-backed transaction detection
+PATCH transaction core-field validation
+PATCH embedded loader transaction acceptance check
+PATCH source loader transaction acceptance check
+SUCCESS
