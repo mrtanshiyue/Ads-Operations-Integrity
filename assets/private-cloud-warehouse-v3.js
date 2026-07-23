@@ -264,13 +264,23 @@
       }
       const importedRows = Number(importSummary?.acceptedRows || 0);
       const adsRows = Number(importSummary?.adsRows || 0);
-      const transactionRows = Number(importSummary?.transactionRows || 0);
+      let transactionRows = Number(importSummary?.transactionRows || 0);
+      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
+      if (expectsTransactions && !transactionRows) {
+        const directImporter = window.__LR_IMPORT_TRANSACTION_FILE__;
+        if (typeof directImporter !== 'function') throw new Error('联合交易专用导入桥接未初始化，请强制刷新页面');
+        for (let index = 0; index < entries.length; index += 1) {
+          const dataType = String(entries[index]?.dataType || '').toLowerCase().replace(/[^a-z]/g, '');
+          if (dataType !== 'transactions') continue;
+          const result = await directImporter(csvFiles[index]);
+          transactionRows += Number(result?.rows || 0);
+        }
+      }
       const quarantineText = (importSummary?.quarantine || [])
         .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
         .slice(0, 3)
         .join('；');
-      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
-      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
       if (!importedRows || (expectsAds && !adsRows) || (expectsTransactions && !transactionRows)) {
         const missingType = expectsAds && !adsRows ? '广告数据' : expectsTransactions && !transactionRows ? '联合交易数据' : '报表数据';
         throw new Error(`报表已下载，但网页分析库未写入${missingType}${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射与日期格式'}`);

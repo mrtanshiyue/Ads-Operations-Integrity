@@ -1,0 +1,4 @@
+PATCH direct transaction bridge
+PATCH embedded loader direct transaction fallback
+PATCH source loader direct transaction fallback
+SUCCESS
