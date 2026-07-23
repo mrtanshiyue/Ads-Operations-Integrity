@@ -30,12 +30,11 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 def patch_alias(text: str, key: str, anchor: str, additions: list[str]) -> str:
     pattern = re.compile(rf'({re.escape(key)}\s*:\s*\[)([^\]]*)(\])')
-    match = pattern.search(text)
+    matches = list(pattern.finditer(text))
+    match = next((candidate for candidate in matches if anchor in candidate.group(2)), None)
     if not match:
-        raise RuntimeError(f"Alias array not found: {key}")
+        raise RuntimeError(f"Alias array containing anchor not found for {key}: {anchor}; candidates={len(matches)}")
     body = match.group(2)
-    if anchor not in body:
-        raise RuntimeError(f"Alias anchor not found for {key}: {anchor}")
     missing = [value for value in additions if f'"{value}"' not in body]
     if not missing:
         note(f"OK already patched: alias {key}")
