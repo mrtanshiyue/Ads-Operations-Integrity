@@ -13818,6 +13818,7 @@ window.addEventListener('load', AdsDashboardApp.init);
     return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
   };
   const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');
+  const displayScope = value => window.ShopScope?.display?.(value) || (normalizeScope(value) === 'YTDBNS' ? 'YT' : normalizeScope(value));
 
   const setStatus = (message, kind = '') => {
     const el = byId('privateCloudImportStatus');
@@ -14011,7 +14012,7 @@ window.addEventListener('load', AdsDashboardApp.init);
 
     const scope = activeScope();
     try {
-      setStatus(`正在连接 Amazon-Data-Warehouse · ${scope}…`);
+      setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
       if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
@@ -14019,10 +14020,10 @@ window.addEventListener('load', AdsDashboardApp.init);
       }
       state.apiVersion = String(health.version || '3');
 
-      setStatus(`正在扫描 ${scope} 店铺文件清单…`);
+      setStatus(`正在扫描 ${displayScope(scope)} 店铺文件清单…`);
       const manifest = await apiFetchJson(`/manifest?scope=${encodeURIComponent(scope)}`, password);
       const entries = Array.isArray(manifest?.files) ? manifest.files.filter(isImportableEntry) : [];
-      if (!entries.length) throw new Error(`${scope} 当前没有可加载的广告、联合交易或业务报表`);
+      if (!entries.length) throw new Error(`${displayScope(scope)} 当前没有可加载的广告、联合交易或业务报表`);
       state.manifest = manifest;
       sessionSafe.set(SESSION_KEY, password);
 
@@ -14031,7 +14032,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       let redactedFiles = 0;
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
-        const label = `${entry.storeId || scope} · ${entry.month || entry.filename || index + 1}`;
+        const label = `${displayScope(entry.storeId || scope)} · ${entry.month || entry.filename || index + 1}`;
         setStatus(`正在下载 ${label}（${index + 1}/${entries.length}）…`);
         const loaded = await fetchManifestEntry(entry, password, scope);
         csvFiles.push(loaded.file);
@@ -14048,7 +14049,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       const mergeSelect = byId('mergeMode');
       const previousMerge = mergeSelect?.value || 'append';
       if (mergeSelect) mergeSelect.value = 'replace';
-      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      setStatus(`已下载 ${entries.length} 个文件，正在按 ${displayScope(scope)} 范围建立分析索引…`);
       let importSummary = null;
       try {
         importSummary = await cloudImporter(csvFiles);
@@ -14099,13 +14100,13 @@ window.addEventListener('load', AdsDashboardApp.init);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
-      const statusText = `${scope} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
+      const statusText = `${displayScope(scope)} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
       state.loadedOnce = true;
       state.loadedScope = scope;
       document.documentElement.dataset.loadedShopScope = scope;
       setStatus(statusText, costWarning ? 'warn' : 'good');
       const brand = byId('brandStatus');
-      if (brand) brand.textContent = `系统就绪 · ${scope} 私密仓库 ${totalRows.toLocaleString()} 行`;
+      if (brand) brand.textContent = `系统就绪 · ${displayScope(scope)} 私密仓库 ${totalRows.toLocaleString()} 行`;
       window.dispatchEvent(new CustomEvent('lr:cloud-loaded', {
         detail: { scope, files: entries.length, rows: totalRows, months, redactedFiles, apiVersion: state.apiVersion },
       }));
@@ -14131,17 +14132,17 @@ window.addEventListener('load', AdsDashboardApp.init);
     const scope = normalizeScope(event?.detail?.shop || activeScope());
     if (state.autoReloadTimer) clearTimeout(state.autoReloadTimer);
     if (!state.loadedOnce || !sessionSafe.get(SESSION_KEY)) {
-      setStatus(`已切换到 ${scope}；点击“加载私有云数据”读取该店铺`, 'warn');
+      setStatus(`已切换到 ${displayScope(scope)}；点击“加载私有云数据”读取该店铺`, 'warn');
       return;
     }
-    setStatus(`正在切换云端数据到 ${scope}…`);
+    setStatus(`正在切换云端数据到 ${displayScope(scope)}…`);
     state.autoReloadTimer = setTimeout(() => loadPrivateCloudData({ reason: 'shop-change' }), 220);
   };
 
   const init = () => {
     ensureUi();
     if (sessionSafe.get(SESSION_KEY)) {
-      setStatus(`已保存当前标签页会话密码；点击加载 ${activeScope()} 私密仓库数据`);
+      setStatus(`已保存当前标签页会话密码；点击加载 ${displayScope(activeScope())} 私密仓库数据`);
     }
     window.addEventListener('lr:shop-change', scheduleScopeReload);
     window.PrivateCloudAds = {
@@ -14239,7 +14240,8 @@ window.addEventListener('load', AdsDashboardApp.init);
 (() => {
   'use strict';
   const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);
-  const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
+  const SHOP_SHORT_LABELS = Object.freeze({ALL:'ALL',YTDBNS:'YT',YY:'YY',JJ:'JJ'});
+  const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YT 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
   const STORAGE_KEY = 'lr_active_shop_scope';
   const normalizeShop = value => {
     const shop = String(value || '').trim().toUpperCase();
@@ -14259,7 +14261,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       button.setAttribute('aria-checked', selected ? 'true' : 'false');
     });
     const hint = document.getElementById('activeShopHint');
-    if (hint) hint.textContent = `当前：${shop} · ${SHOP_LABELS[shop]}`;
+    if (hint) hint.textContent = `当前：${SHOP_SHORT_LABELS[shop]} · ${SHOP_LABELS[shop]}`;
     document.documentElement.dataset.activeShop = shop;
   };
 
@@ -14277,7 +14279,7 @@ window.addEventListener('load', AdsDashboardApp.init);
     }
     if (!options.silent && changed) {
       try {
-        if (typeof notify === 'function') notify(`分析店铺已切换为 ${next} · ${SHOP_LABELS[next]}`, 'good');
+        if (typeof notify === 'function') notify(`分析店铺已切换为 ${SHOP_SHORT_LABELS[next]} · ${SHOP_LABELS[next]}`, 'good');
       } catch (_) {}
     }
     return next;
@@ -14312,7 +14314,7 @@ window.addEventListener('load', AdsDashboardApp.init);
           <span id="activeShopHint"></span>
         </div>
         <div class="shopScopeSwitch" role="radiogroup" aria-label="分析店铺范围">
-          ${SHOPS.map(shop => `<button class="shopScopeButton" type="button" role="radio" data-shop="${shop}" aria-label="${SHOP_LABELS[shop]}">${shop}</button>`).join('')}
+          ${SHOPS.map(shop => `<button class="shopScopeButton" type="button" role="radio" data-shop="${shop}" aria-label="${SHOP_LABELS[shop]}">${SHOP_SHORT_LABELS[shop]}</button>`).join('')}
         </div>
       </div>
       <div class="privateCloudActions">
@@ -14347,9 +14349,11 @@ window.addEventListener('load', AdsDashboardApp.init);
     };
     tryMount();
     window.ShopScope = Object.freeze({
-      options: SHOPS,
-      labels: SHOP_LABELS,
-      get: () => activeShop,
+    options: SHOPS,
+    labels: SHOP_LABELS,
+    shortLabels: SHOP_SHORT_LABELS,
+    display: value => SHOP_SHORT_LABELS[normalizeShop(value)],
+    get: () => activeShop,
       set: value => setActiveShop(value, { source: 'api' })
     });
   };
