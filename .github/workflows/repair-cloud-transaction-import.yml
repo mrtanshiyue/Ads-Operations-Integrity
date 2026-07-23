@@ -1,0 +1,125 @@
+name: Repair Cloud Transaction Import
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-cloud-transaction-import.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Patch transaction import compatibility
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          index_path = Path('index.html')
+          asset_path = Path('assets/private-cloud-warehouse-v3.js')
+          index = index_path.read_text(encoding='utf-8')
+          asset = asset_path.read_text(encoding='utf-8')
+          log=[]
+
+          old = 'const buildTransactionMap=rows=>{const h=rows.length?Object.keys(rows[0]):[],m={};for(const k in TRANSACTION_MAP_ALIASES)m[k]=pickCol(h,TRANSACTION_MAP_ALIASES[k]);return m;};'
+          new = '''const buildTransactionMap=rows=>{\n  const h=rows.length?Object.keys(rows[0]):[],byCompact=new Map(h.map(col=>[cleanHeaderCompact(col),col])),m={};\n  for(const k in TRANSACTION_MAP_ALIASES){\n    m[k]=TRANSACTION_MAP_ALIASES[k].map(alias=>byCompact.get(cleanHeaderCompact(alias))).find(Boolean)||pickCol(h,TRANSACTION_MAP_ALIASES[k]);\n  }\n  return m;\n};'''
+          if old in index:
+              index=index.replace(old,new,1);log.append('PATCH robust transaction column map')
+          elif 'byCompact=new Map(h.map(col=>[cleanHeaderCompact(col),col]))' not in index:
+              raise SystemExit('buildTransactionMap anchor not found')
+
+          old = 'const isTransactionReport=(header=[])=>{const h=new Set(header.map(cleanHeaderCompact));return ["date/time","settlement id","type","product sales","selling fees","fba fees","total","transaction status"].every(x=>h.has(cleanHeaderCompact(x)));};'
+          new = 'const isTransactionReport=(header=[])=>{const h=new Set(header.map(cleanHeaderCompact));return ["date/time","type","product sales","total","transaction status"].every(x=>h.has(cleanHeaderCompact(x)));};'
+          if old in index:
+              index=index.replace(old,new,1);log.append('PATCH relaxed transaction detection')
+          elif '["date/time","type","product sales","total","transaction status"]' not in index:
+              raise SystemExit('isTransactionReport anchor not found')
+
+          old = 'const hasTransaction=isTransactionReport(header);'
+          new = 'const hasTransaction=isTransactionReport(header)||/(?:^|__)\\d{4}-\\d{2}-combined-report\\.csv$/i.test(sourceLabel);'
+          if old in index:
+              index=index.replace(old,new,1);log.append('PATCH filename-backed transaction detection')
+          elif 'combined-report\\.csv$/i.test(sourceLabel)' not in index:
+              raise SystemExit('hasTransaction anchor not found')
+
+          old = 'const missing=validateReportMap(type,map);'
+          new = 'const missing=type==="TRANSACTION_REPORT"?["postedAt","type","productSales","total","status"].filter(key=>!map[key]):validateReportMap(type,map);'
+          if old in index:
+              index=index.replace(old,new,1);log.append('PATCH transaction core-field validation')
+          elif 'type==="TRANSACTION_REPORT"?["postedAt","type","productSales","total","status"]' not in index:
+              raise SystemExit('validateReportMap anchor not found')
+
+          old_block = '''      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      if (!importedRows || (expectsAds && !adsRows)) {
+        throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
+      }'''
+          new_block = '''      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
+      if (!importedRows || (expectsAds && !adsRows) || (expectsTransactions && !transactionRows)) {
+        const missingType = expectsAds && !adsRows ? '广告数据' : expectsTransactions && !transactionRows ? '联合交易数据' : '报表数据';
+        throw new Error(`报表已下载，但网页分析库未写入${missingType}${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射与日期格式'}`);
+      }'''
+          for name, text in [('index embedded loader', index), ('loader source', asset)]:
+              if old_block in text:
+                  text=text.replace(old_block,new_block,1);log.append(f'PATCH transaction acceptance check: {name}')
+              elif 'const expectsTransactions =' not in text:
+                  raise SystemExit(f'cloud loader acceptance anchor not found: {name}')
+              if name.startswith('index'):
+                  index=text
+              else:
+                  asset=text
+
+          index_path.write_text(index,encoding='utf-8')
+          asset_path.write_text(asset,encoding='utf-8')
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/cloud-transaction-repair.txt').write_text('\n'.join(log)+'\nSUCCESS\n',encoding='utf-8')
+          print('\n'.join(log))
+          PY
+
+      - name: Validate inline JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False);self.active=False;self.buf=[];self.scripts=[]
+              def handle_starttag(self,tag,attrs):
+                  if tag.lower()!='script':return
+                  d={k.lower():(v or '') for k,v in attrs};self.active='src' not in d and d.get('type','').lower() in ('','text/javascript','application/javascript');self.buf=[]
+              def handle_endtag(self,tag):
+                  if tag.lower()=='script' and self.active:self.scripts.append(''.join(self.buf));self.active=False;self.buf=[]
+              def handle_data(self,data):
+                  if self.active:self.buf.append(data)
+          p=P();p.feed(Path('index.html').read_text(encoding='utf-8'));out=Path('.validate-tx');out.mkdir(exist_ok=True)
+          for i,s in enumerate(p.scripts,1):(out/f'{i:03d}.js').write_text(s,encoding='utf-8')
+          PY
+          find .validate-tx -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+          node --check assets/private-cloud-warehouse-v3.js
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/cloud-transaction-repair.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Repair private cloud transaction import"
+            git push
+          fi
+
+      - name: Dispatch Pages deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
