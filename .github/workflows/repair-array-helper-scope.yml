@@ -1,4 +1,5 @@
 name: Repair Array Helper Scope
+# Trigger after workflow creation
 
 on:
   push:
