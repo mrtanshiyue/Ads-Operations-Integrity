@@ -1,0 +1,39 @@
+name: Repair Attribution Stack Overflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-attribution-stack-overflow.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply and validate repair
+        run: python3 scripts/repair_attribution_stack_overflow.py
+
+      - name: Commit repaired page
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html .diagnostics/attribution-stack-repair.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Fix attribution split call stack overflow"
+            git push
+          fi
+
+      - name: Deploy updated page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
