@@ -1,0 +1,119 @@
+name: Deploy Ads Operations Integrity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - index.html
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Prepare static site
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('index.html')
+          if not source.exists() or source.stat().st_size < 1000:
+              raise SystemExit('index.html is missing or unexpectedly small')
+
+          data = source.read_bytes()
+          fixes = (
+              (b"newline: '\r\n'", b"newline: '\\r\\n'"),
+              (b"newline: '\n'", b"newline: '\\r\\n'"),
+          )
+          applied = 0
+          for broken, corrected in fixes:
+              count = data.count(broken)
+              if count:
+                  data = data.replace(broken, corrected)
+                  applied += count
+
+          output = Path('_site')
+          output.mkdir(exist_ok=True)
+          (output / 'index.html').write_bytes(data)
+          (output / '.nojekyll').write_text('', encoding='utf-8')
+          print(f'Prepared {len(data):,} bytes; repaired {applied} broken newline literal(s)')
+          PY
+
+      - name: Extract inline JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          class ScriptExtractor(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False)
+                  self.active = False
+                  self.current = []
+                  self.scripts = []
+
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() != 'script':
+                      return
+                  values = {k.lower(): (v or '') for k, v in attrs}
+                  script_type = values.get('type', '').lower()
+                  self.active = 'src' not in values and script_type in ('', 'text/javascript', 'application/javascript')
+                  self.current = []
+
+              def handle_endtag(self, tag):
+                  if tag.lower() == 'script' and self.active:
+                      self.scripts.append(''.join(self.current))
+                      self.active = False
+                      self.current = []
+
+              def handle_data(self, data):
+                  if self.active:
+                      self.current.append(data)
+
+          html = Path('_site/index.html').read_text(encoding='utf-8')
+          parser = ScriptExtractor()
+          parser.feed(html)
+          target = Path('.validate')
+          target.mkdir(exist_ok=True)
+          for index, script in enumerate(parser.scripts, 1):
+              (target / f'inline-{index:03d}.js').write_text(script, encoding='utf-8')
+          print(f'Extracted {len(parser.scripts)} inline script(s)')
+          PY
+
+      - name: Validate JavaScript syntax
+        shell: bash
+        run: find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
