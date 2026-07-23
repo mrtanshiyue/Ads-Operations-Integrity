@@ -1,5 +1,5 @@
 name: Diagnose Import Call Stack
-# Extract import helpers and risky large-array operations
+# Extract compact hotspots around large-array operations
 
 on:
   push:
@@ -20,67 +20,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract risky import code
+      - name: Extract compact hotspots
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
-          path = Path('index.html')
-          text = path.read_text(encoding='utf-8')
-          lines = text.splitlines()
+          lines = Path('index.html').read_text(encoding='utf-8').splitlines()
           out = []
-
-          patterns = [
-              r'push\(\.\.\.', r'unshift\(\.\.\.', r'splice\([^\n]*\.\.\.',
-              r'Math\.(?:max|min)\(\.\.\.', r'Object\.assign\([^\n]*\.\.\.',
-              r'\.concat\(\.\.\.', r'Array\.from\(',
-          ]
-          combined = re.compile('|'.join(patterns))
-          out.append('=== risky spread / large-argument calls ===')
-          for i, line in enumerate(lines, 1):
-              if combined.search(line):
-                  out.append(f'{i}: {line}')
-
-          anchors = [
-              'const importMultipleFiles', 'window.__LR_IMPORT_MULTIPLE_FILES__',
-              'const appendArray', 'function appendArray',
-              'const dedupeRows', 'function dedupeRows',
-              'const processInChunks', 'function processInChunks',
-              'const compactArrayInPlace', 'function compactArrayInPlace',
-              'const dedupeByKeyInPlace', 'function dedupeByKeyInPlace',
-              'out.push(...kept)', 'item.rows.push(...',
-          ]
-          for anchor in anchors:
-              out.append(f'\n=== anchor: {anchor} ===')
-              hits = [i for i, line in enumerate(lines) if anchor in line]
-              if not hits:
-                  out.append('NOT FOUND')
-                  continue
-              for hit in hits[:8]:
-                  start = max(0, hit - 45)
-                  end = min(len(lines), hit + 120)
-                  for index in range(start, end):
-                      out.append(f'{index + 1}: {lines[index]}')
-                  out.append('---')
-
-          out.append('\n=== fixed source slices ===')
-          for start, end in [(6460,6575),(7360,7460),(5980,6135)]:
-              out.append(f'--- source lines {start}-{end} ---')
+          for start, end in [(6460,6575),(7380,7450),(13970,14140),(4688,4735),(6020,6135)]:
+              out.append(f'=== source lines {start}-{end} ===')
               for index in range(start - 1, min(end, len(lines))):
                   out.append(f'{index + 1}: {lines[index]}')
-
+              out.append('')
           Path('.diagnostics').mkdir(exist_ok=True)
-          Path('.diagnostics/call-stack-context.txt').write_text('\n'.join(out) + '\n', encoding='utf-8')
-          print('\n'.join(out[:350]))
+          Path('.diagnostics/call-stack-hotspots.txt').write_text('\n'.join(out) + '\n', encoding='utf-8')
+          print('\n'.join(out))
           PY
 
       - name: Commit diagnostic
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .diagnostics/call-stack-context.txt
+          git add .diagnostics/call-stack-hotspots.txt
           if ! git diff --cached --quiet; then
-            git commit -m "Expand import call stack diagnostic"
+            git commit -m "Record compact import call stack hotspots"
             git push
           fi
