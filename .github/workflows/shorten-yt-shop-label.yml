@@ -21,19 +21,33 @@ jobs:
           fetch-depth: 0
 
       - name: Apply YT display label patch
-        run: python3 scripts/shorten_yt_shop_label.py
+        id: apply
+        continue-on-error: true
+        run: |
+          mkdir -p .diagnostics
+          set +e
+          python3 scripts/shorten_yt_shop_label.py > .diagnostics/yt-shop-label-run.log 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat .diagnostics/yt-shop-label-run.log
+          exit 0
 
-      - name: Commit patched files
+      - name: Commit patch and diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html assets/private-cloud-warehouse-v3.js .github/workflows/patch-shop-scope-ui.yml .diagnostics/yt-shop-label-patch.txt
+          git add index.html assets/private-cloud-warehouse-v3.js .github/workflows/patch-shop-scope-ui.yml .diagnostics/yt-shop-label-patch.txt .diagnostics/yt-shop-label-run.log 2>/dev/null || true
           if ! git diff --cached --quiet; then
-            git commit -m "Display YT instead of YTDBNS in shop UI"
+            git commit -m "Record YT shop label patch result"
             git push
           fi
 
+      - name: Fail when patch failed
+        if: steps.apply.outputs.exit_code != '0'
+        run: exit 1
+
       - name: Deploy updated page
+        if: steps.apply.outputs.exit_code == '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --ref main
