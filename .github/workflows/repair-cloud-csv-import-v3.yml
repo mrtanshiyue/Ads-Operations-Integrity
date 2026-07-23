@@ -22,51 +22,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Harden alias lookup
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('scripts/repair_cloud_csv_import_v4.py')
-          text = path.read_text(encoding='utf-8')
-          old = '''def patch_alias(text: str, key: str, anchor: str, additions: list[str]) -> str:
-    pattern = re.compile(rf'({re.escape(key)}\\s*:\\s*\\[)([^\\]]*)(\\])')
-    match = pattern.search(text)
-    if not match:
-        raise RuntimeError(f"Alias array not found: {key}")
-    body = match.group(2)
-    if anchor not in body:
-        raise RuntimeError(f"Alias anchor not found for {key}: {anchor}")
-    missing = [value for value in additions if f'"{value}"' not in body]
-    if not missing:
-        note(f"OK already patched: alias {key}")
-        return text
-    insertion = "".join(f'"{value}",' for value in missing)
-    patched_body = body.replace(f'"{anchor}",', f'"{anchor}",{insertion}', 1)
-    note(f"PATCH: alias {key} += {', '.join(missing)}")
-    return text[: match.start(2)] + patched_body + text[match.end(2) :]
-'''
-          new = '''def patch_alias(text: str, key: str, anchor: str, additions: list[str]) -> str:
-    pattern = re.compile(rf'({re.escape(key)}\\s*:\\s*\\[)([^\\]]*)(\\])')
-    matches = list(pattern.finditer(text))
-    match = next((candidate for candidate in matches if anchor in candidate.group(2)), None)
-    if not match:
-        raise RuntimeError(f"Alias array containing anchor not found for {key}: {anchor}; candidates={len(matches)}")
-    body = match.group(2)
-    missing = [value for value in additions if f'"{value}"' not in body]
-    if not missing:
-        note(f"OK already patched: alias {key}")
-        return text
-    insertion = "".join(f'"{value}",' for value in missing)
-    patched_body = body.replace(f'"{anchor}",', f'"{anchor}",{insertion}', 1)
-    note(f"PATCH: alias {key} += {', '.join(missing)}")
-    return text[: match.start(2)] + patched_body + text[match.end(2) :]
-'''
-          if new not in text:
-              if old not in text:
-                  raise SystemExit('patch_alias source block not found')
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
-          PY
-
       - name: Repair cloud CSV importer
         id: repair
         continue-on-error: true
@@ -77,13 +32,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add scripts/repair_cloud_csv_import_v4.py index.html assets/private-cloud-warehouse-v3.js .diagnostics/repair-cloud-csv-v4.log
+          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/repair-cloud-csv-v4.log
           git diff --cached --quiet || git commit -m "Repair cloud CSV importer compatibility"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
 
-      - name: Report repair failure
-        if: steps.repair.outcome == 'failure'
+      - name: Report repair result
+        if: always()
         run: |
-          echo "Cloud CSV repair failed. Diagnostic log was committed."
-          cat .diagnostics/repair-cloud-csv-v4.log
-          exit 1
+          cat .diagnostics/repair-cloud-csv-v4.log || true
+          test "${{ steps.repair.outcome }}" = "success"
