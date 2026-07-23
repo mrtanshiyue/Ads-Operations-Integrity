@@ -1,0 +1,48 @@
+name: Extract Transaction Parser
+
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-transaction-parser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract transaction and date parser code
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines=Path('index.html').read_text(encoding='utf-8').splitlines()
+          terms=['TRANSACTION_MAP_ALIASES','buildTransactionMap','isTransactionReport','normalizeTransactionRow','const toISODate','function toISODate','const buildMap','MAP_ALIASES','validateReportMap']
+          hits=[]
+          for term in terms:
+              for i,line in enumerate(lines):
+                  if term.lower() in line.lower(): hits.append((term,i))
+          ranges=[]
+          for term,i in sorted(hits,key=lambda x:x[1]):
+              start=max(0,i-50);end=min(len(lines),i+100)
+              if ranges and start<=ranges[-1][2]+10:
+                  ranges[-1]=(ranges[-1][0],ranges[-1][1],max(ranges[-1][2],end),ranges[-1][3]+[term])
+              else:ranges.append((i,start,end,[term]))
+          out=[]
+          for n,(hit,start,end,terms2) in enumerate(ranges,1):
+              out.append(f'===== BLOCK {n} HIT=L{hit+1} TERMS={terms2} RANGE=L{start+1}-L{end} =====')
+              out.extend(f'{j+1:05d}: {lines[j]}' for j in range(start,end))
+              out.append('')
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/transaction-parser.txt').write_text('\n'.join(out),encoding='utf-8')
+          print(hits)
+          PY
+      - name: Commit extract
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .diagnostics/transaction-parser.txt
+          git diff --cached --quiet || git commit -m "Extract transaction parser context"
+          git push
