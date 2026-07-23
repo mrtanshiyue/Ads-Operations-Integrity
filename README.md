@@ -1,121 +1,118 @@
 # Ads Operations Integrity
 
-亚马逊广告运营、经营分析与执行决策工作台。项目采用单页静态应用架构，通过 GitHub Pages 发布，并通过受保护的 Cloudflare Worker 连接私密数据仓库。
+A browser-based Amazon advertising operations, business analytics, and decision-support workspace.
 
-> 当前页面版本：`V61.5.4.7`  
-> 在线地址：<https://mrtanshiyue.github.io/Ads-Operations-Integrity/>
+The application is delivered as a static single-page site through GitHub Pages. Protected business data remains in a separate private repository and is accessed through an authenticated Cloudflare Worker.
 
-## 项目定位
+> Application version: `V61.5.4.7`  
+> Live application: <https://mrtanshiyue.github.io/Ads-Operations-Integrity/>
 
-本项目用于将亚马逊广告报表、联合交易报表和业务报表统一导入同一个分析工作区，完成数据治理、经营联动、广告决策、归因成熟度判断和交易财务分析。
+## Overview
 
-主要目标：
+Ads Operations Integrity consolidates advertising reports, transaction reports, and business reports into one analytical workspace.
 
-- 统一广告、交易和经营数据口径
-- 支持多月份、大批量报表加载
-- 按店铺隔离分析范围
-- 将数据导入、治理、分析和执行建议形成闭环
-- 保持前端公开代码与私密业务数据严格分离
+The project is designed to:
 
-## 核心能力
+- Standardize advertising, transaction, and business metrics
+- Support multi-month and high-volume report imports
+- Isolate analytical data by store scope
+- Connect data ingestion, governance, analysis, and execution planning
+- Keep public application code separate from private operational data
 
-### 数据导入与治理
+## Core Capabilities
 
-- 本地 CSV、XLSX、XLS 文件导入
-- 私有云批量加载
-- 广告报表、联合交易报表、业务报表识别
-- 字段归一化、日期标准化、数据去重和异常隔离
-- 文件级导入状态与错误中心
-- 大数据量分批下载和延迟汇总
+### Data ingestion and governance
 
-### 广告运营分析
+- Local CSV, XLSX, and XLS imports
+- Authenticated private-cloud loading
+- Advertising, transaction, and business report detection
+- Header normalization and date standardization
+- Duplicate detection and row quarantine
+- File-level import diagnostics
+- Batched downloads and deferred finalization for large datasets
 
-- 广告组合、Campaign、Ad Group、Targeting、Search Term 多层筛选
-- 成熟归因与归因中数据拆分
-- ACOS、ROAS、CPC、CTR、CVR、订单和销售额分析
-- 关键词、搜索词、词根和长尾机会分析
-- 出价治理、否定词治理和执行建议
-- 广告结构索引与执行门禁
+### Advertising operations
 
-### 经营与财务分析
+- Portfolio, campaign, ad group, targeting, and search-term filtering
+- Mature-attribution and pending-attribution separation
+- ACOS, ROAS, CPC, CTR, CVR, order, and sales analysis
+- Keyword, search-term, root-term, and long-tail analysis
+- Bid governance and negative-targeting recommendations
+- Advertising structure indexing and execution controls
 
-- 经营大盘与联动趋势
-- 广告销售和交易销售交叉验证
-- 退款、费用、结算和经营损益分析
-- 交易财务报表
-- 商品成本库接入
-- 真实经营费用和利润口径补充
+### Business and financial analysis
 
-### 多店铺范围
+- Executive business overview
+- Advertising-sales and transaction-sales reconciliation
+- Refund, fee, settlement, and operating-profit analysis
+- Transaction finance reporting
+- Product cost integration
+- Actual operating-cost and profit adjustments
 
-界面支持以下分析范围：
+### Multi-store analysis
 
-| 界面名称 | 内部代码 | 说明 |
-|---|---|---|
-| ALL | `ALL` | 全部店铺 |
-| YT | `YTDBNS` | 界面简写为 YT，内部代码保持不变 |
-| YY | `YY` | YY 店铺 |
-| JJ | `JJ` | JJ 店铺 |
+The interface supports an aggregate scope and individual store scopes.
 
-`YTDBNS` 仅作为内部数据范围代码使用。不要直接修改仓库目录、Worker 参数或数据清单中的内部代码。
+Store display labels and internal store identifiers are intentionally not documented in this public repository. Internal identifiers must remain consistent across:
 
-## 系统架构
+- The private warehouse directory structure
+- Cloudflare Worker configuration
+- Manifest responses
+- Front-end scope mapping
+
+Do not rename internal store identifiers without updating the complete data pipeline.
+
+## Architecture
 
 ```text
-浏览器 / GitHub Pages
+Browser / GitHub Pages
         │
-        │ HTTPS + X-Dashboard-Password
+        │ HTTPS + authenticated request header
         ▼
 Cloudflare Worker
         │
-        │ GitHub API + 私密访问令牌
+        │ GitHub API + private repository token
         ▼
-Amazon-Data-Warehouse（私密仓库）
+Private Data Warehouse
         │
-        ├─ raw/YTDBNS/
-        ├─ raw/YY/
-        └─ raw/JJ/
+        ├─ raw/<STORE_CODE>/
+        ├─ raw/<STORE_CODE>/
+        └─ raw/<STORE_CODE>/
 ```
 
-### 仓库边界
+### Repository boundary
 
-| 仓库 | 可见性 | 用途 |
+| Repository type | Visibility | Purpose |
 |---|---|---|
-| `Ads-Operations-Integrity` | Public | 前端应用、部署配置和维护脚本 |
-| `Amazon-Data-Warehouse` | Private | 亚马逊广告、交易和业务原始报表 |
+| Application repository | Public | Front-end application, deployment configuration, and maintenance utilities |
+| Data warehouse repository | Private | Raw advertising, transaction, and business reports |
 
-业务报表、订单数据、访问密码、GitHub Token 和 Cloudflare Token 不得提交到本仓库。
+Never commit business reports, order records, passwords, GitHub tokens, or Cloudflare credentials to this public repository.
 
-## 私有云加载流程
+## Private-Cloud Loading Pipeline
 
-当前私有云接口：
+The current loading process is designed for large multi-file datasets:
 
-```text
-https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev
-```
+1. The browser performs a Worker health check
+2. The Worker returns a dynamic manifest for the active store scope
+3. Files are downloaded in batches of four
+4. Standard advertising reports are streamed through the Worker
+5. Transaction reports are sanitized before being returned to the browser
+6. Intermediate batches are parsed and appended without full recalculation
+7. The final batch performs deduplication, indexing, aggregation, filtering, and rendering
+8. Business and transaction-finance modules are updated after finalization
 
-加载流程：
+The access password is stored only in the current browser tab through `sessionStorage`.
 
-1. 网页执行 Worker 健康检查
-2. 按当前店铺请求动态文件清单
-3. 每 4 个文件作为一个下载批次
-4. 普通广告报表由 Worker 流式透传
-5. 联合交易报表在 Worker 中删除敏感地址字段，并对订单标识进行不可逆伪匿名化
-6. 前面批次只解析和追加数据
-7. 最后一个批次统一执行去重、索引、聚合、筛选和渲染
-8. 完成后更新经营分析和交易财务报表
+## Data File Convention
 
-网页登录密码只保存在当前标签页的 `sessionStorage` 中，关闭标签页后不会长期保留。
-
-## 数据文件规范
-
-私密仓库中的文件路径：
+Files in the private warehouse must follow this path format:
 
 ```text
 raw/<STORE_CODE>/<YYYY-MM>-<REPORT_TYPE>.csv
 ```
 
-常用文件名：
+Supported examples:
 
 ```text
 2026-06-advertising-report.csv
@@ -128,34 +125,41 @@ raw/<STORE_CODE>/<YYYY-MM>-<REPORT_TYPE>.csv
 2026-06-ads-placement.csv
 ```
 
-必须遵守：
+Requirements:
 
-- 月份使用 `YYYY-MM`
-- 文件扩展名使用 `.csv` 或 `.tsv`
-- 不要写成 `combined-reportcsv.csv`
-- 文件名不得包含临时后缀、重复扩展名或未注册报表类型
-- 店铺目录必须使用内部代码，例如 `raw/YTDBNS/`
+- Use `YYYY-MM` for the reporting month
+- Use `.csv` or `.tsv` as the file extension
+- Do not use duplicate extensions
+- Do not add temporary suffixes to production files
+- Use only registered report-type names
+- Use the configured internal store identifier for the directory name
 
-## 在线使用
+Invalid example:
 
-打开：
+```text
+2026-06-combined-reportcsv.csv
+```
+
+## Online Usage
+
+Open the application:
 
 <https://mrtanshiyue.github.io/Ads-Operations-Integrity/>
 
-基本步骤：
+Typical workflow:
 
-1. 选择店铺范围
-2. 点击“加载私有云数据”
-3. 输入私密仓库网页登录密码
-4. 等待所有批次完成
-5. 使用左侧日期和业务筛选条件
-6. 查看经营、广告和交易财务模块
+1. Select an analysis scope
+2. Click **Load Private Cloud Data**
+3. Enter the private warehouse access password
+4. Wait for all download and import batches to finish
+5. Apply date and business filters
+6. Review advertising, business, and transaction-finance modules
 
-大量报表加载期间不要刷新页面、切换店铺或让电脑进入休眠。
+Do not refresh the page, switch scopes, or allow the computer to sleep during a large import.
 
-## 本地运行
+## Local Development
 
-项目是静态单页应用，不需要构建框架。
+The project is a static single-page application and does not require a front-end build framework.
 
 ```bash
 git clone https://github.com/mrtanshiyue/Ads-Operations-Integrity.git
@@ -163,101 +167,105 @@ cd Ads-Operations-Integrity
 python3 -m http.server 8000
 ```
 
-打开：
+Open:
 
 ```text
 http://localhost:8000
 ```
 
-Worker 的允许来源中需包含本地地址，才能在本地测试私有云连接。
+The local origin must be included in the Worker allowlist before private-cloud access can be tested locally.
 
-## GitHub Pages 部署
+## GitHub Pages Deployment
 
-主部署工作流：
+Primary deployment workflow:
 
 ```text
 .github/workflows/pages.yml
 ```
 
-部署规则：
+Deployment rules:
 
-- `main` 是维护源分支
-- 修改 `index.html` 会触发 GitHub Pages 部署
-- 发布前自动提取并检查所有内联 JavaScript 语法
-- `gh-pages` 是自动生成的发布分支
-- 不要直接手工修改 `gh-pages`
+- `main` is the source branch
+- Changes to `index.html` trigger the deployment workflow
+- Inline JavaScript is extracted and syntax-checked before publication
+- `gh-pages` is an automatically generated deployment branch
+- Do not edit `gh-pages` manually
 
-`README.md` 更新不会改变线上应用代码，因此不需要单独重新部署页面。
+Updating `README.md` does not change the deployed application.
 
-## 关键文件
+## Key Files
 
 ```text
 index.html
-├─ 页面结构
-├─ 数据导入与归一化
-├─ 广告与经营分析引擎
-├─ 交易财务报表
-└─ 前端状态与渲染逻辑
+├─ Application layout and interface
+├─ Data parsing and normalization
+├─ Advertising and business analysis engines
+├─ Transaction finance reporting
+└─ Front-end state and rendering logic
 
 assets/private-cloud-warehouse-v3.js
-└─ 私有云连接、批量下载、重试和店铺切换逻辑
+└─ Private-cloud connection, batching, retry, and scope-loading logic
 
 .github/workflows/pages.yml
-└─ GitHub Pages 校验和发布
+└─ GitHub Pages validation and deployment
 
 scripts/
-└─ 定向修复、诊断和维护脚本
+└─ Targeted diagnostics, repairs, and maintenance utilities
 ```
 
-## 大数据量处理原则
+## Large-Dataset Design Rules
 
-当前实现已针对多月份、大文件和高行数报表进行处理：
+The current implementation includes safeguards for large files and high row counts:
 
-- 普通广告 CSV 通过 Worker 流式传输
-- 单文件失败最多自动重试 4 次
-- 单次文件请求超时为 4 分钟
-- 下载完成后立即释放批次原始文件内存
-- 中间批次不重复执行全量分析
-- 最大值、最小值和数组合并使用迭代方式，禁止对超大数组使用参数展开
+- Standard advertising CSV files are streamed through the Worker
+- A failed file request is retried up to four times
+- The per-file request timeout is four minutes
+- Raw batch files are released after import
+- Intermediate batches do not repeat full analysis
+- Maximum, minimum, and append operations use iterative processing
+- Attribution windows are calculated in a single pass
 
-维护代码时避免以下写法：
+Avoid large-array argument expansion:
 
 ```javascript
-Math.max(...largeArray)
-target.push(...largeArray)
+Math.max(...largeArray);
+target.push(...largeArray);
 ```
 
-应使用循环、分块处理或安全辅助函数。
+Use iteration, chunking, or safe helper functions instead.
 
-## 故障排查
+## Troubleshooting
 
-### 页面仍显示旧版本
+### The browser still shows an older version
 
-关闭旧标签页后重新打开，或临时使用缓存破除参数：
+Close the existing tab and reopen the application, or temporarily add a cache-busting query parameter:
 
 ```text
 https://mrtanshiyue.github.io/Ads-Operations-Integrity/?v=YYYYMMDD-01
 ```
 
-也可以执行强制刷新：
+Force refresh:
 
-- Windows：`Ctrl + Shift + R`
-- macOS：`Command + Shift + R`
+- Windows: `Ctrl + Shift + R`
+- macOS: `Command + Shift + R`
 
 ### `Failed to fetch`
 
-依次检查：
+Check the following:
 
-1. Cloudflare Worker 是否部署成功
-2. Worker 健康检查是否可访问
-3. `WAREHOUSE_GITHUB_TOKEN` 是否有效
-4. 当前网页来源是否在 Worker 允许列表
-5. 私密仓库文件名是否符合规范
-6. GitHub Actions 是否存在校验或部署失败
+1. The Cloudflare Worker deployment completed successfully
+2. The Worker health endpoint is reachable
+3. The private repository token is valid
+4. The browser origin is allowed by Worker CORS rules
+5. Warehouse filenames follow the required convention
+6. Repository validation and deployment Actions have not failed
+7. Large non-sensitive reports are using the streaming response path
 
 ### `Maximum call stack size exceeded`
 
-通常表示某处对大数组使用了展开参数，或在导入期间重复执行全量计算。错误状态区会显示具体阶段和调用栈，应根据阶段定位：
+This normally indicates that a large array was expanded into function arguments or that full analysis was repeatedly executed during batch loading.
+
+The import error panel reports the active stage, such as:
 
 ```text
 batch-appended
@@ -267,40 +275,48 @@ apply-filters
 render-transactions
 ```
 
-### 模块空白或 `... is not defined`
+Use the reported stage and stack trace to locate the exact function.
 
-查看右下角“页面运行”错误提示。此类问题通常是辅助函数作用域或运行时依赖错误，不能只依赖 `node --check`，还需要检查实际调用链和作用域。
+### A module is blank or reports `... is not defined`
 
-## 安全要求
+Check the runtime error indicator in the lower-right corner.
 
-- 不在前端代码中保存任何 GitHub Token 或 Cloudflare Token
-- 不在公开仓库中保存原始订单数据
-- 不在 README、Issue、Commit 或日志中粘贴密码
-- 联合交易报表必须通过 Worker 脱敏后再返回浏览器
-- Worker 密钥使用 GitHub Actions Secrets 和 Cloudflare Secrets 管理
-- 修改 CORS、鉴权或数据范围逻辑时必须进行回归测试
+These failures are often caused by helper-function scope errors or missing runtime dependencies. `node --check` validates syntax only; it does not verify browser execution scope.
 
-## 维护约定
+## Security Requirements
 
-提交前至少完成：
+- Never store GitHub or Cloudflare tokens in front-end code
+- Never commit raw order records to the public repository
+- Never paste passwords into README files, Issues, commits, or logs
+- Transaction reports must be sanitized before browser delivery
+- Sensitive address fields must be removed
+- Order and settlement identifiers must be pseudonymized
+- Secrets must be managed through GitHub Actions Secrets and Cloudflare Secrets
+- CORS, authentication, and scope changes require regression testing
+- Store display names and internal identifiers must not be documented publicly
+
+## Maintenance Checklist
+
+Before releasing a code change, verify:
 
 ```text
-1. JavaScript 语法检查
-2. 私有云加载回归测试
-3. 大数组展开调用检查
-4. 店铺范围与内部代码检查
-5. 交易财务报表运行时检查
-6. main 与 gh-pages 发布版本确认
+1. Inline JavaScript syntax validation
+2. Private-cloud loading regression test
+3. Large-array expansion scan
+4. Scope isolation and manifest consistency
+5. Transaction finance report runtime test
+6. Worker streaming and sanitization tests
+7. main and gh-pages deployment consistency
 ```
 
-提交信息应明确描述修改对象，例如：
+Commit messages should identify the affected subsystem, for example:
 
 ```text
-Fix transaction finance report runtime helper scope
+Fix transaction finance runtime helper scope
 Stream large advertising reports through Worker
 Defer full analysis until final cloud import batch
 ```
 
 ---
 
-本项目面向内部亚马逊运营与经营分析工作流。公开仓库只包含应用代码，业务数据由独立私密仓库管理。
+This project supports an internal Amazon advertising and business-analytics workflow. The public repository contains application code only; operational data is maintained separately in a protected private warehouse.
