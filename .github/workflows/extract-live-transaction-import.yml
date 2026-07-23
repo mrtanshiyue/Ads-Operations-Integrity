@@ -30,6 +30,13 @@ jobs:
               'const isTransactionReport',
               'const buildTransactionMap',
               'const normalizeTransactionRow',
+              'const validateReportMap',
+              'REPORT_REQUIRED',
+              'TRANSACTION_REPORT',
+              'const pickCol',
+              'const cleanHeaderCompact',
+              'const cleanHeader =',
+              'const quarantineReport',
               'window.__LR_IMPORT_MULTIPLE_FILES__',
               'const importMultipleFiles = async',
           ]
@@ -39,8 +46,8 @@ jobs:
               if not hits:
                   out.append(f'===== MISSING {term} =====')
                   continue
-              for hit in hits[:3]:
-                  start=max(0,hit-8); end=min(len(lines),hit+35)
+              for hit in hits[:5]:
+                  start=max(0,hit-12); end=min(len(lines),hit+45)
                   out.append(f'===== {term} HIT L{hit+1} RANGE L{start+1}-L{end} =====')
                   out.extend(f'{i+1:05d}: {lines[i]}' for i in range(start,end))
           Path('.diagnostics').mkdir(exist_ok=True)
@@ -53,6 +60,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .diagnostics/live-transaction-import.txt
           if ! git diff --cached --quiet; then
-            git commit -m "Extract live transaction import code"
+            git commit -m "Expand live transaction import diagnostics"
             git push
           fi
