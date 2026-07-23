@@ -1,0 +1,52 @@
+===== index.html HITS 4 =====
+--- L5834 RANGE L5830-L5838 ---
+05830: const findTransactionHeaderLine=text=>{const lines=String(text||"").replace(/^\uFEFF/,"").split(/\r?\n/);for(let i=0;i<Math.min(lines.length,80);i++){const x=lines[i].toLowerCase().replace(/"/g,"").replace(/\s+/g,"");if(x.startsWith("date/time,settlementid,type,orderid,sku,")&&x.includes("productsales")&&x.includes("transactionstatus"))return i;}return-1;};
+05831: const parseCSV = async file => {
+05832:   const prefix=await file.slice(0,262144).text();
+05833:   const headerLine=findTransactionHeaderLine(prefix);
+05834:   const isCloudFile=/^(?:ALL|YTDBNS|YY|JJ)__/.test(String(file?.name||"").toUpperCase());
+05835:   if(headerLine>=0||isCloudFile){
+05836:     const rawText=await file.text();
+05837:     const lines=rawText.replace(/^\uFEFF/,"").split(/\r?\n/);
+05838:     const start=headerLine>=0?findTransactionHeaderLine(rawText):0;
+--- L13818 RANGE L13814-L13822 ---
+13814:   };
+13815:   const sleepFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+13816:   const normalizeScope = value => {
+13817:     const scope = String(value || '').trim().toUpperCase();
+13818:     return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
+13819:   };
+13820:   const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');
+13821: 
+13822:   const setStatus = (message, kind = '') => {
+--- L14241 RANGE L14237-L14245 ---
+14237: </style>
+14238: <script id="shopScopeUiV1">
+14239: (() => {
+14240:   'use strict';
+14241:   const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);
+14242:   const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
+14243:   const STORAGE_KEY = 'lr_active_shop_scope';
+14244:   const normalizeShop = value => {
+14245:     const shop = String(value || '').trim().toUpperCase();
+--- L14242 RANGE L14238-L14246 ---
+14238: <script id="shopScopeUiV1">
+14239: (() => {
+14240:   'use strict';
+14241:   const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);
+14242:   const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
+14243:   const STORAGE_KEY = 'lr_active_shop_scope';
+14244:   const normalizeShop = value => {
+14245:     const shop = String(value || '').trim().toUpperCase();
+14246:     return SHOPS.includes(shop) ? shop : 'ALL';
+===== assets/private-cloud-warehouse-v3.js HITS 1 =====
+--- L25 RANGE L21-L29 ---
+00021:   };
+00022:   const sleepFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+00023:   const normalizeScope = value => {
+00024:     const scope = String(value || '').trim().toUpperCase();
+00025:     return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
+00026:   };
+00027:   const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');
+00028: 
+00029:   const setStatus = (message, kind = '') => {
