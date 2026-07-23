@@ -1,0 +1,60 @@
+name: Single File Deploy
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  deploy:
+    if: github.event.issue.pull_request == null && github.event.comment.body == 'DEPLOY_NOW'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rebuild uploaded HTML
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const zlib = require('zlib');
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100
+            });
+            const chunks = [];
+            let expected = null;
+            for (const comment of comments) {
+              const match = String(comment.body || '').match(/^CHUNK\s+(\d+)\/(\d+)\n([A-Za-z0-9+/=\n\r]+)$/);
+              if (!match) continue;
+              const index = Number(match[1]);
+              expected = Number(match[2]);
+              chunks[index - 1] = match[3].replace(/\s+/g, '');
+            }
+            if (!expected || chunks.filter(Boolean).length !== expected) {
+              core.setFailed(`Incomplete payload: ${chunks.filter(Boolean).length}/${expected || 0}`);
+              return;
+            }
+            const compressed = Buffer.from(chunks.join(''), 'base64');
+            const html = zlib.gunzipSync(compressed);
+            for (const entry of fs.readdirSync('.')) {
+              if (entry === '.git') continue;
+              fs.rmSync(path.join('.', entry), { recursive: true, force: true });
+            }
+            fs.writeFileSync('index.html', html);
+            core.info(`Restored index.html: ${html.length} bytes`);
+
+      - name: Commit single-file deployment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Deploy single-file web app" || true
+          git push origin HEAD:main
