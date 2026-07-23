@@ -1,0 +1,146 @@
+name: Repair Cloud CSV Import V2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-cloud-csv-import-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch importer robustly
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          index_path=Path('index.html')
+          text=index_path.read_text(encoding='utf-8')
+
+          new_date='''const toISODate = (d) => {
+  if (typeof d === "number" && isFinite(d)) {
+    const dateObj = new Date(Math.round((d - 25569) * 86400000));
+    return `${dateObj.getUTCFullYear()}-${String(dateObj.getUTCMonth()+1).padStart(2,'0')}-${String(dateObj.getUTCDate()).padStart(2,'0')}`;
+  }
+  const s = String(d || "").trim();
+  if (!s) return "";
+  const isoMatch = s.match(/^(\\d{4})[-\\/.](\\d{1,2})[-\\/.](\\d{1,2})/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2].padStart(2,'0')}-${isoMatch[3].padStart(2,'0')}`;
+  const zhMatch = s.match(/^(\\d{4})年\\s*(\\d{1,2})月\\s*(\\d{1,2})日?/);
+  if (zhMatch) return `${zhMatch[1]}-${zhMatch[2].padStart(2,'0')}-${zhMatch[3].padStart(2,'0')}`;
+  const euMatch = s.match(/^(\\d{1,2})[-\\/.](\\d{1,2})[-\\/.](\\d{4})/);
+  if (euMatch) {
+    const p1=parseInt(euMatch[1],10),p2=parseInt(euMatch[2],10),y=parseInt(euMatch[3],10);
+    let m=p1,day=p2;if(p1>12){day=p1;m=p2;}
+    return `${y}-${String(m).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  }
+  const dt = new Date(s);
+  if (!isNaN(dt.getTime())) return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  return "";
+};'''
+          text,n=re.subn(r'const toISODate = \(d\) => \{.*?\n\};\n\nconst levenshtein',new_date+'\n\nconst levenshtein',text,count=1,flags=re.S)
+          if n!=1: raise SystemExit(f'toISODate patch count={n}')
+
+          simple_replacements=[
+            ('targeting: ["投放",','targeting: ["投放","投放方案","匹配的目标",'),
+            ('matchType: ["匹配类型",','matchType: ["匹配类型","投放匹配类型","投放匹配类型-Targeting match type",'),
+            ('searchTerm: ["客户搜索词",','searchTerm: ["客户搜索词","搜索词",'),
+            ('spend: ["花费",','spend: ["花费","总成本",'),
+            ('sales7d: ["7天总销售额",','sales7d: ["7天总销售额","销售额",'),
+            ('orders7d: ["7天总订单数",','orders7d: ["7天总订单数","购买量",'),
+            ('units: ["7天总销售量(#)",','units: ["7天总销售量(#)","已售商品数量",'),
+            ('cvr: ["7天的转化率",','cvr: ["7天的转化率","购买率",'),
+            ('advertisedSales: ["7天内广告SKU销售额",','advertisedSales: ["7天内广告SKU销售额","推广商品的销量",'),
+            ('advertisedUnits: ["7天内广告SKU销售量(#)",','advertisedUnits: ["7天内广告SKU销售量(#)","已售商品数量（推广）",'),
+            ('otherSkuSales: ["7天内其他SKU销售额",','otherSkuSales: ["7天内其他SKU销售额","销售额（光环）",'),
+            ('otherSkuUnits: ["7天内其他SKU销售量(#)",','otherSkuUnits: ["7天内其他SKU销售量(#)","已售商品数量（光环）",'),
+          ]
+          for old,new in simple_replacements:
+            if new in text: continue
+            count=text.count(old)
+            if count<1: raise SystemExit(f'alias not found: {old}')
+            text=text.replace(old,new,1)
+
+          new_parse='''const parseCSV = async file => {
+  const prefix=await file.slice(0,262144).text();
+  const headerLine=findTransactionHeaderLine(prefix);
+  const isCloudFile=/^(?:ALL|YTDBNS|YY|JJ)__/.test(String(file?.name||"").toUpperCase());
+  if(headerLine>=0||isCloudFile){
+    const rawText=await file.text();
+    const lines=rawText.replace(/^\\uFEFF/,"").split(/\\r?\\n/);
+    const start=headerLine>=0?findTransactionHeaderLine(rawText):0;
+    const body=lines.slice(Math.max(0,start)).join("\\n");
+    return new Promise((resolve,reject)=>Papa.parse(body,{header:true,skipEmptyLines:"greedy",worker:false,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
+  }
+  return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:"greedy",worker:true,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
+};'''
+          text,n=re.subn(r'const parseCSV = async file => \{.*?\};\nconst XLSX_WORKER_LIB',new_parse+'\nconst XLSX_WORKER_LIB',text,count=1,flags=re.S)
+          if n!=1: raise SystemExit(f'parseCSV patch count={n}')
+
+          old_bridge='window.__LR_IMPORT_MULTIPLE_FILES__ = async files => importMultipleFiles(files);'
+          new_bridge='''window.__LR_IMPORT_MULTIPLE_FILES__ = async files => {
+  await importMultipleFiles(files);
+  return {
+    acceptedRows:Number(AdsStore.importStats?.acceptedRows||0),
+    adsRows:Number(AdsStore.all?.length||0),
+    transactionRows:Number(AdsStore.transactions?.length||0),
+    businessRows:Number(AdsStore.biz?.length||0),
+    files:(AdsStore.files||[]).map(x=>({name:x.name,rows:Number(x.rows||0),type:x.type||""})),
+    quarantine:(AdsStore.quarantine||[]).map(x=>({fileName:x.fileName||"",reportType:x.reportType||"",reasons:Array.isArray(x.reasons)?x.reasons:[]}))
+  };
+};'''
+          if old_bridge not in text: raise SystemExit('import bridge not found')
+          text=text.replace(old_bridge,new_bridge,1)
+          index_path.write_text(text,encoding='utf-8')
+
+          old_block='''      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      try {
+        await cloudImporter(csvFiles);
+      } finally {
+        if (mergeSelect) mergeSelect.value = previousMerge;
+      }
+
+      let costSummary = null;'''
+          new_block='''      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      let importSummary = null;
+      try {
+        importSummary = await cloudImporter(csvFiles);
+      } finally {
+        if (mergeSelect) mergeSelect.value = previousMerge;
+      }
+      const importedRows = Number(importSummary?.acceptedRows || 0);
+      const adsRows = Number(importSummary?.adsRows || 0);
+      const transactionRows = Number(importSummary?.transactionRows || 0);
+      const quarantineText = (importSummary?.quarantine || []).flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`)).slice(0, 3).join('；');
+      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      if (!importedRows || (expectsAds && !adsRows)) throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
+
+      let costSummary = null;'''
+          for path in [Path('assets/private-cloud-warehouse-v3.js'),index_path]:
+            src=path.read_text(encoding='utf-8')
+            if 'let importSummary = null;' not in src:
+              if old_block not in src: raise SystemExit(f'cloud block not found in {path}')
+              src=src.replace(old_block,new_block,1)
+            old_total='const totalRows = Number(fetchedRows || manifest?.totalRows || 0);'
+            if old_total in src: src=src.replace(old_total,'const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);',1)
+            path.write_text(src,encoding='utf-8')
+
+          final=index_path.read_text(encoding='utf-8')
+          required=['"总成本"','"购买量"','"销售额"','"搜索词"','const zhMatch','const isCloudFile','acceptedRows:Number','let importSummary = null;']
+          missing=[x for x in required if x not in final]
+          if missing: raise SystemExit(f'missing verification markers: {missing}')
+          print('repair complete')
+          PY
+      - name: Commit repaired files
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html assets/private-cloud-warehouse-v3.js
+          git diff --cached --quiet || git commit -m "Fix cloud CSV parsing and Amazon Ads field aliases"
+          git push
