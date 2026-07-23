@@ -1,0 +1,6 @@
+PATCH global safe array helpers
+PATCH bare arrayMax calls: 3
+PATCH bare arrayMin calls: 1
+remaining bare arrayMax calls: 0
+remaining bare arrayMin calls: 0
+SUCCESS
