@@ -1,0 +1,58 @@
+name: Extract Live Transaction Import
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/extract-live-transaction-import.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Extract transaction import code
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('index.html').read_text(encoding='utf-8')
+          lines = text.splitlines()
+          terms = [
+              'const parseCSV = async file',
+              'const findTransactionHeaderLine',
+              'const isTransactionReport',
+              'const buildTransactionMap',
+              'const normalizeTransactionRow',
+              'window.__LR_IMPORT_MULTIPLE_FILES__',
+              'const importMultipleFiles = async',
+          ]
+          out=[]
+          for term in terms:
+              hits=[i for i,line in enumerate(lines) if term in line]
+              if not hits:
+                  out.append(f'===== MISSING {term} =====')
+                  continue
+              for hit in hits[:3]:
+                  start=max(0,hit-8); end=min(len(lines),hit+35)
+                  out.append(f'===== {term} HIT L{hit+1} RANGE L{start+1}-L{end} =====')
+                  out.extend(f'{i+1:05d}: {lines[i]}' for i in range(start,end))
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/live-transaction-import.txt').write_text('\n'.join(out)+'\n',encoding='utf-8')
+          PY
+      - name: Commit diagnostics
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .diagnostics/live-transaction-import.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract live transaction import code"
+            git push
+          fi
