@@ -1,0 +1,39 @@
+name: Repair Private Cloud Bulk Loader
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-cloud-bulk-loader.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply bounded-memory loader repair
+        run: python3 scripts/repair_cloud_bulk_loader.py
+
+      - name: Commit repaired loader
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/cloud-bulk-loader-repair.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Load private cloud reports in bounded batches"
+            git push
+          fi
+
+      - name: Deploy updated page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main
