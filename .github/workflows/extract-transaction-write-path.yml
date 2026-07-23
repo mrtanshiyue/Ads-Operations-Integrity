@@ -1,0 +1,56 @@
+name: Extract Transaction Write Path
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/extract-transaction-write-path.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Extract write path
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8')
+          lines=text.splitlines()
+          terms=[
+            'if(type==="TRANSACTION_REPORT")',
+            'type==="TRANSACTION_REPORT"',
+            'AdsStore.transactions',
+            'validateReportMap',
+            'appendArray(AdsStore.transactions',
+            'TRANSACTION_REPORT',
+          ]
+          out=[]
+          seen=set()
+          for term in terms:
+            hits=[i for i,line in enumerate(lines) if term in line]
+            out.append(f'===== TERM {term} HITS {len(hits)} =====')
+            for hit in hits:
+              if hit in seen: continue
+              seen.add(hit)
+              start=max(0,hit-12);end=min(len(lines),hit+45)
+              out.append(f'----- HIT L{hit+1} RANGE L{start+1}-L{end} -----')
+              out.extend(f'{i+1:05d}: {lines[i]}' for i in range(start,end))
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/transaction-write-path.txt').write_text('\n'.join(out)+'\n',encoding='utf-8')
+          PY
+      - name: Commit diagnostics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .diagnostics/transaction-write-path.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Extract transaction write path"
+            git push
+          fi
