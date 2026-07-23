@@ -13,6 +13,8 @@
 <script>
 window.APP_BUILD_VERSION='V61.5.4.7';
 window.PRIVATE_API_VERSION='v1';
+window.__arrayMaxSafe=window.__arrayMaxSafe||function(values,fallback){let result=arguments.length>1?fallback:-Infinity;const source=values||[];for(let i=0;i<source.length;i++){const value=Number(source[i]);if(!Number.isNaN(value)&&value>result)result=value;}return result;};
+window.__arrayMinSafe=window.__arrayMinSafe||function(values,fallback){let result=arguments.length>1?fallback:Infinity;const source=values||[];for(let i=0;i<source.length;i++){const value=Number(source[i]);if(!Number.isNaN(value)&&value<result)result=value;}return result;};
 window.__loadDependencyFallback=(name,url)=>{window.__dependencyFallbacks=window.__dependencyFallbacks||{};if(window.__dependencyFallbacks[name])return;window.__dependencyFallbacks[name]=true;const s=document.createElement('script');s.src=url;s.crossOrigin='anonymous';s.dataset.dependencyFallback=name;s.onerror=()=>console.error(`Dependency fallback failed: ${name}`);document.head.appendChild(s);};
 </script>
 <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" onerror="__loadDependencyFallback('PapaParse','https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js')"></script>
@@ -6908,7 +6910,7 @@ const normalizeAdProductCode = (x) => {
 
 const getAttributionWindowDays = (adProducts = [], rows = []) => {
   const explicit = (rows || []).map(r => safeNum(r.attributionWindowDays)).filter(x => x === 7 || x === 14);
-  if (explicit.length) return arrayMax(explicit);
+  if (explicit.length) return window.__arrayMaxSafe(explicit);
   const products = Array.isArray(adProducts) ? adProducts : [adProducts];
   const codes = new Set(products.map(normalizeAdProductCode).filter(Boolean));
   if (codes.has("SB") || codes.has("SD")) return 14;
@@ -11545,7 +11547,7 @@ const studioV7BuildFamilyLayers = (family,settings,accountCtx) => {
   const canBroad=broad.length>=2&&["scale","harvest"].includes(family.stage)&&settings.objective!=="profit"&&settings.risk!=="conservative";
   if(canBroad)add("BROAD_RESEARCH",broad,{match:"broad",priority:48,negatives:[...neg.routing,...neg.phrasePass,...neg.exactPass].slice(0,55),role:studioV7Text("只投放由赚钱长尾反推的白名单词根","Use only roots supported by profitable long-tail queries")});
   const auto=family.auto,autoSpend=[auto.close,auto.loose,auto.substitutes,auto.complements].reduce((s,x)=>s+safeNum(x?.spend),0),activeGroups=[auto.close,auto.loose,auto.substitutes,auto.complements].filter(x=>safeNum(x?.spend)>=15);
-  const vals=activeGroups.map(x=>x.roas||0).filter(Boolean),hetero=vals.length>=2&&(arrayMax(vals)/Math.max(.1,arrayMin(vals))>=1.5),split=settings.segmentation==="segmented"||(settings.segmentation==="auto"&&autoSpend>=80&&hetero);
+  const vals=activeGroups.map(x=>x.roas||0).filter(Boolean),hetero=vals.length>=2&&(window.__arrayMaxSafe(vals)/Math.max(.1,window.__arrayMinSafe(vals))>=1.5),split=settings.segmentation==="segmented"||(settings.segmentation==="auto"&&autoSpend>=80&&hetero);
   const discoveryNeeded=["launch","scale","harvest"].includes(family.stage)||settings.objective==="growth";
   if(discoveryNeeded){
     if(split){
@@ -13671,7 +13673,7 @@ window.addEventListener('load', AdsDashboardApp.init);
     </div>`;
   };
   const renderCosts=r=>{
-    const c=r.current,max=arrayMax(c.expense.map(x=>x.value),1);
+    const c=r.current,max=window.__arrayMaxSafe(c.expense.map(x=>x.value),1);
     const rows=c.expense.map(x=>`<div class="txFinanceCostRow"><div class="txFinanceCostName"><b>${esc(x.name)}</b><span>${esc(x.note)}</span></div><div class="txFinanceCostTrack"><div class="txFinanceCostFill" style="width:${Math.min(100,x.value/max*100).toFixed(1)}%"></div></div><div class="txFinanceCostValue"><b>${money(x.value)}</b><span>${pct(x.rate)}</span></div></div>`).join('');
     const catRows=c.categories.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.rows.toLocaleString()}</td><td class="${toneForSigned(x.total)}">${signedMoney(x.total)}</td><td>${pct(x.share)}</td></tr>`).join('');
     return `<div class="txFinTabHeader"><div><h3>成本结构</h3><p>同时管理Amazon费用、广告支出与GitHub商品采购成本。</p></div></div>
