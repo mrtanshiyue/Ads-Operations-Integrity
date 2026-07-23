@@ -1,0 +1,228 @@
+name: Patch Shop Scope UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/patch-shop-scope-ui.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add shop selector UI patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('index.html')
+          html = path.read_text(encoding='utf-8')
+          marker = '<script id="shopScopeUiV1">'
+          if marker in html:
+              print('Shop scope UI patch already exists')
+              raise SystemExit(0)
+
+          patch = r'''
+          <style id="shopScopeUiStyles">
+          #privateCloudImportPanel{
+            display:grid!important;
+            grid-template-columns:minmax(0,1fr)!important;
+            gap:10px!important;
+            margin-top:10px!important;
+            padding:12px!important;
+            overflow:hidden;
+            border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line))!important;
+            border-radius:16px!important;
+            background:
+              radial-gradient(circle at 100% 0,color-mix(in srgb,var(--accent) 14%,transparent),transparent 42%),
+              linear-gradient(145deg,color-mix(in srgb,var(--card) 96%,var(--accent) 4%),var(--card))!important;
+            box-shadow:0 10px 28px rgba(15,23,42,.07),inset 0 1px 0 rgba(255,255,255,.55);
+          }
+          #privateCloudImportPanel .cloudPanelHeader{display:flex;align-items:center;gap:10px;min-width:0}
+          #privateCloudImportPanel .cloudPanelIcon{display:grid;place-items:center;width:36px;height:36px;flex:0 0 36px;border-radius:12px;background:color-mix(in srgb,var(--accent) 14%,var(--card));border:1px solid color-mix(in srgb,var(--accent) 26%,var(--line));font-size:17px;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+          #privateCloudImportPanel .cloudPanelCopy{min-width:0;flex:1}
+          #privateCloudImportPanel .cloudPanelTitle{font-size:12.8px;font-weight:800;letter-spacing:-.1px;color:var(--text)}
+          #privateCloudImportPanel .cloudPanelSub{margin-top:2px;font-size:10.5px;line-height:1.35;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          #privateCloudImportPanel .cloudProviderBadge{flex:0 0 auto;padding:4px 7px;border-radius:999px;border:1px solid color-mix(in srgb,var(--good) 28%,var(--line));background:color-mix(in srgb,var(--good) 10%,var(--card));color:var(--good);font-size:9px;font-weight:800;letter-spacing:.45px}
+          #privateCloudImportPanel .shopScopeCard{display:grid;gap:7px;padding:9px;border:1px solid var(--line);border-radius:13px;background:color-mix(in srgb,var(--input-bg) 92%,var(--accent) 8%)}
+          #privateCloudImportPanel .shopScopeHead{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+          #privateCloudImportPanel .shopScopeLabel{font-size:10.8px;font-weight:800;color:var(--text)}
+          #privateCloudImportPanel #activeShopHint{min-width:0;color:var(--muted);font-size:9.8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          #privateCloudImportPanel .shopScopeSwitch{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;padding:4px;border:1px solid var(--line);border-radius:11px;background:color-mix(in srgb,var(--chip) 72%,var(--card))}
+          #privateCloudImportPanel .shopScopeButton{appearance:none;min-width:0;border:1px solid transparent;border-radius:8px;padding:7px 3px;background:transparent;color:var(--muted);font:inherit;font-size:10.5px;font-weight:800;line-height:1;cursor:pointer;transition:transform .18s ease,background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease}
+          #privateCloudImportPanel .shopScopeButton:hover{color:var(--text);background:color-mix(in srgb,var(--card) 78%,var(--accent) 6%)}
+          #privateCloudImportPanel .shopScopeButton:active{transform:scale(.97)}
+          #privateCloudImportPanel .shopScopeButton:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+          #privateCloudImportPanel .shopScopeButton.active{color:#fff;background:var(--accent);border-color:color-mix(in srgb,var(--accent) 76%,#000 24%);box-shadow:0 4px 10px color-mix(in srgb,var(--accent) 28%,transparent)}
+          #privateCloudImportPanel .privateCloudActions{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:7px!important}
+          #privateCloudImportPanel .privateCloudActions .btn{justify-content:center!important;min-width:0!important;min-height:34px;padding:8px 11px!important;border-radius:11px!important;font-size:10.8px!important}
+          #privateCloudImportPanel #btnPrivateCloudImport{box-shadow:0 6px 14px color-mix(in srgb,var(--accent) 24%,transparent)}
+          #privateCloudImportPanel #btnPrivateCloudLogout{padding-inline:10px!important;color:var(--muted)}
+          #privateCloudImportPanel .cloudStatusRow{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:7px;padding:7px 8px;border-radius:10px;background:color-mix(in srgb,var(--chip) 58%,transparent)}
+          #privateCloudImportPanel .cloudStatusDot{width:7px;height:7px;margin-top:4px;border-radius:999px;background:var(--muted);box-shadow:0 0 0 3px color-mix(in srgb,var(--muted) 12%,transparent)}
+          #privateCloudImportPanel #privateCloudImportStatus{min-height:0!important;line-height:1.4!important;word-break:break-word;font-size:9.9px;color:var(--muted)}
+          #privateCloudImportPanel #privateCloudImportStatus[data-kind="good"]{color:var(--good)}
+          #privateCloudImportPanel #privateCloudImportStatus[data-kind="good"] + .cloudStatusDot{background:var(--good)}
+          #privateCloudImportPanel:has(#privateCloudImportStatus[data-kind="good"]) .cloudStatusDot{background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 14%,transparent)}
+          #privateCloudImportPanel:has(#privateCloudImportStatus[data-kind="warn"]) .cloudStatusDot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 14%,transparent)}
+          #privateCloudImportPanel:has(#privateCloudImportStatus[data-kind="bad"]) .cloudStatusDot{background:var(--bad);box-shadow:0 0 0 3px color-mix(in srgb,var(--bad) 14%,transparent)}
+          @media(max-width:420px){#privateCloudImportPanel .privateCloudActions{grid-template-columns:1fr!important}#privateCloudImportPanel .shopScopeSwitch{grid-template-columns:repeat(2,minmax(0,1fr))}}
+          </style>
+          <script id="shopScopeUiV1">
+          (() => {
+            'use strict';
+            const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);
+            const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
+            const STORAGE_KEY = 'lr_active_shop_scope';
+            const normalizeShop = value => {
+              const shop = String(value || '').trim().toUpperCase();
+              return SHOPS.includes(shop) ? shop : 'ALL';
+            };
+            const storage = {
+              get: () => { try { return localStorage.getItem(STORAGE_KEY) || 'ALL'; } catch (_) { return 'ALL'; } },
+              set: value => { try { localStorage.setItem(STORAGE_KEY, value); } catch (_) {} }
+            };
+            let activeShop = normalizeShop(storage.get());
+
+            const syncShopUi = shop => {
+              document.querySelectorAll('#privateCloudImportPanel [data-shop]').forEach(button => {
+                const selected = button.dataset.shop === shop;
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+                button.setAttribute('aria-checked', selected ? 'true' : 'false');
+              });
+              const hint = document.getElementById('activeShopHint');
+              if (hint) hint.textContent = `当前：${shop} · ${SHOP_LABELS[shop]}`;
+              document.documentElement.dataset.activeShop = shop;
+            };
+
+            const setActiveShop = (value, options = {}) => {
+              const next = normalizeShop(value);
+              const changed = next !== activeShop;
+              activeShop = next;
+              storage.set(next);
+              syncShopUi(next);
+              window.ACTIVE_SHOP = next;
+              if (changed || options.force) {
+                window.dispatchEvent(new CustomEvent('lr:shop-change', {
+                  detail: { shop: next, label: SHOP_LABELS[next], source: options.source || 'shop-selector' }
+                }));
+              }
+              if (!options.silent && changed) {
+                try {
+                  if (typeof notify === 'function') notify(`分析店铺已切换为 ${next} · ${SHOP_LABELS[next]}`, 'good');
+                } catch (_) {}
+              }
+              return next;
+            };
+
+            const mount = () => {
+              const panel = document.getElementById('privateCloudImportPanel');
+              const loadButton = document.getElementById('btnPrivateCloudImport');
+              const logoutButton = document.getElementById('btnPrivateCloudLogout');
+              const status = document.getElementById('privateCloudImportStatus');
+              if (!panel || !loadButton || !logoutButton || !status) return false;
+              if (panel.dataset.shopUiReady === '1') {
+                syncShopUi(activeShop);
+                return true;
+              }
+
+              loadButton.textContent = '☁ 加载私有云数据';
+              logoutButton.textContent = '清除密码';
+              const shell = document.createElement('div');
+              shell.innerHTML = `
+                <div class="cloudPanelHeader">
+                  <div class="cloudPanelIcon" aria-hidden="true">☁</div>
+                  <div class="cloudPanelCopy">
+                    <div class="cloudPanelTitle">私有云数据</div>
+                    <div class="cloudPanelSub">选择分析店铺，再安全读取广告、交易与成本数据</div>
+                  </div>
+                  <span class="cloudProviderBadge">CLOUDFLARE</span>
+                </div>
+                <div class="shopScopeCard">
+                  <div class="shopScopeHead">
+                    <span class="shopScopeLabel">店铺范围</span>
+                    <span id="activeShopHint"></span>
+                  </div>
+                  <div class="shopScopeSwitch" role="radiogroup" aria-label="分析店铺范围">
+                    ${SHOPS.map(shop => `<button class="shopScopeButton" type="button" role="radio" data-shop="${shop}" aria-label="${SHOP_LABELS[shop]}">${shop}</button>`).join('')}
+                  </div>
+                </div>
+                <div class="privateCloudActions">
+                  <span data-slot="load"></span>
+                  <span data-slot="logout"></span>
+                </div>
+                <div class="cloudStatusRow">
+                  <span class="cloudStatusDot" aria-hidden="true"></span>
+                  <span data-slot="status"></span>
+                </div>`;
+
+              shell.querySelector('[data-slot="load"]').replaceWith(loadButton);
+              shell.querySelector('[data-slot="logout"]').replaceWith(logoutButton);
+              shell.querySelector('[data-slot="status"]').replaceWith(status);
+              panel.replaceChildren(...shell.childNodes);
+              panel.dataset.shopUiReady = '1';
+              panel.addEventListener('click', event => {
+                const button = event.target.closest('[data-shop]');
+                if (!button || !panel.contains(button)) return;
+                setActiveShop(button.dataset.shop, { source: 'data-import-panel' });
+              });
+              setActiveShop(activeShop, { silent: true, force: true, source: 'initialization' });
+              return true;
+            };
+
+            const init = () => {
+              let attempts = 0;
+              const tryMount = () => {
+                if (mount()) return;
+                attempts += 1;
+                if (attempts < 120) requestAnimationFrame(tryMount);
+              };
+              tryMount();
+              window.ShopScope = Object.freeze({
+                options: SHOPS,
+                labels: SHOP_LABELS,
+                get: () => activeShop,
+                set: value => setActiveShop(value, { source: 'api' })
+              });
+            };
+
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
+            else init();
+          })();
+          </script>
+          '''
+
+          closing = html.lower().rfind('</body>')
+          if closing < 0:
+              closing = html.lower().rfind('</html>')
+          if closing < 0:
+              html += patch
+          else:
+              html = html[:closing] + patch + '\n' + html[closing:]
+          path.write_text(html, encoding='utf-8')
+          print('Shop selector UI patch appended')
+          PY
+
+      - name: Commit patched page
+        shell: bash
+        run: |
+          if git diff --quiet -- index.html; then
+            echo "No index.html changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Add store scope selector and polish cloud import UI"
+          git push origin HEAD:main
