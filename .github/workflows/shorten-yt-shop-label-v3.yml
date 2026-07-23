@@ -1,5 +1,5 @@
 name: Shorten YT Shop Label V3
-# Trigger existing workflow after creation
+# Run UI-only patch; workflow templates are updated separately
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html assets/private-cloud-warehouse-v3.js .github/workflows/patch-shop-scope-ui.yml .diagnostics/yt-shop-label-patch.txt
+          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/yt-shop-label-patch.txt
           if ! git diff --cached --quiet; then
             git commit -m "Display YT instead of YTDBNS in shop UI"
             git push
