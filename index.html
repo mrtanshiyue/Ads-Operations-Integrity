@@ -6108,6 +6108,39 @@ window.__LR_IMPORT_MULTIPLE_FILES__ = async files => {
     })),
   };
 };
+window.__LR_IMPORT_TRANSACTION_FILE__ = async file => {
+  if(!file)throw new Error("联合交易文件不存在");
+  const sourceFile=String(file.name||"combined-report.csv"),rows=await parseCSV(file);
+  if(!Array.isArray(rows)||!rows.length)throw new Error(`${sourceFile}: CSV解析后没有数据行`);
+  const map=buildTransactionMap(rows),required=["postedAt","type","productSales","total"],missing=required.filter(key=>!map[key]);
+  if(missing.length){
+    const headers=Object.keys(rows[0]||{}).slice(0,40).join(" | ");
+    throw new Error(`${sourceFile}: 联合交易缺少字段 ${missing.join(", ")}；实际表头：${headers}`);
+  }
+  let rowErrors=0,firstError="";
+  const normalized=await processInChunks(rows,raw=>{
+    try{return normalizeTransactionRow(raw,map,sourceFile);}
+    catch(error){rowErrors++;if(!firstError)firstError=error?.message||String(error);return null;}
+  });
+  const norm=compactArrayInPlace(normalized,row=>row&&row.date&&row.type);
+  if(!norm.length){
+    const first=rows[0]||{},posted=map.postedAt?String(first[map.postedAt]||""):"",type=map.type?String(first[map.type]||""):"";
+    throw new Error(`${sourceFile}: 联合交易归一化后为0行；首行日期=${posted||"空"}，类型=${type||"空"}${firstError?`，异常=${firstError}`:""}`);
+  }
+  appendArray(AdsStore.transactions,norm);
+  dedupeByKeyInPlace(AdsStore.transactions,row=>`${row.settlementId}|${row.postedAt}|${row.releaseDate}|${row.type}|${row.orderId}|${row.sku}|${row.description}|${safeNum(row.quantity)}|${row.status}|${safeNum(row.productSales).toFixed(2)}|${safeNum(row.promotionalRebates).toFixed(2)}|${safeNum(row.sellingFees).toFixed(2)}|${safeNum(row.fbaFees).toFixed(2)}|${safeNum(row.otherTransactionFees).toFixed(2)}|${safeNum(row.other).toFixed(2)}|${safeNum(row.total).toFixed(2)}`.toLowerCase());
+  AdsStore.dataVersions.transaction=(AdsStore.dataVersions.transaction||0)+1;
+  AdsStore.dataVersions.derived=(AdsStore.dataVersions.derived||0)+1;
+  AdsStore.transactionEconomicsCache={signature:"",snapshot:null};
+  AdsStore.importStats.acceptedRows=(AdsStore.importStats.acceptedRows||0)+norm.length;
+  AdsStore.quarantine=(AdsStore.quarantine||[]).filter(item=>String(item?.fileName||"")!==sourceFile);
+  const fileRecord=(AdsStore.files||[]).find(item=>String(item?.name||"")===sourceFile);
+  if(fileRecord){fileRecord.rows=norm.length;fileRecord.type="联合交易";}
+  else AdsStore.files.push({name:sourceFile,rows:norm.length,type:"联合交易"});
+  UnifiedDecisionEngine.invalidate("direct_transaction_import");
+  renderFileList();renderTransactionReport();updateWorkspaceState();applyFilters(true);scheduleIDBSave();
+  return{rows:norm.length,rawRows:rows.length,rowErrors};
+};
 window.__LR_IMPORT_PRODUCT_COSTS__ = payload => importProductCosts(payload);
 window.__LR_RESOLVE_PRODUCT_COST__ = (sku="",asin="") => resolveProductCostRecord(sku,asin,AdsStore.currentContext||UnifiedDecisionEngine.context());
 window.__LR_GET_PRODUCT_COST_STATUS__ = () => ({
@@ -14024,13 +14057,23 @@ window.addEventListener('load', AdsDashboardApp.init);
       }
       const importedRows = Number(importSummary?.acceptedRows || 0);
       const adsRows = Number(importSummary?.adsRows || 0);
-      const transactionRows = Number(importSummary?.transactionRows || 0);
+      let transactionRows = Number(importSummary?.transactionRows || 0);
+      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
+      if (expectsTransactions && !transactionRows) {
+        const directImporter = window.__LR_IMPORT_TRANSACTION_FILE__;
+        if (typeof directImporter !== 'function') throw new Error('联合交易专用导入桥接未初始化，请强制刷新页面');
+        for (let index = 0; index < entries.length; index += 1) {
+          const dataType = String(entries[index]?.dataType || '').toLowerCase().replace(/[^a-z]/g, '');
+          if (dataType !== 'transactions') continue;
+          const result = await directImporter(csvFiles[index]);
+          transactionRows += Number(result?.rows || 0);
+        }
+      }
       const quarantineText = (importSummary?.quarantine || [])
         .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
         .slice(0, 3)
         .join('；');
-      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
-      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
       if (!importedRows || (expectsAds && !adsRows) || (expectsTransactions && !transactionRows)) {
         const missingType = expectsAds && !adsRows ? '广告数据' : expectsTransactions && !transactionRows ? '联合交易数据' : '报表数据';
         throw new Error(`报表已下载，但网页分析库未写入${missingType}${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射与日期格式'}`);
