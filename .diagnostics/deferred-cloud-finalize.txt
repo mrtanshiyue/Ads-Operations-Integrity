@@ -1,0 +1,12 @@
+PATCH importer options and stage tracking
+PATCH deferred finalization and detailed stages
+PATCH bridge stage-aware errors
+PATCH embedded loader defer intermediate finalization
+PATCH embedded loader capture stage and stack
+PATCH embedded loader show stage diagnostic
+PATCH embedded loader notify diagnostic
+PATCH source loader defer intermediate finalization
+PATCH source loader capture stage and stack
+PATCH source loader show stage diagnostic
+PATCH source loader notify diagnostic
+SUCCESS

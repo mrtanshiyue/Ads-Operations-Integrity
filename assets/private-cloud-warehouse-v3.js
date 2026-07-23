@@ -305,7 +305,13 @@
 
           if (mergeSelect) mergeSelect.value = firstBatch ? 'replace' : 'append';
           setStatus(`已下载 ${batchStart + batchFiles.length}/${entries.length} 个文件，正在导入第 ${batchNumber}/${batchCount} 批并释放原始文件内存…`);
-          const summary = await cloudImporter(batchFiles);
+          const isFinalBatch = batchStart + batchEntries.length >= entries.length;
+          const summary = await cloudImporter(batchFiles, {
+            deferFinalize: !isFinalBatch,
+            preserveLog: !firstBatch,
+            cloudBatchNumber: batchNumber,
+            cloudBatchCount: batchCount,
+          });
           let batchAccepted = Number(summary?.acceptedRows || 0);
           const batchAds = Number(summary?.adsRows || 0);
           let batchTransactions = Number(summary?.transactionRows || 0);
@@ -390,6 +396,8 @@
     } catch (error) {
       console.error('Private warehouse import failed:', error);
       if (error?.status === 401) sessionSafe.remove(SESSION_KEY);
+      const importStage = window.__LR_IMPORT_STAGE__ || '';
+      const stackHint = String(error?.stack || '').split('\n').slice(0, 4).join(' | ');
       const message = error?.status === 401
         ? '网页登录密码错误，请清除密码后重新加载'
         : error?.status === 403
@@ -397,8 +405,11 @@
           : error?.status === 502
             ? 'Worker 无法读取 GitHub 私密仓库，请检查 WAREHOUSE_GITHUB_TOKEN'
             : (error?.message || String(error));
-      setStatus(message, 'bad');
-      notifyUser(message, 'bad');
+      const diagnosticMessage = importStage && importStage !== 'complete'
+        ? `${message} · 阶段：${importStage}${stackHint ? ` · ${stackHint}` : ''}`
+        : message;
+      setStatus(diagnosticMessage, 'bad');
+      notifyUser(diagnosticMessage, 'bad');
     } finally {
       setBusy(false);
     }

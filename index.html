@@ -6025,8 +6025,11 @@ const buildIndexes = () => {
     }
 };
 
-const importMultipleFiles = async (files) => {
-  clearLog(); if (!libsCheck()) return;
+const importMultipleFiles = async (files, options = {}) => {
+  const deferFinalize = Boolean(options?.deferFinalize);
+  const finalBatch = !deferFinalize;
+  window.__LR_IMPORT_STAGE__ = 'prepare';
+  if (!options?.preserveLog) clearLog(); if (!libsCheck()) return;
   let activeFileTypes=null;
   const mergeMode=$("mergeMode").value,dedupeMode=$("dedupeMode").value,maxRows=getNumericInput("maxRows",200000,10000,1000000);
   importGeneration++;const generation=importGeneration;deepAnalysisRequested=false;setImportStatus(currentLang==="zh"?"准备读取报表":"Preparing reports",1,true);
@@ -6077,6 +6080,12 @@ const importMultipleFiles = async (files) => {
     if(file.size>AMAZON_BULK_LIMITS.MAX_FILE_BYTES){quarantineReport(name,"FILE",["File exceeds size limit"],0);continue;}
     try{let totalRows=0;activeFileTypes=new Set();if(lower.endsWith(".csv"))totalRows+=await importRowSet(await parseCSV(file),name);else if(lower.endsWith(".xlsx")||lower.endsWith(".xls")){const sheets=await parseXLSX(file,maxRows);for(const sheet of sheets)totalRows+=await importRowSet(sheet.rows,`${name} :: ${sheet.sheetName}`);}else{quarantineReport(name,"FILE",["Unsupported file type"],0);continue;}const typeLabels={TRANSACTION_REPORT:"联合交易",BUSINESS_REPORT:"Business",PLACEMENT_REPORT:"广告位",SQP_REPORT:"SQP",ADS_REPORT:"广告",BULK_STRUCTURE:"Bulk"};AdsStore.files.push({name,rows:totalRows,type:[...activeFileTypes].map(x=>typeLabels[x]||x).join(" / ")});}catch(e){quarantineReport(name,"FILE",[e.message||String(e)],0);}finally{activeFileTypes=null;}
   }
+  if (deferFinalize) {
+    window.__LR_IMPORT_STAGE__ = 'batch-appended';
+    setImportStatus(currentLang==="zh"?"批次数据已追加，等待最终汇总":"Batch appended; waiting for finalization",68,true);
+    return;
+  }
+  window.__LR_IMPORT_STAGE__ = 'deduplicate';
   setImportStatus(currentLang==="zh"?"去重与建立索引":"Deduplicating and indexing",72,true);await yieldToBrowser();
   if(dedupeMode==="on"){
     const before=AdsStore.all.length;AdsStore.all=dedupeRows(AdsStore.all);AdsStore.importStats.duplicateRows+=before-AdsStore.all.length;
@@ -6086,17 +6095,33 @@ const importMultipleFiles = async (files) => {
     dedupeByKeyInPlace(AdsStore.transactions,r=>`${r.settlementId}|${r.postedAt}|${r.releaseDate}|${r.type}|${r.orderId}|${r.sku}|${r.description}|${safeNum(r.quantity)}|${r.status}|${safeNum(r.productSales).toFixed(2)}|${safeNum(r.promotionalRebates).toFixed(2)}|${safeNum(r.sellingFees).toFixed(2)}|${safeNum(r.fbaFees).toFixed(2)}|${safeNum(r.otherTransactionFees).toFixed(2)}|${safeNum(r.other).toFixed(2)}|${safeNum(r.total).toFixed(2)}`.toLowerCase());
     dedupeByKeyInPlace(AdsStore.bulkStructure,r=>`${r.entity}|${r.campaignId}|${r.adGroupId}|${r.keywordId}|${r.targetId}|${r.campaign}|${r.adGroup}|${r.keyword}|${r.expression}|${r.matchType}`.toLowerCase());
   }
+  window.__LR_IMPORT_STAGE__ = 'date-range';
   let minDate="",maxDate="";for(const r of AdsStore.all){if(!r.date)continue;if(!minDate||r.date<minDate)minDate=r.date;if(!maxDate||r.date>maxDate)maxDate=r.date;}
   if(maxDate){$("dateEnd").value=maxDate;if(AdsStore.all.length>PERF.LARGE_DATA_ROWS){const d=new Date(maxDate+"T00:00:00Z");d.setUTCDate(d.getUTCDate()-(PERF.AUTO_RECENT_DAYS-1));$("dateStart").value=minDate&&d.toISOString().slice(0,10)<minDate?minDate:d.toISOString().slice(0,10);}else $("dateStart").value=minDate;}
-  enrichRowsWithBidControls();buildIndexes();getBulkStructureIndex();AdsStore.view=AdsStore.all;buildBusinessAggregates();AdsStore.transactionEconomicsCache={signature:"",snapshot:null};renderFileList();populateDropdowns();applyFilters(true);renderTransactionReport();scheduleIDBSave();
+  window.__LR_IMPORT_STAGE__ = 'enrich-and-index';
+  enrichRowsWithBidControls();buildIndexes();getBulkStructureIndex();AdsStore.view=AdsStore.all;buildBusinessAggregates();AdsStore.transactionEconomicsCache={signature:"",snapshot:null};
+  window.__LR_IMPORT_STAGE__ = 'render-file-list'; renderFileList();
+  window.__LR_IMPORT_STAGE__ = 'populate-dropdowns'; populateDropdowns();
+  window.__LR_IMPORT_STAGE__ = 'apply-filters'; applyFilters(true);
+  window.__LR_IMPORT_STAGE__ = 'render-transactions'; renderTransactionReport();
+  window.__LR_IMPORT_STAGE__ = 'schedule-idb-save'; scheduleIDBSave();
+  window.__LR_IMPORT_STAGE__ = 'complete';
   setImportStatus(currentLang==="zh"?"导入完成":"Import complete",100,true);setTimeout(()=>{if(generation===importGeneration)setImportStatus("",100,false);},1800);
   notify(`${currentLang==="zh"?"导入完成":"Imported"}: ${AdsStore.importStats.acceptedRows.toLocaleString()} rows · quarantine ${AdsStore.quarantine.length}`,AdsStore.quarantine.length?"warn":"good");
 };
 
 // Expose a narrow, explicit bridge for the private-cloud loader.
 // The core importer remains owned by the main application closure.
-window.__LR_IMPORT_MULTIPLE_FILES__ = async files => {
-  await importMultipleFiles(files);
+window.__LR_IMPORT_MULTIPLE_FILES__ = async (files, options = {}) => {
+  try {
+    await importMultipleFiles(files, options);
+  } catch (error) {
+    const stage = window.__LR_IMPORT_STAGE__ || 'unknown';
+    const stack = String(error?.stack || '').split('\n').slice(0, 6).join(' | ');
+    const wrapped = new Error(`[${stage}] ${error?.message || error}${stack ? ` · ${stack}` : ''}`);
+    wrapped.cause = error;
+    throw wrapped;
+  }
   return {
     acceptedRows: Number(AdsStore.importStats?.acceptedRows || 0),
     adsRows: Number(AdsStore.all?.length || 0),
@@ -14100,7 +14125,13 @@ window.addEventListener('load', AdsDashboardApp.init);
 
           if (mergeSelect) mergeSelect.value = firstBatch ? 'replace' : 'append';
           setStatus(`已下载 ${batchStart + batchFiles.length}/${entries.length} 个文件，正在导入第 ${batchNumber}/${batchCount} 批并释放原始文件内存…`);
-          const summary = await cloudImporter(batchFiles);
+          const isFinalBatch = batchStart + batchEntries.length >= entries.length;
+          const summary = await cloudImporter(batchFiles, {
+            deferFinalize: !isFinalBatch,
+            preserveLog: !firstBatch,
+            cloudBatchNumber: batchNumber,
+            cloudBatchCount: batchCount,
+          });
           let batchAccepted = Number(summary?.acceptedRows || 0);
           const batchAds = Number(summary?.adsRows || 0);
           let batchTransactions = Number(summary?.transactionRows || 0);
@@ -14185,6 +14216,8 @@ window.addEventListener('load', AdsDashboardApp.init);
     } catch (error) {
       console.error('Private warehouse import failed:', error);
       if (error?.status === 401) sessionSafe.remove(SESSION_KEY);
+      const importStage = window.__LR_IMPORT_STAGE__ || '';
+      const stackHint = String(error?.stack || '').split('\n').slice(0, 4).join(' | ');
       const message = error?.status === 401
         ? '网页登录密码错误，请清除密码后重新加载'
         : error?.status === 403
@@ -14192,8 +14225,11 @@ window.addEventListener('load', AdsDashboardApp.init);
           : error?.status === 502
             ? 'Worker 无法读取 GitHub 私密仓库，请检查 WAREHOUSE_GITHUB_TOKEN'
             : (error?.message || String(error));
-      setStatus(message, 'bad');
-      notifyUser(message, 'bad');
+      const diagnosticMessage = importStage && importStage !== 'complete'
+        ? `${message} · 阶段：${importStage}${stackHint ? ` · ${stackHint}` : ''}`
+        : message;
+      setStatus(diagnosticMessage, 'bad');
+      notifyUser(diagnosticMessage, 'bad');
     } finally {
       setBusy(false);
     }
