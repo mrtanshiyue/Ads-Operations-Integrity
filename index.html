@@ -4711,6 +4711,8 @@ const yieldToBrowser = () => new Promise(resolve => {
   else setTimeout(resolve, 0);
 });
 const appendArray = (target, source) => { for (let i=0;i<source.length;i++) target.push(source[i]); return target; };
+const arrayMax = (values, fallback=-Infinity) => { let result=fallback; for(let i=0;i<(values?.length||0);i++){const value=Number(values[i]);if(!Number.isNaN(value)&&value>result)result=value;} return result; };
+const arrayMin = (values, fallback=Infinity) => { let result=fallback; for(let i=0;i<(values?.length||0);i++){const value=Number(values[i]);if(!Number.isNaN(value)&&value<result)result=value;} return result; };
 const compactArrayInPlace = (rows, predicate) => { let write=0; for(let i=0;i<rows.length;i++){const r=rows[i];if(predicate(r))rows[write++]=r;} rows.length=write; return rows; };
 const dedupeByKeyInPlace = (rows, keyFn) => { const seen=new Set(); let write=0; for(let i=0;i<rows.length;i++){const r=rows[i],key=keyFn(r);if(seen.has(key))continue;seen.add(key);rows[write++]=r;} rows.length=write; return rows; };
 const setImportStatus = (text, pct=0, active=true) => {
@@ -6538,7 +6540,7 @@ const ltV5PrunePhraseCandidates = rows => {
       kept.push(row);
       if(kept.length>=12)break;
     }
-    out.push(...kept);
+    appendArray(out,kept);
   }
   return out;
 };
@@ -6879,7 +6881,7 @@ const normalizeAdProductCode = (x) => {
 
 const getAttributionWindowDays = (adProducts = [], rows = []) => {
   const explicit = (rows || []).map(r => safeNum(r.attributionWindowDays)).filter(x => x === 7 || x === 14);
-  if (explicit.length) return Math.max(...explicit);
+  if (explicit.length) return arrayMax(explicit);
   const products = Array.isArray(adProducts) ? adProducts : [adProducts];
   const codes = new Set(products.map(normalizeAdProductCode).filter(Boolean));
   if (codes.has("SB") || codes.has("SD")) return 14;
@@ -7427,7 +7429,7 @@ const buildLongTailExpansionSheets = (rows) => {
     if (!rootMap.has(phrase)) rootMap.set(phrase, { phrase, type, sourceTerms: new Set(), rows: [] });
     const item = rootMap.get(phrase);
     item.sourceTerms.add(c.term);
-    item.rows.push(...(c.sourceRows || []));
+    appendArray(item.rows,c.sourceRows || []);
   };
   rows.forEach(c => {
     if (c.profile?.hasMismatch) return;
@@ -8533,7 +8535,7 @@ const buildActionPlan = (options={}) => {
     else if(stage==="create_broad"&&(exactWinner||phraseWinner)){const source=phraseWinner||exactWinner;rows.push(makeSimpleAction(source,"broad",actionV4Text("广泛词根测试","Broad Root Test"),"Create Broad Keyword",getSuggestedBid(source,"broad",itemMeta.get(source)?.targetAcos||meta.targetAcos),actionV4Text("Exact与Phrase均有成熟证据后，才开放低预算Broad白名单探索。","Open low-budget whitelisted Broad exploration only after mature Exact and Phrase evidence."),true,{category:"scale",name:meta.broadRoot,sourceName:reference.name}));}
   }
 
-  rows.push(...actionV4CampaignActions(globalTarget,controls),...actionV4PlacementActions(globalTarget,controls));
+  appendArray(rows,actionV4CampaignActions(globalTarget,controls));appendArray(rows,actionV4PlacementActions(globalTarget,controls));
   for(const r of rows){
     const owner={increase:"Bid Governance",decrease:"Bid Governance",exact:"Long-Tail Growth",phrase:"Long-Tail Growth",broad:"Long-Tail Growth",budget:"Campaign Studio",placement:"Campaign Studio"}[r.actionKey]||"Action Command Center";
     r.owner=owner;
@@ -11516,7 +11518,7 @@ const studioV7BuildFamilyLayers = (family,settings,accountCtx) => {
   const canBroad=broad.length>=2&&["scale","harvest"].includes(family.stage)&&settings.objective!=="profit"&&settings.risk!=="conservative";
   if(canBroad)add("BROAD_RESEARCH",broad,{match:"broad",priority:48,negatives:[...neg.routing,...neg.phrasePass,...neg.exactPass].slice(0,55),role:studioV7Text("只投放由赚钱长尾反推的白名单词根","Use only roots supported by profitable long-tail queries")});
   const auto=family.auto,autoSpend=[auto.close,auto.loose,auto.substitutes,auto.complements].reduce((s,x)=>s+safeNum(x?.spend),0),activeGroups=[auto.close,auto.loose,auto.substitutes,auto.complements].filter(x=>safeNum(x?.spend)>=15);
-  const vals=activeGroups.map(x=>x.roas||0).filter(Boolean),hetero=vals.length>=2&&(Math.max(...vals)/Math.max(.1,Math.min(...vals))>=1.5),split=settings.segmentation==="segmented"||(settings.segmentation==="auto"&&autoSpend>=80&&hetero);
+  const vals=activeGroups.map(x=>x.roas||0).filter(Boolean),hetero=vals.length>=2&&(arrayMax(vals)/Math.max(.1,arrayMin(vals))>=1.5),split=settings.segmentation==="segmented"||(settings.segmentation==="auto"&&autoSpend>=80&&hetero);
   const discoveryNeeded=["launch","scale","harvest"].includes(family.stage)||settings.objective==="growth";
   if(discoveryNeeded){
     if(split){
@@ -11722,7 +11724,7 @@ const arbitrateCentralDecisions = rows => {
     const ready=candidates.filter(r=>r.status==="ready"&&!r.block),winner=ready[0]||null;
     if(winner){winner.arbitration={role:"winner",reason:"Highest eligible evidence under unified action contract"};for(const r of ready.slice(1)){if(centralActionsConflict(winner,r)){const gap=centralScore(winner.score)-centralScore(r.score);if(gap>=12){r.status="superseded";r.block=`Superseded by ${winner.owner} / ${winner.action} after unified arbitration`;r.arbitration={role:"loser",winner:winner.id,gap};}else{winner.status="conflict";r.status="conflict";winner.block=`Unresolved conflict with ${r.owner} / ${r.action}`;r.block=`Unresolved conflict with ${winner.owner} / ${winner.action}`;winner.arbitration=r.arbitration={role:"conflict",gap};}}else{r.status="superseded";r.note=`Merged under primary action ${winner.action}`;r.arbitration={role:"supporting",winner:winner.id};}}
     }
-    output.push(...candidates);
+    appendArray(output,candidates);
   }
   return output;
 };
@@ -11779,7 +11781,7 @@ const buildCentralAutoDecisionPlan=(force=false)=>{if(force)CENTRAL_CONTROL_CACH
   const deduped=new Map();for(const r of rawPool){const key=r.type==="bid"?centralStable(r.marketplace,"bid-control",r.campaign||r.raw?.sourceCampaign,r.adGroup||r.raw?.sourceAdGroup,r.autoControlMetrics?.targeting||r.raw?.sourceTargeting,centralAutoDirection(r)):centralStable(r.marketplace,r.owner,r.type,r.object,r.asin,r.campaign,r.adGroup);const prev=deduped.get(key);if(!prev||r.autoPriority.score>prev.autoPriority.score||safeNum(r.autoImpact.amount)>safeNum(prev.autoImpact.amount))deduped.set(key,r);}const pool=[...deduped.values()];
   const typeOrder={negative:0,route:1,bid:2,keyword:3};pool.sort((a,b)=>(typeOrder[a.type]??9)-(typeOrder[b.type]??9)||b.autoPriority.score-a.autoPriority.score||safeNum(b.autoImpact.amount)-safeNum(a.autoImpact.amount)||safeNum(b.autoControlMetrics?.spend||b.raw?.spend)-safeNum(a.autoControlMetrics?.spend||a.raw?.spend));
   const counts={negative:0,route:0,bid:0,keyword:0},campaignCounts=new Map(),execute=[],overflow=[];for(const r of pool){const cap=CENTRAL_AUTO_CAPS[r.type]??0,key=String(r.campaign||r.raw?.sourceCampaign||"__account__").toLowerCase(),cc=campaignCounts.get(key)||0;if(execute.length<CENTRAL_AUTO_CAPS.total&&counts[r.type]<cap&&cc<CENTRAL_AUTO_CAPS.perCampaign){execute.push(r);counts[r.type]++;campaignCounts.set(key,cc+1);}else overflow.push({...r,autoExecute:false,autoReason:"已达到本轮变更上限；为避免一次性改动过多，顺延到下一周期"});}
-  exceptions.push(...overflow);exceptions.sort((a,b)=>{const rank=s=>s==="conflict"?0:s==="block"?1:s==="review"?2:s==="wait"?3:4;return rank(a.status)-rank(b.status)||centralScore(b.score)-centralScore(a.score);});
+  appendArray(exceptions,overflow);exceptions.sort((a,b)=>{const rank=s=>s==="conflict"?0:s==="block"?1:s==="review"?2:s==="wait"?3:4;return rank(a.status)-rank(b.status)||centralScore(b.score)-centralScore(a.score);});
   const bulk=execute.filter(r=>r.autoMode==="bulk").length,bidDraft=execute.filter(r=>r.autoMode==="bid_draft").length,manual=execute.filter(r=>r.autoMode==="manual").length,impact=execute.reduce((a,r)=>{if(r.autoImpact.kind==="savings")a.savings+=r.autoImpact.amount;if(r.autoImpact.kind==="sales")a.sales+=r.autoImpact.amount;return a;},{savings:0,sales:0});APP_RUNTIME.centralRegistry.selected.clear();for(const r of execute)APP_RUNTIME.centralRegistry.selected.add(r.id);return {rows,execute,exceptions,bulk,bidDraft,manual,impact};
 };
 
@@ -13642,7 +13644,7 @@ window.addEventListener('load', AdsDashboardApp.init);
     </div>`;
   };
   const renderCosts=r=>{
-    const c=r.current,max=Math.max(...c.expense.map(x=>x.value),1);
+    const c=r.current,max=arrayMax(c.expense.map(x=>x.value),1);
     const rows=c.expense.map(x=>`<div class="txFinanceCostRow"><div class="txFinanceCostName"><b>${esc(x.name)}</b><span>${esc(x.note)}</span></div><div class="txFinanceCostTrack"><div class="txFinanceCostFill" style="width:${Math.min(100,x.value/max*100).toFixed(1)}%"></div></div><div class="txFinanceCostValue"><b>${money(x.value)}</b><span>${pct(x.rate)}</span></div></div>`).join('');
     const catRows=c.categories.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.rows.toLocaleString()}</td><td class="${toneForSigned(x.total)}">${signedMoney(x.total)}</td><td>${pct(x.share)}</td></tr>`).join('');
     return `<div class="txFinTabHeader"><div><h3>成本结构</h3><p>同时管理Amazon费用、广告支出与GitHub商品采购成本。</p></div></div>
@@ -14117,7 +14119,7 @@ window.addEventListener('load', AdsDashboardApp.init);
             }
           }
 
-          if (Array.isArray(summary?.quarantine)) quarantineItems.push(...summary.quarantine);
+          if (Array.isArray(summary?.quarantine)) for(const item of summary.quarantine) quarantineItems.push(item);
           const batchQuarantine = (summary?.quarantine || [])
             .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
             .slice(0, 3)
