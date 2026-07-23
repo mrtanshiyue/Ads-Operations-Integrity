@@ -1,10 +1,11 @@
-name: Repair Cloud CSV Import V3
+name: Repair Cloud CSV Import V4
 
 on:
+  workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/repair-cloud-csv-import-v3.yml'
-  workflow_dispatch:
+      - scripts/repair_cloud_csv_import_v4.py
+      - .github/workflows/repair-cloud-csv-import-v3.yml
 
 permissions:
   contents: write
@@ -13,148 +14,22 @@ jobs:
   repair:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Patch and record diagnostics
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Repair cloud CSV importer
+        run: python scripts/repair_cloud_csv_import_v4.py
+
+      - name: Commit repaired webpage
+        if: success()
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re, traceback
-
-          log=[]
-          try:
-            index_path=Path('index.html')
-            src=index_path.read_text(encoding='utf-8')
-
-            def add_alias(old,new,label):
-              global src
-              if new in src:
-                log.append(f'OK already {label}')
-              elif old in src:
-                src=src.replace(old,new,1)
-                log.append(f'PATCH {label}')
-              else:
-                log.append(f'MISSING {label}: {old}')
-
-            aliases=[
-              ('targeting: ["投放",','targeting: ["投放","投放方案","匹配的目标",','targeting aliases'),
-              ('matchType: ["匹配类型",','matchType: ["匹配类型","投放匹配类型","投放匹配类型-Targeting match type",','match type aliases'),
-              ('searchTerm: ["客户搜索词",','searchTerm: ["客户搜索词","搜索词",','search term alias'),
-              ('spend: ["花费",','spend: ["花费","总成本",','spend alias'),
-              ('sales7d: ["7天总销售额",','sales7d: ["7天总销售额","销售额",','sales alias'),
-              ('orders7d: ["7天总订单数",','orders7d: ["7天总订单数","购买量",','orders alias'),
-              ('units: ["7天总销售量(#)",','units: ["7天总销售量(#)","已售商品数量",','units alias'),
-              ('cvr: ["7天的转化率",','cvr: ["7天的转化率","购买率",','cvr alias'),
-              ('advertisedSales: ["7天内广告SKU销售额",','advertisedSales: ["7天内广告SKU销售额","推广商品的销量",','advertised sales alias'),
-              ('advertisedUnits: ["7天内广告SKU销售量(#)",','advertisedUnits: ["7天内广告SKU销售量(#)","已售商品数量（推广）",','advertised units alias'),
-              ('otherSkuSales: ["7天内其他SKU销售额",','otherSkuSales: ["7天内其他SKU销售额","销售额（光环）",','halo sales alias'),
-              ('otherSkuUnits: ["7天内其他SKU销售量(#)",','otherSkuUnits: ["7天内其他SKU销售量(#)","已售商品数量（光环）",','halo units alias'),
-            ]
-            for old,new,label in aliases:add_alias(old,new,label)
-
-            zh_marker='const zhMatch = s.match(/^(\\d{4})年'
-            date_needle='''  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2].padStart(2,'0')}-${isoMatch[3].padStart(2,'0')}`;
-  const euMatch = s.match(/^(\\d{1,2})[-\\/.](\\d{1,2})[-\\/.](\\d{4})/);'''
-            date_insert='''  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2].padStart(2,'0')}-${isoMatch[3].padStart(2,'0')}`;
-  const zhMatch = s.match(/^(\\d{4})年\\s*(\\d{1,2})月\\s*(\\d{1,2})日?/);
-  if (zhMatch) return `${zhMatch[1]}-${zhMatch[2].padStart(2,'0')}-${zhMatch[3].padStart(2,'0')}`;
-  const euMatch = s.match(/^(\\d{1,2})[-\\/.](\\d{1,2})[-\\/.](\\d{4})/);'''
-            if zh_marker in src:log.append('OK already Chinese date parser')
-            elif date_needle in src:
-              src=src.replace(date_needle,date_insert,1);log.append('PATCH Chinese date parser')
-            else:log.append('MISSING Chinese date insertion point')
-
-            cloud_parser_marker='const isCloudFile=/^(?:ALL|YTDBNS|YY|JJ)__/'
-            if cloud_parser_marker in src:
-              log.append('OK already cloud parser')
-            else:
-              pattern=r'const parseCSV = async file => \{.*?\};\nconst XLSX_WORKER_LIB'
-              new_parse='''const parseCSV = async file => {
-  const prefix=await file.slice(0,262144).text();
-  const headerLine=findTransactionHeaderLine(prefix);
-  const isCloudFile=/^(?:ALL|YTDBNS|YY|JJ)__/.test(String(file?.name||"").toUpperCase());
-  if(headerLine>=0||isCloudFile){
-    const rawText=await file.text();
-    const lines=rawText.replace(/^\\uFEFF/,"").split(/\\r?\\n/);
-    const start=headerLine>=0?findTransactionHeaderLine(rawText):0;
-    const body=lines.slice(Math.max(0,start)).join("\\n");
-    return new Promise((resolve,reject)=>Papa.parse(body,{header:true,skipEmptyLines:"greedy",worker:false,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
-  }
-  return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:"greedy",worker:true,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
-};
-const XLSX_WORKER_LIB'''
-              src,n=re.subn(pattern,new_parse,src,count=1,flags=re.S)
-              log.append(f'PATCH cloud parser count={n}')
-
-            bridge_marker='acceptedRows:Number(AdsStore.importStats?.acceptedRows||0)'
-            old_bridge='window.__LR_IMPORT_MULTIPLE_FILES__ = async files => importMultipleFiles(files);'
-            if bridge_marker in src:log.append('OK already import summary bridge')
-            elif old_bridge in src:
-              new_bridge='''window.__LR_IMPORT_MULTIPLE_FILES__ = async files => {
-  await importMultipleFiles(files);
-  return {
-    acceptedRows:Number(AdsStore.importStats?.acceptedRows||0),
-    adsRows:Number(AdsStore.all?.length||0),
-    transactionRows:Number(AdsStore.transactions?.length||0),
-    businessRows:Number(AdsStore.biz?.length||0),
-    files:(AdsStore.files||[]).map(x=>({name:x.name,rows:Number(x.rows||0),type:x.type||""})),
-    quarantine:(AdsStore.quarantine||[]).map(x=>({fileName:x.fileName||"",reportType:x.reportType||"",reasons:Array.isArray(x.reasons)?x.reasons:[]}))
-  };
-};'''
-              src=src.replace(old_bridge,new_bridge,1);log.append('PATCH import summary bridge')
-            else:log.append('MISSING import bridge')
-            index_path.write_text(src,encoding='utf-8')
-
-            old_block='''      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
-      try {
-        await cloudImporter(csvFiles);
-      } finally {
-        if (mergeSelect) mergeSelect.value = previousMerge;
-      }
-
-      let costSummary = null;'''
-            new_block='''      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
-      let importSummary = null;
-      try {
-        importSummary = await cloudImporter(csvFiles);
-      } finally {
-        if (mergeSelect) mergeSelect.value = previousMerge;
-      }
-      const importedRows = Number(importSummary?.acceptedRows || 0);
-      const adsRows = Number(importSummary?.adsRows || 0);
-      const transactionRows = Number(importSummary?.transactionRows || 0);
-      const quarantineText = (importSummary?.quarantine || []).flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`)).slice(0, 3).join('；');
-      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
-      if (!importedRows || (expectsAds && !adsRows)) throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
-
-      let costSummary = null;'''
-            for path in [Path('assets/private-cloud-warehouse-v3.js'),index_path]:
-              s=path.read_text(encoding='utf-8')
-              if 'let importSummary = null;' in s:log.append(f'OK already cloud summary {path}')
-              elif old_block in s:
-                s=s.replace(old_block,new_block,1);log.append(f'PATCH cloud summary {path}')
-              else:log.append(f'MISSING cloud summary block {path}')
-              old_total='const totalRows = Number(fetchedRows || manifest?.totalRows || 0);'
-              if old_total in s:
-                s=s.replace(old_total,'const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);',1);log.append(f'PATCH imported total {path}')
-              elif 'const totalRows = Number(importedRows ||' in s:log.append(f'OK already imported total {path}')
-              else:log.append(f'MISSING totalRows {path}')
-              path.write_text(s,encoding='utf-8')
-
-            final=index_path.read_text(encoding='utf-8')
-            checks=['"总成本"','"购买量"','"销售额"','"搜索词"','const zhMatch','const isCloudFile','acceptedRows:Number','let importSummary = null;']
-            for c in checks:log.append(('VERIFY OK ' if c in final else 'VERIFY MISSING ')+c)
-          except Exception:
-            log.append('EXCEPTION')
-            log.append(traceback.format_exc())
-
-          Path('.diagnostics').mkdir(exist_ok=True)
-          Path('.diagnostics/repair-v3.log').write_text('\n'.join(log),encoding='utf-8')
-          print('\n'.join(log))
-          PY
-      - name: Commit patch and log
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/repair-v3.log
-          git diff --cached --quiet || git commit -m "Repair cloud CSV importer with diagnostics"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets/private-cloud-warehouse-v3.js .diagnostics/repair-cloud-csv-v4.log
+          git diff --cached --quiet || git commit -m "Repair cloud CSV importer compatibility"
           git push
