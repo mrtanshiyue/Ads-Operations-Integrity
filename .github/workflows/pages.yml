@@ -1,4 +1,5 @@
 name: Deploy Ads Operations Integrity
+# Redeploy marker: shop scope UI
 
 on:
   push:
