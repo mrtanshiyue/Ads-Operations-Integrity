@@ -25,6 +25,7 @@
     return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
   };
   const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');
+  const displayScope = value => window.ShopScope?.display?.(value) || (normalizeScope(value) === 'YTDBNS' ? 'YT' : normalizeScope(value));
 
   const setStatus = (message, kind = '') => {
     const el = byId('privateCloudImportStatus');
@@ -218,7 +219,7 @@
 
     const scope = activeScope();
     try {
-      setStatus(`正在连接 Amazon-Data-Warehouse · ${scope}…`);
+      setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
       if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
@@ -226,10 +227,10 @@
       }
       state.apiVersion = String(health.version || '3');
 
-      setStatus(`正在扫描 ${scope} 店铺文件清单…`);
+      setStatus(`正在扫描 ${displayScope(scope)} 店铺文件清单…`);
       const manifest = await apiFetchJson(`/manifest?scope=${encodeURIComponent(scope)}`, password);
       const entries = Array.isArray(manifest?.files) ? manifest.files.filter(isImportableEntry) : [];
-      if (!entries.length) throw new Error(`${scope} 当前没有可加载的广告、联合交易或业务报表`);
+      if (!entries.length) throw new Error(`${displayScope(scope)} 当前没有可加载的广告、联合交易或业务报表`);
       state.manifest = manifest;
       sessionSafe.set(SESSION_KEY, password);
 
@@ -238,7 +239,7 @@
       let redactedFiles = 0;
       for (let index = 0; index < entries.length; index += 1) {
         const entry = entries[index];
-        const label = `${entry.storeId || scope} · ${entry.month || entry.filename || index + 1}`;
+        const label = `${displayScope(entry.storeId || scope)} · ${entry.month || entry.filename || index + 1}`;
         setStatus(`正在下载 ${label}（${index + 1}/${entries.length}）…`);
         const loaded = await fetchManifestEntry(entry, password, scope);
         csvFiles.push(loaded.file);
@@ -255,7 +256,7 @@
       const mergeSelect = byId('mergeMode');
       const previousMerge = mergeSelect?.value || 'append';
       if (mergeSelect) mergeSelect.value = 'replace';
-      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      setStatus(`已下载 ${entries.length} 个文件，正在按 ${displayScope(scope)} 范围建立分析索引…`);
       let importSummary = null;
       try {
         importSummary = await cloudImporter(csvFiles);
@@ -306,13 +307,13 @@
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
-      const statusText = `${scope} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
+      const statusText = `${displayScope(scope)} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
       state.loadedOnce = true;
       state.loadedScope = scope;
       document.documentElement.dataset.loadedShopScope = scope;
       setStatus(statusText, costWarning ? 'warn' : 'good');
       const brand = byId('brandStatus');
-      if (brand) brand.textContent = `系统就绪 · ${scope} 私密仓库 ${totalRows.toLocaleString()} 行`;
+      if (brand) brand.textContent = `系统就绪 · ${displayScope(scope)} 私密仓库 ${totalRows.toLocaleString()} 行`;
       window.dispatchEvent(new CustomEvent('lr:cloud-loaded', {
         detail: { scope, files: entries.length, rows: totalRows, months, redactedFiles, apiVersion: state.apiVersion },
       }));
@@ -338,17 +339,17 @@
     const scope = normalizeScope(event?.detail?.shop || activeScope());
     if (state.autoReloadTimer) clearTimeout(state.autoReloadTimer);
     if (!state.loadedOnce || !sessionSafe.get(SESSION_KEY)) {
-      setStatus(`已切换到 ${scope}；点击“加载私有云数据”读取该店铺`, 'warn');
+      setStatus(`已切换到 ${displayScope(scope)}；点击“加载私有云数据”读取该店铺`, 'warn');
       return;
     }
-    setStatus(`正在切换云端数据到 ${scope}…`);
+    setStatus(`正在切换云端数据到 ${displayScope(scope)}…`);
     state.autoReloadTimer = setTimeout(() => loadPrivateCloudData({ reason: 'shop-change' }), 220);
   };
 
   const init = () => {
     ensureUi();
     if (sessionSafe.get(SESSION_KEY)) {
-      setStatus(`已保存当前标签页会话密码；点击加载 ${activeScope()} 私密仓库数据`);
+      setStatus(`已保存当前标签页会话密码；点击加载 ${displayScope(activeScope())} 私密仓库数据`);
     }
     window.addEventListener('lr:shop-change', scheduleScopeReload);
     window.PrivateCloudAds = {

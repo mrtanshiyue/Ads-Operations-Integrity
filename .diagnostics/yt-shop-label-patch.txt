@@ -1,0 +1,28 @@
+PATCH shop short-label map
+PATCH active shop hint
+PATCH shop-change notification
+PATCH shop selector button text
+PATCH ShopScope display API
+PATCH embedded loader displayScope helper
+PATCH embedded loader connect status
+PATCH embedded loader scan status
+PATCH embedded loader empty-scope error
+PATCH embedded loader download label
+PATCH embedded loader indexing status
+PATCH embedded loader loaded status
+PATCH embedded loader brand status
+PATCH embedded loader switch prompt
+PATCH embedded loader switch status
+PATCH embedded loader saved-password status
+PATCH source loader displayScope helper
+PATCH source loader connect status
+PATCH source loader scan status
+PATCH source loader empty-scope error
+PATCH source loader download label
+PATCH source loader indexing status
+PATCH source loader loaded status
+PATCH source loader brand status
+PATCH source loader switch prompt
+PATCH source loader switch status
+PATCH source loader saved-password status
+SUCCESS
