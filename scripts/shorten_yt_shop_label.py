@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,15 +24,15 @@ def replace_once(text: str, old: str, new: str, marker: str, label: str, log: li
     raise RuntimeError(f"Anchor not found: {label}")
 
 
-def replace_all_required(text: str, old: str, new: str, marker: str, label: str, log: list[str]) -> str:
-    count = text.count(old)
-    if count:
-        log.append(f"PATCH {label}: {count}")
-        return text.replace(old, new)
+def regex_replace_once(text: str, pattern: str, replacement: str, marker: str, label: str, log: list[str]) -> str:
     if marker in text:
         log.append(f"OK {label} already present")
         return text
-    raise RuntimeError(f"Anchor not found: {label}")
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise RuntimeError(f"Anchor not found: {label}")
+    log.append(f"PATCH {label}")
+    return updated
 
 
 class InlineScriptExtractor(HTMLParser):
@@ -61,10 +62,10 @@ class InlineScriptExtractor(HTMLParser):
 
 
 def patch_shop_ui(text: str, log: list[str]) -> str:
-    text = replace_once(
+    text = regex_replace_once(
         text,
-        "const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);\n            const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});",
-        "const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);\n            const SHOP_SHORT_LABELS = Object.freeze({ALL:'ALL',YTDBNS:'YT',YY:'YY',JJ:'JJ'});\n            const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YT 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});",
+        r"const SHOPS = Object\.freeze\(\['ALL','YTDBNS','YY','JJ'\]\);\s*const SHOP_LABELS = Object\.freeze\(\{ALL:'全部店铺',YTDBNS:'YTDBNS 店铺',YY:'YY 店铺',JJ:'JJ 店铺'\}\);",
+        "const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);\n  const SHOP_SHORT_LABELS = Object.freeze({ALL:'ALL',YTDBNS:'YT',YY:'YY',JJ:'JJ'});\n  const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YT 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});",
         "const SHOP_SHORT_LABELS = Object.freeze({ALL:'ALL',YTDBNS:'YT'",
         "shop short-label map",
         log,
@@ -93,10 +94,10 @@ def patch_shop_ui(text: str, log: list[str]) -> str:
         "shop selector button text",
         log,
     )
-    text = replace_once(
+    text = regex_replace_once(
         text,
-        "window.ShopScope = Object.freeze({\n                options: SHOPS,\n                labels: SHOP_LABELS,\n                get: () => activeShop,",
-        "window.ShopScope = Object.freeze({\n                options: SHOPS,\n                labels: SHOP_LABELS,\n                shortLabels: SHOP_SHORT_LABELS,\n                display: value => SHOP_SHORT_LABELS[normalizeShop(value)],\n                get: () => activeShop,",
+        r"window\.ShopScope = Object\.freeze\(\{\s*options: SHOPS,\s*labels: SHOP_LABELS,\s*get: \(\) => activeShop,",
+        "window.ShopScope = Object.freeze({\n    options: SHOPS,\n    labels: SHOP_LABELS,\n    shortLabels: SHOP_SHORT_LABELS,\n    display: value => SHOP_SHORT_LABELS[normalizeShop(value)],\n    get: () => activeShop,",
         "display: value => SHOP_SHORT_LABELS[normalizeShop(value)]",
         "ShopScope display API",
         log,
