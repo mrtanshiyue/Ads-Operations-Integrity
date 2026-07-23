@@ -1,4 +1,5 @@
 name: Shorten YT Shop Label V3
+# Trigger existing workflow after creation
 
 on:
   push:
