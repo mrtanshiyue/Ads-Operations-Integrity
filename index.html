@@ -13728,16 +13728,29 @@ window.addEventListener('load', AdsDashboardApp.init);
   'use strict';
 
   const API_ORIGIN = 'https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev';
-  const API_FALLBACK_ORIGIN = 'https://amazon-ad-private-api.tanshiyuesir.workers.dev';
   const SESSION_KEY = 'lr_private_cloud_password';
-  const state = { loading: false, manifest: null };
+  const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
+  const state = {
+    loading: false,
+    manifest: null,
+    loadedOnce: false,
+    loadedScope: '',
+    apiVersion: '',
+    autoReloadTimer: null,
+  };
+
   const byId = id => document.getElementById(id);
   const sessionSafe = {
     get: key => { try { return sessionStorage.getItem(key) || ''; } catch (_) { return ''; } },
-    set: (key,value) => { try { sessionStorage.setItem(key,value); return true; } catch (_) { return false; } },
-    remove: key => { try { sessionStorage.removeItem(key); } catch (_) {} }
+    set: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (_) { return false; } },
+    remove: key => { try { sessionStorage.removeItem(key); } catch (_) {} },
   };
   const sleepFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+  const normalizeScope = value => {
+    const scope = String(value || '').trim().toUpperCase();
+    return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
+  };
+  const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');
 
   const setStatus = (message, kind = '') => {
     const el = byId('privateCloudImportStatus');
@@ -13752,9 +13765,12 @@ window.addEventListener('load', AdsDashboardApp.init);
     const clearBtn = byId('btnPrivateCloudLogout');
     if (loadBtn) {
       loadBtn.disabled = busy;
-      loadBtn.textContent = busy ? '正在加载私有云数据…' : '☁ 加载私有云数据';
+      loadBtn.textContent = busy ? '正在加载私密仓库数据…' : '☁ 加载私有云数据';
     }
     if (clearBtn) clearBtn.disabled = busy;
+    document.querySelectorAll('#privateCloudImportPanel [data-shop]').forEach(button => {
+      button.disabled = busy;
+    });
   };
 
   const notifyUser = (message, kind = 'good') => {
@@ -13792,103 +13808,71 @@ window.addEventListener('load', AdsDashboardApp.init);
         <button class="btn primary" id="btnPrivateCloudImport" type="button">☁ 加载私有云数据</button>
         <button class="btn" id="btnPrivateCloudLogout" type="button" title="清除当前标签页保存的访问密码">清除密码</button>
       </div>
-      <div class="small" id="privateCloudImportStatus">Cloudflare 私有接口 · 未连接</div>
+      <div class="small" id="privateCloudImportStatus">Amazon-Data-Warehouse · 未连接</div>
     `;
     input.insertAdjacentElement('afterend', panel);
 
-    byId('btnPrivateCloudImport')?.addEventListener('click', () => loadPrivateCloudData());
+    byId('btnPrivateCloudImport')?.addEventListener('click', () => loadPrivateCloudData({ reason: 'manual' }));
     byId('btnPrivateCloudLogout')?.addEventListener('click', () => {
       sessionSafe.remove(SESSION_KEY);
+      state.loadedOnce = false;
+      state.loadedScope = '';
       setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
       notifyUser('私有云会话密码已清除。', 'good');
     });
   };
 
   const requestPassword = () => {
-    const password = window.prompt('请输入广告工作台密码');
+    const password = window.prompt('请输入私密仓库网页登录密码');
     return typeof password === 'string' ? password.trim() : '';
   };
 
-  const normalizeApiPath = input => {
+  const normalizeApiTarget = input => {
     const raw = String(input || '').trim();
-    let pathname = raw;
-    try {
-      if (/^https?:\/\//i.test(raw)) pathname = new URL(raw).pathname;
-    } catch (_) {}
-    pathname = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    const parsed = new URL(raw || '/', window.location.origin);
+    let pathname = parsed.pathname.startsWith('/') ? parsed.pathname : `/${parsed.pathname}`;
     pathname = pathname.replace(/\/{2,}/g, '/');
     pathname = pathname.replace(/^(?:\/api\/v1)+/i, '/api/v1');
-    pathname = pathname.replace(/^\/api\/v1\/processed\//i, '/api/v1/');
-    pathname = pathname.replace(/^\/processed\//i, '/');
     if (!pathname.startsWith('/api/v1/')) pathname = `/api/v1${pathname}`;
-    return pathname;
+    return `${pathname}${parsed.search || ''}`;
   };
 
-  const toLegacyApiPath = normalized => {
-    let pathname = String(normalized || '');
-    pathname = pathname.replace(/^\/api\/v1\/manifest$/i, '/manifest');
-    pathname = pathname.replace(/^\/api\/v1\/audit$/i, '/audit');
-    pathname = pathname.replace(/^\/api\/v1\/data\/product-costs(?:\.json)?$/i, '/data/product-costs.json');
-    pathname = pathname.replace(/^\/api\/v1\/data\/(ads|transactions)\/(\d{4}-\d{2})$/i, '/data/$1-$2.json');
-    pathname = pathname.replace(/^\/api\/v1\/data\//i, '/data/');
-    return pathname;
-  };
+  const requestApi = async (target, password, responseType = 'json') => {
+    const path = normalizeApiTarget(target);
+    let response;
+    try {
+      response = await fetch(`${API_ORIGIN}${path}`, {
+        method: 'GET',
+        headers: { 'X-Dashboard-Password': password },
+        cache: 'no-store',
+      });
+    } catch (networkError) {
+      const error = new Error(`无法连接私有云接口：${networkError?.message || '网络错误'}`);
+      error.path = path;
+      throw error;
+    }
 
-  const requestApiJson = async (origin, pathname, password) => {
-    const response = await fetch(`${origin}${pathname}`, {
-      method: 'GET',
-      headers: { 'X-Dashboard-Password': password },
-      cache: 'no-store'
-    });
     const text = await response.text();
     let payload = null;
-    try { payload = text ? JSON.parse(text) : null; } catch (_) {}
-    return { response, payload };
-  };
-
-  const apiFetchJson = async (path, password) => {
-    const normalized = normalizeApiPath(path);
-    let primaryResult = null;
-    let primaryNetworkError = null;
-
-    try {
-      primaryResult = await requestApiJson(API_ORIGIN, normalized, password);
-      if (primaryResult.response.ok) {
-        state.apiChannel = 'v2-cache';
-        return primaryResult.payload;
-      }
-      if (![404, 502, 503, 504].includes(primaryResult.response.status)) {
-        const detail = primaryResult.payload?.error || `私有接口请求失败（HTTP ${primaryResult.response.status}）`;
-        const error = new Error(`${detail} · ${normalized}`);
-        error.status = primaryResult.response.status;
-        error.path = normalized;
-        throw error;
-      }
-    } catch (error) {
-      if (error?.status) throw error;
-      primaryNetworkError = error;
+    if (responseType === 'json') {
+      try { payload = text ? JSON.parse(text) : null; } catch (_) {}
     }
-
-    const legacyPath = toLegacyApiPath(normalized);
-    try {
-      const fallbackResult = await requestApiJson(API_FALLBACK_ORIGIN, legacyPath, password);
-      if (fallbackResult.response.ok) {
-        state.apiChannel = 'legacy-fallback';
-        return fallbackResult.payload;
-      }
-      const detail = fallbackResult.payload?.error || `备用私有接口请求失败（HTTP ${fallbackResult.response.status}）`;
-      const error = new Error(`${detail} · ${legacyPath}`);
-      error.status = fallbackResult.response.status;
-      error.path = legacyPath;
-      throw error;
-    } catch (fallbackError) {
-      if (fallbackError?.status) throw fallbackError;
-      const primaryStatus = primaryResult?.response?.status ? `HTTP ${primaryResult.response.status}` : (primaryNetworkError?.message || '网络错误');
-      const error = new Error(`V2接口不可用（${primaryStatus}），备用接口连接失败 · ${legacyPath}`);
-      error.path = legacyPath;
+    if (!response.ok) {
+      const detail = payload?.error || text || `HTTP ${response.status}`;
+      const error = new Error(`${detail} · ${path}`);
+      error.status = response.status;
+      error.path = path;
       throw error;
     }
+    return {
+      payload: responseType === 'json' ? payload : text,
+      response,
+      path,
+    };
   };
+
+  const apiFetchJson = async (path, password) => (await requestApi(path, password, 'json')).payload;
+  const apiFetchText = async (path, password) => requestApi(path, password, 'text');
 
   const extractRows = payload => {
     if (Array.isArray(payload?.rows)) return payload.rows;
@@ -13898,53 +13882,94 @@ window.addEventListener('load', AdsDashboardApp.init);
     return [];
   };
 
-  const payloadToCsvFile = (payload, entry) => {
+  const jsonPayloadToCsvFile = (payload, entry, scope) => {
     const rows = extractRows(payload);
     if (!rows.length) throw new Error(`${entry.month || entry.url} 没有可导入的数据行`);
     if (!window.Papa?.unparse) throw new Error('PapaParse 未加载，无法转换私有云数据');
     const csv = window.Papa.unparse(rows, { quotes: false, newline: '\r\n' });
-    const filename = String(entry.url || `ads-${entry.month}.json`).split('/').pop().replace(/\.json$/i, '.csv');
-    return new File([csv], filename, { type: 'text/csv;charset=utf-8', lastModified: Date.now() });
+    const baseName = String(entry.filename || entry.url || `${entry.dataType || 'data'}-${entry.month}.json`)
+      .split('/').pop().replace(/\.json(?:\?.*)?$/i, '.csv');
+    const store = String(entry.storeId || entry.store || scope || 'ALL').toUpperCase();
+    return new File([csv], `${store}__${baseName}`, { type: 'text/csv;charset=utf-8', lastModified: Date.now() });
   };
 
-  const loadPrivateCloudData = async () => {
+  const rawTextToCsvFile = (text, entry, scope) => {
+    if (!String(text || '').trim()) throw new Error(`${entry.filename || entry.url} 返回空文件`);
+    const baseName = String(entry.filename || entry.url || `${entry.month}-${entry.reportType}.csv`).split('/').pop().split('?')[0];
+    const store = String(entry.storeId || entry.store || scope || 'ALL').toUpperCase();
+    return new File([text], `${store}__${baseName}`, { type: 'text/csv;charset=utf-8', lastModified: Date.now() });
+  };
+
+  const isImportableEntry = entry => {
+    const dataType = String(entry?.dataType || '').trim().toLowerCase().replace(/[^a-z]/g, '');
+    const reportType = String(entry?.reportType || '').trim().toLowerCase();
+    const url = String(entry?.url || '');
+    if (IMPORTABLE_DATA_TYPES.has(dataType)) return true;
+    if (/^(advertising-report|combined-report|business-report|ads-search-term|ads-targeting|ads-campaign|ads-advertised-product|ads-placement)$/.test(reportType)) return true;
+    return /(?:advertising|combined|business|ads|transactions)-report|(?:ads|transactions)-\d{4}-\d{2}\.json/i.test(url);
+  };
+
+  const fetchManifestEntry = async (entry, password, scope) => {
+    const url = String(entry?.url || '').trim();
+    if (!url) throw new Error('数据清单中存在缺少 URL 的文件');
+    const expectsJson = /\.json(?:$|\?)/i.test(url) || entry?.format === 'json';
+    if (expectsJson) {
+      const payload = await apiFetchJson(url, password);
+      return {
+        file: jsonPayloadToCsvFile(payload, entry, scope),
+        rowCount: Number(entry.rowCount || extractRows(payload).length || 0),
+        redacted: Boolean(entry.redacted),
+      };
+    }
+    const result = await apiFetchText(url, password);
+    return {
+      file: rawTextToCsvFile(result.payload, entry, scope),
+      rowCount: Number(result.response.headers.get('X-Warehouse-Row-Count') || entry.rowCount || 0),
+      redacted: result.response.headers.get('X-Warehouse-Redacted') === '1',
+    };
+  };
+
+  const loadPrivateCloudData = async ({ reason = 'manual' } = {}) => {
     if (state.loading) return;
     ensureUi();
     setBusy(true);
 
     let password = sessionSafe.get(SESSION_KEY);
-    if (!password) password = requestPassword();
+    if (!password && reason !== 'shop-change') password = requestPassword();
     if (!password) {
       setBusy(false);
-      setStatus('已取消私有云数据加载', 'warn');
+      setStatus(reason === 'shop-change' ? '店铺已切换；点击“加载私有云数据”并输入密码' : '已取消私有云数据加载', 'warn');
       return;
     }
 
+    const scope = activeScope();
     try {
-      setStatus('正在验证私有接口与读取数据清单…');
+      setStatus(`正在连接 Amazon-Data-Warehouse · ${scope}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
-      const manifest = await apiFetchJson('/manifest', password);
-      const entries = Array.isArray(manifest?.files) ? manifest.files : [];
-      const entryType = entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '');
-      const entryUrl = entry => String(entry?.url || '');
-      const isMonthlyData = entry => ['ads', 'transactions'].includes(entryType(entry)) || /(?:^|\/)(?:ads|transactions)-\d{4}-\d{2}\.json(?:$|\?)/i.test(entryUrl(entry));
-      const isCostData = entry => entryType(entry) === 'productcosts' || /(?:^|\/)product-costs\.json(?:$|\?)/i.test(entryUrl(entry));
-      const dataEntries = entries.filter(isMonthlyData);
-      const costEntry = entries.find(isCostData) || manifest?.productCosts || null;
-      if (!dataEntries.length) throw new Error('数据清单为空，没有可加载的广告或交易文件');
+      if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
+        throw new Error('Cloudflare Worker 尚未升级到私密仓库 V3 接口');
+      }
+      state.apiVersion = String(health.version || '3');
+
+      setStatus(`正在扫描 ${scope} 店铺文件清单…`);
+      const manifest = await apiFetchJson(`/manifest?scope=${encodeURIComponent(scope)}`, password);
+      const entries = Array.isArray(manifest?.files) ? manifest.files.filter(isImportableEntry) : [];
+      if (!entries.length) throw new Error(`${scope} 当前没有可加载的广告、联合交易或业务报表`);
       state.manifest = manifest;
       sessionSafe.set(SESSION_KEY, password);
 
       const csvFiles = [];
       let fetchedRows = 0;
-      for (let index = 0; index < dataEntries.length; index += 1) {
-        const entry = dataEntries[index];
-        setStatus(`正在下载 ${entry.month || index + 1}（${index + 1}/${dataEntries.length}）…`);
-        const payload = await apiFetchJson(entry.url, password);
-        const file = payloadToCsvFile(payload, entry);
-        csvFiles.push(file);
-        fetchedRows += Number(entry.rowCount || extractRows(payload).length || 0);
+      let redactedFiles = 0;
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const label = `${entry.storeId || scope} · ${entry.month || entry.filename || index + 1}`;
+        setStatus(`正在下载 ${label}（${index + 1}/${entries.length}）…`);
+        const loaded = await fetchManifestEntry(entry, password, scope);
+        csvFiles.push(loaded.file);
+        fetchedRows += Number(loaded.rowCount || 0);
+        if (loaded.redacted) redactedFiles += 1;
         await sleepFrame();
       }
 
@@ -13956,7 +13981,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       const mergeSelect = byId('mergeMode');
       const previousMerge = mergeSelect?.value || 'append';
       if (mergeSelect) mergeSelect.value = 'replace';
-      setStatus(`已下载 ${dataEntries.length} 个广告/交易文件，正在导入并建立索引…`);
+      setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
       try {
         await cloudImporter(csvFiles);
       } finally {
@@ -13965,36 +13990,44 @@ window.addEventListener('load', AdsDashboardApp.init);
 
       let costSummary = null;
       let costWarning = '';
-      try {
-        setStatus('广告与交易数据已导入，正在读取GitHub商品采购成本库…');
-        const costUrlRaw = String(costEntry?.url || 'data/product-costs.json').trim();
-        const costUrl = costUrlRaw.startsWith('/') ? costUrlRaw : `/${costUrlRaw}`;
-        const costPayload = await apiFetchJson(costUrl, password);
-        const costImporter = window.__LR_IMPORT_PRODUCT_COSTS__;
-        if (typeof costImporter !== 'function') throw new Error('商品成本导入桥接未初始化');
-        costSummary = await costImporter(costPayload);
-      } catch (costError) {
-        console.warn('Product cost library load failed:', costError);
-        costWarning = costError?.message || String(costError);
+      const costEntry = (manifest?.files || []).find(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'productcosts') || manifest?.productCosts || null;
+      if (costEntry?.url) {
+        try {
+          setStatus('报表已导入，正在读取商品成本库…');
+          const costPayload = await apiFetchJson(costEntry.url, password);
+          const costImporter = window.__LR_IMPORT_PRODUCT_COSTS__;
+          if (typeof costImporter !== 'function') throw new Error('商品成本导入桥接未初始化');
+          costSummary = await costImporter(costPayload);
+        } catch (costError) {
+          console.warn('Product cost library load failed:', costError);
+          costWarning = costError?.message || String(costError);
+        }
       }
 
-      const totalRows = Number(manifest.totalRows || fetchedRows || 0);
+      const totalRows = Number(fetchedRows || manifest?.totalRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
-      const apiLabel = state.apiChannel === 'legacy-fallback' ? '备用接口' : 'V2缓存接口';
-      const statusText = `私有云数据已加载：${totalRows.toLocaleString()} 行 · ${dataEntries.length} 个广告/交易文件${costRows?` · 成本库 ${costRows.toLocaleString()} SKU`:' · 成本库未加载'} · ${apiLabel}`;
+      const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
+      const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
+      const statusText = `${scope} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
+      state.loadedOnce = true;
+      state.loadedScope = scope;
+      document.documentElement.dataset.loadedShopScope = scope;
       setStatus(statusText, costWarning ? 'warn' : 'good');
       const brand = byId('brandStatus');
-      if (brand) brand.textContent = `系统就绪 · 私有云 ${totalRows.toLocaleString()} 行${costRows?` · 成本 ${costRows.toLocaleString()} SKU`:''}`;
-      notifyUser(costWarning?`${statusText}；${costWarning}`:statusText,costWarning?'warn':'good');
+      if (brand) brand.textContent = `系统就绪 · ${scope} 私密仓库 ${totalRows.toLocaleString()} 行`;
+      window.dispatchEvent(new CustomEvent('lr:cloud-loaded', {
+        detail: { scope, files: entries.length, rows: totalRows, months, redactedFiles, apiVersion: state.apiVersion },
+      }));
+      notifyUser(costWarning ? `${statusText}；${costWarning}` : statusText, costWarning ? 'warn' : 'good');
     } catch (error) {
-      console.error('Private cloud import failed:', error);
+      console.error('Private warehouse import failed:', error);
       if (error?.status === 401) sessionSafe.remove(SESSION_KEY);
       const message = error?.status === 401
         ? '网页登录密码错误，请清除密码后重新加载'
         : error?.status === 403
           ? '当前网页来源未被 Worker 授权'
           : error?.status === 502
-            ? 'Worker 无法读取 GitHub 私有仓库，请检查令牌权限'
+            ? 'Worker 无法读取 GitHub 私密仓库，请检查 WAREHOUSE_GITHUB_TOKEN'
             : (error?.message || String(error));
       setStatus(message, 'bad');
       notifyUser(message, 'bad');
@@ -14003,17 +14036,36 @@ window.addEventListener('load', AdsDashboardApp.init);
     }
   };
 
+  const scheduleScopeReload = event => {
+    const scope = normalizeScope(event?.detail?.shop || activeScope());
+    if (state.autoReloadTimer) clearTimeout(state.autoReloadTimer);
+    if (!state.loadedOnce || !sessionSafe.get(SESSION_KEY)) {
+      setStatus(`已切换到 ${scope}；点击“加载私有云数据”读取该店铺`, 'warn');
+      return;
+    }
+    setStatus(`正在切换云端数据到 ${scope}…`);
+    state.autoReloadTimer = setTimeout(() => loadPrivateCloudData({ reason: 'shop-change' }), 220);
+  };
+
   const init = () => {
     ensureUi();
     if (sessionSafe.get(SESSION_KEY)) {
-      setStatus('已保存当前标签页会话密码，点击即可重新加载私有云数据');
+      setStatus(`已保存当前标签页会话密码；点击加载 ${activeScope()} 私密仓库数据`);
     }
+    window.addEventListener('lr:shop-change', scheduleScopeReload);
     window.PrivateCloudAds = {
-      load: loadPrivateCloudData,
+      load: options => loadPrivateCloudData(options || {}),
+      reload: () => loadPrivateCloudData({ reason: 'shop-change' }),
       clearPassword: () => sessionSafe.remove(SESSION_KEY),
       apiBase: API_ORIGIN,
-      fallbackApiBase: API_FALLBACK_ORIGIN,
-      channel: () => state.apiChannel || 'unknown'
+      channel: () => 'warehouse-v3',
+      state: () => ({
+        loading: state.loading,
+        loadedOnce: state.loadedOnce,
+        loadedScope: state.loadedScope,
+        apiVersion: state.apiVersion,
+        manifest: state.manifest,
+      }),
     };
   };
 
