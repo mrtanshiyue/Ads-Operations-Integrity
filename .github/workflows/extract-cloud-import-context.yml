@@ -1,0 +1,62 @@
+name: Extract Cloud Import Context
+
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-cloud-import-context.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Extract importer context
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          src = Path('index.html').read_text(encoding='utf-8')
+          lines = src.splitlines()
+          terms = [
+              'importMultipleFiles',
+              '__LR_IMPORT_MULTIPLE_FILES__',
+              'parseCSV',
+              'Papa.parse',
+              'fileRows',
+              'importedFiles',
+              'renderFileList',
+              '联合交易',
+              'combined-report',
+              'transaction',
+          ]
+          hits = []
+          for i, line in enumerate(lines):
+              if any(term.lower() in line.lower() for term in terms):
+                  hits.append(i)
+          ranges = []
+          for i in hits:
+              start=max(0,i-80); end=min(len(lines),i+121)
+              if ranges and start <= ranges[-1][1]+20:
+                  ranges[-1]=(ranges[-1][0], max(ranges[-1][1], end))
+              else:
+                  ranges.append((start,end))
+          out=[]
+          for n,(start,end) in enumerate(ranges,1):
+              out.append(f'===== BLOCK {n}: L{start+1}-L{end} =====')
+              out.extend(f'{j+1:05d}: {lines[j]}' for j in range(start,end))
+              out.append('')
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/import-context.txt').write_text('\n'.join(out), encoding='utf-8')
+          print(f'hits={len(hits)} ranges={len(ranges)}')
+          PY
+      - name: Commit diagnostic extract
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .diagnostics/import-context.txt
+          git diff --cached --quiet || git commit -m "Extract cloud import parser context"
+          git push
