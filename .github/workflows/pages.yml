@@ -127,6 +127,17 @@ jobs:
         continue-on-error: true
         uses: actions/configure-pages@v6
 
+      - name: Record Pages readiness
+        shell: bash
+        run: |
+          cd /tmp/ads-operations-gh-pages
+          printf '%s\n' "${{ steps.pages.outcome }}" > .pages-status
+          git add .pages-status
+          if ! git diff --cached --quiet; then
+            git commit -m "Record Pages configuration status"
+            git push origin gh-pages
+          fi
+
       - name: Upload Pages artifact
         if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v4
