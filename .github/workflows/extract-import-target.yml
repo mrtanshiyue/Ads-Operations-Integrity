@@ -1,0 +1,49 @@
+name: Extract Import Target
+
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-import-target.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract exact importer functions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines = Path('index.html').read_text(encoding='utf-8').splitlines()
+          terms = ['async function importMultipleFiles', 'function importMultipleFiles', '__LR_IMPORT_MULTIPLE_FILES__', 'Papa.parse', 'parseCsv', 'parseCSV', 'readCsv', 'readCSV', 'fileSummary', 'importedFiles']
+          hits=[]
+          for term in terms:
+              for i,line in enumerate(lines):
+                  if term.lower() in line.lower():
+                      hits.append((term,i))
+          chosen=[]
+          for term,i in hits:
+              if any(abs(i-j)<250 for _,j in chosen):
+                  continue
+              chosen.append((term,i))
+          out=[]
+          for n,(term,i) in enumerate(chosen,1):
+              start=max(0,i-180); end=min(len(lines),i+260)
+              out.append(f'===== {n} TERM={term} HIT=L{i+1} RANGE=L{start+1}-L{end} =====')
+              out.extend(f'{j+1:05d}: {lines[j]}' for j in range(start,end))
+              out.append('')
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/import-target.txt').write_text('\n'.join(out),encoding='utf-8')
+          print('hits',hits)
+          PY
+      - name: Commit extract
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .diagnostics/import-target.txt
+          git diff --cached --quiet || git commit -m "Extract targeted import functions"
+          git push
