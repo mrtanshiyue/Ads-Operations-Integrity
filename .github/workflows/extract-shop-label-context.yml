@@ -1,0 +1,49 @@
+name: Extract Shop Label Context
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/extract-shop-label-context.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Extract YTDBNS display contexts
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          out=[]
+          for path in [Path('index.html'), Path('assets/private-cloud-warehouse-v3.js')]:
+              text=path.read_text(encoding='utf-8')
+              lines=text.splitlines()
+              hits=[i for i,line in enumerate(lines) if 'YTDBNS' in line]
+              out.append(f'===== {path} HITS {len(hits)} =====')
+              seen=set()
+              for hit in hits:
+                  start=max(0,hit-4); end=min(len(lines),hit+5)
+                  key=(start,end)
+                  if key in seen: continue
+                  seen.add(key)
+                  out.append(f'--- L{hit+1} RANGE L{start+1}-L{end} ---')
+                  out.extend(f'{i+1:05d}: {lines[i]}' for i in range(start,end))
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/shop-label-context.txt').write_text('\n'.join(out)+'\n',encoding='utf-8')
+          PY
+      - name: Commit diagnostics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .diagnostics/shop-label-context.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record shop label display context"
+            git push
+          fi
