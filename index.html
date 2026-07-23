@@ -4610,14 +4610,16 @@ const getDecisionGroupKey = r => [normalizeMarketplace(r.marketplace||getWorkspa
 const getAttributionBufferDays = (context=UnifiedDecisionEngine.context()) => Math.max(0,Math.floor(context?.config?.attributionBufferDays??2));
 const splitAttributionRows = (rows=[], context=UnifiedDecisionEngine.context()) => {
   const today=new Date();today.setHours(0,0,0,0);
-  const mature=[],pending=[],bufferDays=getAttributionBufferDays(context);let matureThrough="";
+  const mature=[],pending=[],bufferDays=getAttributionBufferDays(context);let matureThrough="",maxWindowDays=1;
   for(const r of rows||[]){
-    const d=toDateOnly(r.date);const windowDays=Math.max(1,safeNum(r.attributionWindowDays)||getAdProductMeta(r.adProduct||"SP").defaultAttributionDays||7),requiredAge=windowDays+bufferDays;
+    const windowDays=Math.max(1,safeNum(r.attributionWindowDays)||getAdProductMeta(r.adProduct||"SP").defaultAttributionDays||7);
+    if(windowDays>maxWindowDays)maxWindowDays=windowDays;
+    const d=toDateOnly(r.date),requiredAge=windowDays+bufferDays;
     if(!d){pending.push(r);continue;}
     const age=Math.floor((today.getTime()-d.getTime())/ATTRIBUTION_DAY_MS);
     (age>=requiredAge?mature:pending).push(r);
   }
-  const maxWindow=Math.max(1,...(rows||[]).map(r=>safeNum(r.attributionWindowDays)||getAdProductMeta(r.adProduct||"SP").defaultAttributionDays||7))+bufferDays;
+  const maxWindow=maxWindowDays+bufferDays;
   const cut=new Date(today);cut.setDate(cut.getDate()-maxWindow);matureThrough=cut.toISOString().slice(0,10);
   return {mature,pending,matureMetrics:sumMetrics(mature,context),pendingMetrics:sumMetrics(pending,context),bufferDays,matureThrough,dataAsOf:today.toISOString().slice(0,10),contextSignature:context?.signature||""};
 };
@@ -4653,7 +4655,7 @@ const getGrainReconciliation = (rows=AdsStore.all||[]) => {
     const x=(rows||[]).filter(r=>(r.reportGranularity||"searchTerm")===grain);const m=sumMetrics(x);
     stats[grain]={...m,rows:x.length,campaigns:new Set(x.map(r=>r.campaign).filter(Boolean)).size,dates:new Set(x.map(r=>r.date).filter(Boolean)).size};
   }
-  const maxSpend=Math.max(0,...Object.values(stats).map(x=>x.spend||0));
+  let maxSpend=0;for(const x of Object.values(stats)){const spend=safeNum(x.spend);if(spend>maxSpend)maxSpend=spend;}
   Object.values(stats).forEach(x=>x.spendCoverage=maxSpend>0?x.spend/maxSpend:0);
   return stats;
 };
