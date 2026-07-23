@@ -4946,8 +4946,14 @@ const TRANSACTION_MAP_ALIASES={
   postedAt:["date/time","posted date/time","日期/时间"],settlementId:["settlement id","结算编号"],type:["type","类型"],orderId:["order id","订单编号"],sku:["sku"],description:["description","描述"],quantity:["quantity","数量"],marketplace:["marketplace","站点"],accountType:["account type"],fulfillment:["fulfillment"],
   productSales:["product sales"],productSalesTax:["product sales tax"],shippingCredits:["shipping credits"],shippingCreditsTax:["shipping credits tax"],giftWrapCredits:["gift wrap credits"],giftWrapCreditsTax:["giftwrap credits tax","gift wrap credits tax"],regulatoryFee:["regulatory fee"],regulatoryFeeTax:["tax on regulatory fee"],promotionalRebates:["promotional rebates"],promotionalRebatesTax:["promotional rebates tax"],marketplaceWithheldTax:["marketplace withheld tax"],sellingFees:["selling fees"],fbaFees:["fba fees"],otherTransactionFees:["other transaction fees"],other:["other"],total:["total"],status:["transaction status"],releaseDate:["transaction release date"]
 };
-const buildTransactionMap=rows=>{const h=rows.length?Object.keys(rows[0]):[],m={};for(const k in TRANSACTION_MAP_ALIASES)m[k]=pickCol(h,TRANSACTION_MAP_ALIASES[k]);return m;};
-const isTransactionReport=(header=[])=>{const h=new Set(header.map(cleanHeaderCompact));return ["date/time","settlement id","type","product sales","selling fees","fba fees","total","transaction status"].every(x=>h.has(cleanHeaderCompact(x)));};
+const buildTransactionMap=rows=>{
+  const h=rows.length?Object.keys(rows[0]):[],byCompact=new Map(h.map(col=>[cleanHeaderCompact(col),col])),m={};
+  for(const k in TRANSACTION_MAP_ALIASES){
+    m[k]=TRANSACTION_MAP_ALIASES[k].map(alias=>byCompact.get(cleanHeaderCompact(alias))).find(Boolean)||pickCol(h,TRANSACTION_MAP_ALIASES[k]);
+  }
+  return m;
+};
+const isTransactionReport=(header=[])=>{const h=new Set(header.map(cleanHeaderCompact));return ["date/time","type","product sales","total","transaction status"].every(x=>h.has(cleanHeaderCompact(x)));};
 const toTransactionISODate=value=>{const s=String(value||"").trim();if(!s)return"";const iso=s.match(/^(\d{4})-(\d{2})-(\d{2})/);if(iso)return`${iso[1]}-${iso[2]}-${iso[3]}`;const m=s.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s*(\d{4})/i);if(m){const months={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};return`${m[3]}-${String(months[m[1].toLowerCase()]).padStart(2,"0")}-${String(m[2]).padStart(2,"0")}`;}const us=s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);if(us)return`${us[3]}-${String(us[1]).padStart(2,"0")}-${String(us[2]).padStart(2,"0")}`;const direct=toISODate(s);return/^\d{4}-\d{2}-\d{2}$/.test(direct)?direct:"";};
 const transactionPreTaxNet=r=>safeNum(r.productSales)+safeNum(r.shippingCredits)+safeNum(r.giftWrapCredits)+safeNum(r.regulatoryFee)+safeNum(r.promotionalRebates)+safeNum(r.sellingFees)+safeNum(r.fbaFees)+safeNum(r.otherTransactionFees)+safeNum(r.other);
 const classifyTransactionCategory=(type,description)=>{const t=String(type||"").toLowerCase(),d=String(description||"").toLowerCase();if(t==="transfer")return"TRANSFER";if(t==="service fee"&&d.includes("cost of advertising"))return"ADVERTISING";if(d.includes("inbound placement"))return"INBOUND";if(t==="fba inventory fee"||d.includes("storage fee")||d.includes("long-term storage"))return"STORAGE";if(t==="liquidations")return"LIQUIDATION";if(t==="adjustment")return"ADJUSTMENT";if(t==="order")return"ORDER";if(t==="refund")return"REFUND";if(t==="service fee"||t==="fba transaction fees")return"ACCOUNT_OVERHEAD";return"OTHER";};
@@ -6040,7 +6046,7 @@ const importMultipleFiles = async (files) => {
     const hasPlacement=normHeader.some(h=>["放置","placement","广告位","位置"].includes(h));
     const hasSearchTerm=normHeader.some(h=>["客户搜索词","customersearchterm","searchterm"].includes(h));
     const hasSqpShare=normHeader.some(h=>["impressions:brandshare","展示量：品牌占有率","展示量:品牌占有率"].includes(h));
-    const hasTransaction=isTransactionReport(header);
+    const hasTransaction=isTransactionReport(header)||/(?:^|__)\d{4}-\d{2}-combined-report\.csv$/i.test(sourceLabel);
     let type="ADS_REPORT",map;
     try{
       if(hasTransaction){type="TRANSACTION_REPORT";map=buildTransactionMap(rows);}
@@ -6049,7 +6055,7 @@ const importMultipleFiles = async (files) => {
       else if(hasSqpShare){type="SQP_REPORT";map=buildSqpMap(rows);}
       else map=buildMap(rows);
       activeFileTypes?.add(type);
-      const missing=validateReportMap(type,map);if(missing.length){quarantineReport(sourceLabel,type,missing.map(x=>`Missing ${x}`),rows.length);return 0;}
+      const missing=type==="TRANSACTION_REPORT"?["postedAt","type","productSales","total","status"].filter(key=>!map[key]):validateReportMap(type,map);if(missing.length){quarantineReport(sourceLabel,type,missing.map(x=>`Missing ${x}`),rows.length);return 0;}
       const audit=buildReportSchemaAudit(type,header,map,rows,sourceLabel);recordSchemaAudit(audit);
       let norm=[];
       if(type==="TRANSACTION_REPORT")norm=compactArrayInPlace(await processInChunks(rows,r=>normalizeTransactionRow(r,map,sourceLabel)),r=>r&&r.date&&r.type);
@@ -14024,8 +14030,10 @@ window.addEventListener('load', AdsDashboardApp.init);
         .slice(0, 3)
         .join('；');
       const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
-      if (!importedRows || (expectsAds && !adsRows)) {
-        throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
+      const expectsTransactions = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'transactions');
+      if (!importedRows || (expectsAds && !adsRows) || (expectsTransactions && !transactionRows)) {
+        const missingType = expectsAds && !adsRows ? '广告数据' : expectsTransactions && !transactionRows ? '联合交易数据' : '报表数据';
+        throw new Error(`报表已下载，但网页分析库未写入${missingType}${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射与日期格式'}`);
       }
 
       let costSummary = null;
