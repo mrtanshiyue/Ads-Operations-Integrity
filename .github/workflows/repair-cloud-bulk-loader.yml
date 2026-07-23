@@ -1,4 +1,5 @@
 name: Repair Private Cloud Bulk Loader
+# Trigger bounded-memory loader deployment
 
 on:
   push:
