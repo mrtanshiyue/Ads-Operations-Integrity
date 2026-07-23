@@ -1,5 +1,5 @@
 name: Repair Attribution Stack Overflow
-# Trigger after workflow creation
+# Run precise splitAttributionRows repair
 
 on:
   push:
