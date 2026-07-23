@@ -24,22 +24,24 @@ jobs:
           text=Path('index.html').read_text(encoding='utf-8')
           lines=text.splitlines()
           terms=[
+            'const normalizeMarketplace',
+            'function normalizeMarketplace',
+            'const validateReportMap',
+            'const quarantineReport',
+            'const buildTransactionMap',
             'if(type==="TRANSACTION_REPORT")',
-            'type==="TRANSACTION_REPORT"',
-            'AdsStore.transactions',
-            'validateReportMap',
-            'appendArray(AdsStore.transactions',
-            'TRANSACTION_REPORT',
+            'const compactArrayInPlace',
+            'const processInChunks',
           ]
           out=[]
           seen=set()
           for term in terms:
             hits=[i for i,line in enumerate(lines) if term in line]
             out.append(f'===== TERM {term} HITS {len(hits)} =====')
-            for hit in hits:
+            for hit in hits[:8]:
               if hit in seen: continue
               seen.add(hit)
-              start=max(0,hit-12);end=min(len(lines),hit+45)
+              start=max(0,hit-18);end=min(len(lines),hit+65)
               out.append(f'----- HIT L{hit+1} RANGE L{start+1}-L{end} -----')
               out.extend(f'{i+1:05d}: {lines[i]}' for i in range(start,end))
           Path('.diagnostics').mkdir(exist_ok=True)
@@ -51,6 +53,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .diagnostics/transaction-write-path.txt
           if ! git diff --cached --quiet; then
-            git commit -m "Extract transaction write path"
+            git commit -m "Extend transaction write path diagnostics"
             git push
           fi
