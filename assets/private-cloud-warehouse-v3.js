@@ -256,10 +256,22 @@
       const previousMerge = mergeSelect?.value || 'append';
       if (mergeSelect) mergeSelect.value = 'replace';
       setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      let importSummary = null;
       try {
-        await cloudImporter(csvFiles);
+        importSummary = await cloudImporter(csvFiles);
       } finally {
         if (mergeSelect) mergeSelect.value = previousMerge;
+      }
+      const importedRows = Number(importSummary?.acceptedRows || 0);
+      const adsRows = Number(importSummary?.adsRows || 0);
+      const transactionRows = Number(importSummary?.transactionRows || 0);
+      const quarantineText = (importSummary?.quarantine || [])
+        .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
+        .slice(0, 3)
+        .join('；');
+      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      if (!importedRows || (expectsAds && !adsRows)) {
+        throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
       }
 
       let costSummary = null;
@@ -278,7 +290,7 @@
         }
       }
 
-      const totalRows = Number(fetchedRows || manifest?.totalRows || 0);
+      const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';

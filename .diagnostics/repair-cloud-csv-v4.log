@@ -1,3 +1,21 @@
 PATCH: Chinese yyyy年m月d日 date parsing
 PATCH: alias targeting += 投放方案, 匹配的目标
-ERROR: Alias anchor not found for matchType: 匹配类型
+PATCH: alias matchType += 投放匹配类型, 投放匹配类型-Targeting match type
+PATCH: alias searchTerm += 搜索词
+PATCH: alias spend += 总成本
+PATCH: alias sales7d += 销售额
+PATCH: alias orders7d += 购买量
+PATCH: alias units += 已售商品数量
+PATCH: alias cvr += 购买率
+PATCH: alias advertisedSales += 推广商品的销量
+PATCH: alias advertisedUnits += 已售商品数量（推广）
+PATCH: alias otherSkuSales += 销售额（光环）
+PATCH: alias otherSkuUnits += 已售商品数量（光环）
+PATCH: parse cloud-created File objects on main thread
+PATCH: cloud importer result summary bridge
+PATCH: actual import validation in embedded loader
+PATCH: use accepted row count in embedded loader
+PATCH: actual import validation in source loader
+PATCH: use accepted row count in source loader
+VERIFY: all required cloud import compatibility patches are present
+SUCCESS: cloud CSV import repair completed

@@ -5079,6 +5079,8 @@ const toISODate = (d) => {
   if (!s) return "";
   const isoMatch = s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
   if (isoMatch) return `${isoMatch[1]}-${isoMatch[2].padStart(2,'0')}-${isoMatch[3].padStart(2,'0')}`;
+  const zhMatch = s.match(/^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?/);
+  if (zhMatch) return `${zhMatch[1]}-${zhMatch[2].padStart(2,'0')}-${zhMatch[3].padStart(2,'0')}`;
   const euMatch = s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/);
   if (euMatch) {
       const p1 = parseInt(euMatch[1], 10), p2 = parseInt(euMatch[2], 10), y = parseInt(euMatch[3], 10);
@@ -5544,28 +5546,28 @@ const COL_MAP_ALIASES = {
   portfolio: ["广告组合名称","Portfolioname","Portfolio","PortfolioName"], 
   campaign: ["广告活动名称","Campaignname","Campaign","CampaignName"], 
   adGroup: ["广告组名称","Adgroupname","Adgroup","AdGroup","AdGroupName"], 
-  targeting: ["投放","Targeting","KeywordorProductTargeting","Keyword","关键词"], 
-  matchType: ["匹配类型","Matchtype","MatchType"], 
-  searchTerm: ["客户搜索词","Customersearchterm","Searchterm","SearchTerm"], 
+  targeting: ["投放","投放方案","匹配的目标","Targeting","KeywordorProductTargeting","Keyword","关键词"], 
+  matchType: ["匹配类型","投放匹配类型","投放匹配类型-Targeting match type","Matchtype","MatchType"], 
+  searchTerm: ["客户搜索词","搜索词","Customersearchterm","Searchterm","SearchTerm"], 
   impr: ["展示量","Impressions","Impr"], 
   clicks: ["点击量","Clicks"], 
-  spend: ["花费","Spend","Cost"], 
-  sales7d: ["7天总销售额","7DayTotalSales","7-daytotalsales","7daytotalsales","14天总销售额","14DayTotalSales","14-daytotalsales","14daytotalsales","TotalSales","Est.TotalSales", "Sales"], 
-  orders7d: ["7天总订单数","7天总订单数(#)","7天总订单数（#）","7DayTotalOrders(#)","7-daytotalorders","7daytotalorders","14天总订单数","14天总订单数(#)","14DayTotalOrders(#)","14-daytotalorders","14daytotalorders","TotalOrders","Est.TotalOrders", "Orders"],
-  units: ["7天总销售量(#)","7天总销售量（#）","7天总销售量","7 Day Total Units (#)","7DayTotalUnits(#)","7DayTotalUnits","7-day Total Units","7 Day Total Units","14天总销售量(#)","14天总销售量（#）","14天总销售量","14 Day Total Units (#)","14DayTotalUnits(#)","14DayTotalUnits","14-day Total Units","14 Day Total Units","Units Sold","Units","销售件数","广告销售件数"], 
+  spend: ["花费","总成本","Spend","Cost"], 
+  sales7d: ["7天总销售额","销售额","7DayTotalSales","7-daytotalsales","7daytotalsales","14天总销售额","14DayTotalSales","14-daytotalsales","14daytotalsales","TotalSales","Est.TotalSales", "Sales"], 
+  orders7d: ["7天总订单数","购买量","7天总订单数(#)","7天总订单数（#）","7DayTotalOrders(#)","7-daytotalorders","7daytotalorders","14天总订单数","14天总订单数(#)","14DayTotalOrders(#)","14-daytotalorders","14daytotalorders","TotalOrders","Est.TotalOrders", "Orders"],
+  units: ["7天总销售量(#)","已售商品数量","7天总销售量（#）","7天总销售量","7 Day Total Units (#)","7DayTotalUnits(#)","7DayTotalUnits","7-day Total Units","7 Day Total Units","14天总销售量(#)","14天总销售量（#）","14天总销售量","14 Day Total Units (#)","14DayTotalUnits(#)","14DayTotalUnits","14-day Total Units","14 Day Total Units","Units Sold","Units","销售件数","广告销售件数"], 
   ctr: ["点击率","点击率 (CTR)","点击率(CTR)","CTR"], 
   cpc: ["每次点击费用","单次点击成本 (CPC)","单次点击成本(CPC)","每次点击成本 (CPC)","每次点击成本(CPC)","CPC","Costperclick","Costperclick(CPC)"], 
-  cvr: ["7天的转化率","7DayConversionRate","7-dayconversionrate","7dayconversionrate","14天的转化率","14DayConversionRate","14-dayconversionrate","14dayconversionrate"], 
+  cvr: ["7天的转化率","购买率","7DayConversionRate","7-dayconversionrate","7dayconversionrate","14天的转化率","14DayConversionRate","14-dayconversionrate","14dayconversionrate"], 
   acos: ["广告投入产出比 (ACOS) 总计","广告投入产出比(ACOS)总计","ACOS","Acos"], 
   roas: ["总广告投资回报率 (ROAS)","总广告投资回报率(ROAS)","ROAS","Roas"],
   advertisedAsin: ["Advertised ASIN","AdvertisedASIN","广告商品ASIN","被推广的ASIN"],
   advertisedSku: ["Advertised SKU","AdvertisedSKU","广告商品SKU","被推广的SKU"],
   purchasedAsin: ["Purchased ASIN","PurchasedASIN","14 Day Purchased ASIN","7 Day Purchased ASIN","购买的ASIN","购买商品ASIN"],
   purchasedSku: ["Purchased SKU","PurchasedSKU","购买的SKU","购买商品SKU"],
-  advertisedSales: ["7天内广告SKU销售额","7天广告SKU销售额","14天内广告SKU销售额","14天广告SKU销售额","7 Day Advertised SKU Sales","14 Day Advertised SKU Sales","Advertised SKU Sales","Advertised Sales","广告商品销售额"],
-  advertisedUnits: ["7天内广告SKU销售量(#)","7天内广告SKU销售量（#）","7天广告SKU销售量","14天内广告SKU销售量(#)","14天内广告SKU销售量（#）","14天广告SKU销售量","7 Day Advertised SKU Units","14 Day Advertised SKU Units","Advertised SKU Units","广告商品销售量"],
-  otherSkuSales: ["7天内其他SKU销售额","7天其他SKU销售额","14天内其他SKU销售额","14天其他SKU销售额","7 Day Other SKU Sales","14 Day Other SKU Sales","Other SKU Sales","Halo Sales","其他SKU销售额"],
-  otherSkuUnits: ["7天内其他SKU销售量(#)","7天内其他SKU销售量（#）","7天其他SKU销售量","14天内其他SKU销售量(#)","14天内其他SKU销售量（#）","14天其他SKU销售量","7 Day Other SKU Units","14 Day Other SKU Units","Other SKU Units","其他SKU销售量"],
+  advertisedSales: ["7天内广告SKU销售额","推广商品的销量","7天广告SKU销售额","14天内广告SKU销售额","14天广告SKU销售额","7 Day Advertised SKU Sales","14 Day Advertised SKU Sales","Advertised SKU Sales","Advertised Sales","广告商品销售额"],
+  advertisedUnits: ["7天内广告SKU销售量(#)","已售商品数量（推广）","7天内广告SKU销售量（#）","7天广告SKU销售量","14天内广告SKU销售量(#)","14天内广告SKU销售量（#）","14天广告SKU销售量","7 Day Advertised SKU Units","14 Day Advertised SKU Units","Advertised SKU Units","广告商品销售量"],
+  otherSkuSales: ["7天内其他SKU销售额","销售额（光环）","7天其他SKU销售额","14天内其他SKU销售额","14天其他SKU销售额","7 Day Other SKU Sales","14 Day Other SKU Sales","Other SKU Sales","Halo Sales","其他SKU销售额"],
+  otherSkuUnits: ["7天内其他SKU销售量(#)","已售商品数量（光环）","7天内其他SKU销售量（#）","7天其他SKU销售量","14天内其他SKU销售量(#)","14天内其他SKU销售量（#）","14天其他SKU销售量","7 Day Other SKU Units","14 Day Other SKU Units","Other SKU Units","其他SKU销售量"],
   currentBid: ["Bid","Keyword Bid","Current Bid","竞价","关键词竞价","Ad Group Default Bid"],
   biddingStrategy: ["Bidding Strategy","Campaign Bidding Strategy","竞价策略"],
   topOfSearchAdjustment: ["Top of Search Adjustment","Top of Search Bid Adjustment","Top of search (first page) adjustment","搜索结果顶部加价","搜索结果顶部竞价调整"],
@@ -5820,7 +5822,19 @@ const checkIsManual = (r) => {
 const cleanTargetForExact = (t) => (t || "").toLowerCase().replace(/[^\w\s]/gi, '').replace(/\s+/g, ' ').trim();
 
 const findTransactionHeaderLine=text=>{const lines=String(text||"").replace(/^\uFEFF/,"").split(/\r?\n/);for(let i=0;i<Math.min(lines.length,80);i++){const x=lines[i].toLowerCase().replace(/"/g,"").replace(/\s+/g,"");if(x.startsWith("date/time,settlementid,type,orderid,sku,")&&x.includes("productsales")&&x.includes("transactionstatus"))return i;}return-1;};
-const parseCSV = async file => {const prefix=await file.slice(0,262144).text(),headerLine=findTransactionHeaderLine(prefix);if(headerLine>=0){const text=await file.text(),lines=text.replace(/^\uFEFF/,"").split(/\r?\n/),start=findTransactionHeaderLine(text),body=lines.slice(Math.max(0,start)).join("\n");return new Promise((resolve,reject)=>Papa.parse(body,{header:true,skipEmptyLines:"greedy",worker:false,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));}return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:"greedy",worker:true,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));};
+const parseCSV = async file => {
+  const prefix=await file.slice(0,262144).text();
+  const headerLine=findTransactionHeaderLine(prefix);
+  const isCloudFile=/^(?:ALL|YTDBNS|YY|JJ)__/.test(String(file?.name||"").toUpperCase());
+  if(headerLine>=0||isCloudFile){
+    const rawText=await file.text();
+    const lines=rawText.replace(/^\uFEFF/,"").split(/\r?\n/);
+    const start=headerLine>=0?findTransactionHeaderLine(rawText):0;
+    const body=lines.slice(Math.max(0,start)).join("\n");
+    return new Promise((resolve,reject)=>Papa.parse(body,{header:true,skipEmptyLines:"greedy",worker:false,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
+  }
+  return new Promise((resolve,reject)=>Papa.parse(file,{header:true,skipEmptyLines:"greedy",worker:true,dynamicTyping:false,complete:res=>resolve(res.data||[]),error:reject}));
+};
 const XLSX_WORKER_LIB = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
 const repairWorksheetRange = (ws) => {
   if (!ws) return ws;
@@ -6073,7 +6087,21 @@ const importMultipleFiles = async (files) => {
 
 // Expose a narrow, explicit bridge for the private-cloud loader.
 // The core importer remains owned by the main application closure.
-window.__LR_IMPORT_MULTIPLE_FILES__ = async files => importMultipleFiles(files);
+window.__LR_IMPORT_MULTIPLE_FILES__ = async files => {
+  await importMultipleFiles(files);
+  return {
+    acceptedRows: Number(AdsStore.importStats?.acceptedRows || 0),
+    adsRows: Number(AdsStore.all?.length || 0),
+    transactionRows: Number(AdsStore.transactions?.length || 0),
+    businessRows: Number(AdsStore.biz?.length || 0),
+    files: (AdsStore.files || []).map(item => ({ name: item.name, rows: Number(item.rows || 0), type: item.type || "" })),
+    quarantine: (AdsStore.quarantine || []).map(item => ({
+      fileName: item.fileName || "",
+      reportType: item.reportType || "",
+      reasons: Array.isArray(item.reasons) ? item.reasons : [],
+    })),
+  };
+};
 window.__LR_IMPORT_PRODUCT_COSTS__ = payload => importProductCosts(payload);
 window.__LR_RESOLVE_PRODUCT_COST__ = (sku="",asin="") => resolveProductCostRecord(sku,asin,AdsStore.currentContext||UnifiedDecisionEngine.context());
 window.__LR_GET_PRODUCT_COST_STATUS__ = () => ({
@@ -13982,10 +14010,22 @@ window.addEventListener('load', AdsDashboardApp.init);
       const previousMerge = mergeSelect?.value || 'append';
       if (mergeSelect) mergeSelect.value = 'replace';
       setStatus(`已下载 ${entries.length} 个文件，正在按 ${scope} 范围建立分析索引…`);
+      let importSummary = null;
       try {
-        await cloudImporter(csvFiles);
+        importSummary = await cloudImporter(csvFiles);
       } finally {
         if (mergeSelect) mergeSelect.value = previousMerge;
+      }
+      const importedRows = Number(importSummary?.acceptedRows || 0);
+      const adsRows = Number(importSummary?.adsRows || 0);
+      const transactionRows = Number(importSummary?.transactionRows || 0);
+      const quarantineText = (importSummary?.quarantine || [])
+        .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
+        .slice(0, 3)
+        .join('；');
+      const expectsAds = entries.some(entry => String(entry?.dataType || '').toLowerCase().replace(/[^a-z]/g, '') === 'ads');
+      if (!importedRows || (expectsAds && !adsRows)) {
+        throw new Error(`报表已下载，但网页分析库未写入广告数据${quarantineText ? `：${quarantineText}` : '；请检查报表字段映射'}`);
       }
 
       let costSummary = null;
@@ -14004,7 +14044,7 @@ window.addEventListener('load', AdsDashboardApp.init);
         }
       }
 
-      const totalRows = Number(fetchedRows || manifest?.totalRows || 0);
+      const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
