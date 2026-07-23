@@ -324,7 +324,7 @@
             }
           }
 
-          if (Array.isArray(summary?.quarantine)) quarantineItems.push(...summary.quarantine);
+          if (Array.isArray(summary?.quarantine)) for(const item of summary.quarantine) quarantineItems.push(item);
           const batchQuarantine = (summary?.quarantine || [])
             .flatMap(item => (item.reasons || []).map(reason => `${item.fileName || item.reportType}: ${reason}`))
             .slice(0, 3)
