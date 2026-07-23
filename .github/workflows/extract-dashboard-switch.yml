@@ -1,0 +1,60 @@
+name: Extract Dashboard Switch
+
+on:
+  push:
+    paths:
+      - '.github/workflows/extract-dashboard-switch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract dashboard visibility context
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text=Path('index.html').read_text(encoding='utf-8')
+          lines=text.splitlines()
+          terms=[
+            'const importMultipleFiles',
+            'applyFilters(true)',
+            'applyFilters(false)',
+            'emptyState',
+            'uploadState',
+            'dashboardContent',
+            'dataWorkspace',
+            'hasData',
+            'renderFileList',
+            'setImportStatus',
+            'const applyFilters',
+            'function applyFilters',
+            'switchTab',
+            'activateTab',
+            'nav-item',
+          ]
+          out=[]
+          seen=[]
+          for term in terms:
+            hits=[i for i,line in enumerate(lines) if term in line]
+            for i in hits[:12]:
+              start=max(0,i-35); end=min(len(lines),i+80)
+              key=(start,end)
+              if key in seen: continue
+              seen.append(key)
+              out.append(f'===== TERM={term} HIT=L{i+1} RANGE=L{start+1}-L{end} =====')
+              out.extend(f'{j+1:05d}: {lines[j]}' for j in range(start,end))
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/dashboard-switch.txt').write_text('\n'.join(out),encoding='utf-8')
+          PY
+      - name: Commit diagnostics
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .diagnostics/dashboard-switch.txt
+          git diff --cached --quiet || git commit -m "Extract dashboard switch context"
+          git push
