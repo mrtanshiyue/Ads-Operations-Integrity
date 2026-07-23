@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -20,9 +20,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      pages_ready: ${{ steps.pages.outcome == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Prepare static site
         shell: bash
@@ -99,15 +103,38 @@ jobs:
         shell: bash
         run: find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
 
+      - name: Publish repaired site branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git show-ref --verify --quiet refs/heads/gh-pages || git fetch origin gh-pages:gh-pages
+          rm -rf /tmp/ads-operations-gh-pages
+          git worktree add /tmp/ads-operations-gh-pages gh-pages
+          find /tmp/ads-operations-gh-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a _site/. /tmp/ads-operations-gh-pages/
+          cd /tmp/ads-operations-gh-pages
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Deploy repaired static site"
+            git push origin gh-pages
+          else
+            echo "gh-pages is already current"
+          fi
+
       - name: Configure Pages
+        id: pages
+        continue-on-error: true
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
+        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
   deploy:
+    if: needs.build.outputs.pages_ready == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
