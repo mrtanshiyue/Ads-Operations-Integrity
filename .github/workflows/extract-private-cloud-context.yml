@@ -1,0 +1,68 @@
+name: Extract Private Cloud Context
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/extract-private-cloud-context.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Extract relevant source contexts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          src = Path('index.html').read_text(encoding='utf-8')
+          lines = src.splitlines()
+          markers = [
+              'privateCloudImportV6147',
+              'PRIVATE_CLOUD_API_BASES',
+              'loadPrivateCloudData',
+              'btnPrivateCloudImport',
+              'privateCloudImportStatus',
+              'AdsStore',
+              'transaction',
+              '联合报告',
+              'XLSX.read',
+              'Papa.parse',
+              'processFile',
+              'importAds',
+              'shopScopeUiV1',
+              'lr:shop-change',
+          ]
+          ranges = []
+          for i, line in enumerate(lines):
+              if any(m in line for m in markers):
+                  ranges.append((max(0, i-35), min(len(lines), i+100)))
+          merged = []
+          for start, end in sorted(ranges):
+              if not merged or start > merged[-1][1] + 5:
+                  merged.append([start, end])
+              else:
+                  merged[-1][1] = max(merged[-1][1], end)
+          out = []
+          for start, end in merged:
+              out.append(f'\n===== LINES {start+1}-{end} =====\n')
+              out.extend(f'{n+1:06d}: {lines[n]}' for n in range(start, end))
+          Path('diagnostics').mkdir(exist_ok=True)
+          Path('diagnostics/private-cloud-context.txt').write_text('\n'.join(out), encoding='utf-8')
+          PY
+      - name: Commit extracted context
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add diagnostics/private-cloud-context.txt
+          git diff --cached --quiet || git commit -m "Extract private cloud integration context"
+          git push
