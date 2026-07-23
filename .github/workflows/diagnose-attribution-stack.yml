@@ -1,0 +1,60 @@
+name: Diagnose Attribution Stack Overflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/diagnose-attribution-stack.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract attribution and business aggregation code
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path('index.html').read_text(encoding='utf-8')
+          lines = text.splitlines()
+          anchors = [
+              'const splitAttributionRows', 'function splitAttributionRows',
+              'const buildBusinessAggregates', 'function buildBusinessAggregates',
+              'const isAttributionMature', 'function isAttributionMature',
+              'const getAttribution', 'attributionWindowDays',
+          ]
+          out = []
+          for anchor in anchors:
+              out.append(f'\n=== {anchor} ===')
+              hits = [i for i, line in enumerate(lines) if anchor in line]
+              if not hits:
+                  out.append('NOT FOUND')
+                  continue
+              for hit in hits[:10]:
+                  start = max(0, hit - 50)
+                  end = min(len(lines), hit + 180)
+                  for index in range(start, end):
+                      out.append(f'{index+1}: {lines[index]}')
+                  out.append('---')
+          Path('.diagnostics').mkdir(exist_ok=True)
+          Path('.diagnostics/attribution-stack-context.txt').write_text('\n'.join(out)+'\n', encoding='utf-8')
+          PY
+
+      - name: Commit diagnostic
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .diagnostics/attribution-stack-context.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "Record attribution stack context"
+            git push
+          fi
