@@ -10,7 +10,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "index.html"
 ASSET = ROOT / "assets/private-cloud-warehouse-v3.js"
-SOURCE_WORKFLOW = ROOT / ".github/workflows/patch-shop-scope-ui.yml"
 DIAGNOSTIC = ROOT / ".diagnostics/yt-shop-label-patch.txt"
 
 
@@ -70,50 +69,15 @@ def patch_shop_ui(text: str, log: list[str]) -> str:
         "shop short-label map",
         log,
     )
-    text = replace_once(
-        text,
-        "if (hint) hint.textContent = `当前：${shop} · ${SHOP_LABELS[shop]}`;",
-        "if (hint) hint.textContent = `当前：${SHOP_SHORT_LABELS[shop]} · ${SHOP_LABELS[shop]}`;",
-        "当前：${SHOP_SHORT_LABELS[shop]}",
-        "active shop hint",
-        log,
-    )
-    text = replace_once(
-        text,
-        "if (typeof notify === 'function') notify(`分析店铺已切换为 ${next} · ${SHOP_LABELS[next]}`, 'good');",
-        "if (typeof notify === 'function') notify(`分析店铺已切换为 ${SHOP_SHORT_LABELS[next]} · ${SHOP_LABELS[next]}`, 'good');",
-        "分析店铺已切换为 ${SHOP_SHORT_LABELS[next]}",
-        "shop-change notification",
-        log,
-    )
-    text = replace_once(
-        text,
-        "${SHOPS.map(shop => `<button class=\"shopScopeButton\" type=\"button\" role=\"radio\" data-shop=\"${shop}\" aria-label=\"${SHOP_LABELS[shop]}\">${shop}</button>`).join('')}",
-        "${SHOPS.map(shop => `<button class=\"shopScopeButton\" type=\"button\" role=\"radio\" data-shop=\"${shop}\" aria-label=\"${SHOP_LABELS[shop]}\">${SHOP_SHORT_LABELS[shop]}</button>`).join('')}",
-        ">${SHOP_SHORT_LABELS[shop]}</button>",
-        "shop selector button text",
-        log,
-    )
-    text = regex_replace_once(
-        text,
-        r"window\.ShopScope = Object\.freeze\(\{\s*options: SHOPS,\s*labels: SHOP_LABELS,\s*get: \(\) => activeShop,",
-        "window.ShopScope = Object.freeze({\n    options: SHOPS,\n    labels: SHOP_LABELS,\n    shortLabels: SHOP_SHORT_LABELS,\n    display: value => SHOP_SHORT_LABELS[normalizeShop(value)],\n    get: () => activeShop,",
-        "display: value => SHOP_SHORT_LABELS[normalizeShop(value)]",
-        "ShopScope display API",
-        log,
-    )
+    text = replace_once(text, "if (hint) hint.textContent = `当前：${shop} · ${SHOP_LABELS[shop]}`;", "if (hint) hint.textContent = `当前：${SHOP_SHORT_LABELS[shop]} · ${SHOP_LABELS[shop]}`;", "当前：${SHOP_SHORT_LABELS[shop]}", "active shop hint", log)
+    text = replace_once(text, "if (typeof notify === 'function') notify(`分析店铺已切换为 ${next} · ${SHOP_LABELS[next]}`, 'good');", "if (typeof notify === 'function') notify(`分析店铺已切换为 ${SHOP_SHORT_LABELS[next]} · ${SHOP_LABELS[next]}`, 'good');", "分析店铺已切换为 ${SHOP_SHORT_LABELS[next]}", "shop-change notification", log)
+    text = replace_once(text, "${SHOPS.map(shop => `<button class=\"shopScopeButton\" type=\"button\" role=\"radio\" data-shop=\"${shop}\" aria-label=\"${SHOP_LABELS[shop]}\">${shop}</button>`).join('')}", "${SHOPS.map(shop => `<button class=\"shopScopeButton\" type=\"button\" role=\"radio\" data-shop=\"${shop}\" aria-label=\"${SHOP_LABELS[shop]}\">${SHOP_SHORT_LABELS[shop]}</button>`).join('')}", ">${SHOP_SHORT_LABELS[shop]}</button>", "shop selector button text", log)
+    text = regex_replace_once(text, r"window\.ShopScope = Object\.freeze\(\{\s*options: SHOPS,\s*labels: SHOP_LABELS,\s*get: \(\) => activeShop,", "window.ShopScope = Object.freeze({\n    options: SHOPS,\n    labels: SHOP_LABELS,\n    shortLabels: SHOP_SHORT_LABELS,\n    display: value => SHOP_SHORT_LABELS[normalizeShop(value)],\n    get: () => activeShop,", "display: value => SHOP_SHORT_LABELS[normalizeShop(value)]", "ShopScope display API", log)
     return text
 
 
 def patch_cloud_loader(text: str, log: list[str], label_prefix: str) -> str:
-    text = replace_once(
-        text,
-        "  const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');",
-        "  const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');\n  const displayScope = value => window.ShopScope?.display?.(value) || (normalizeScope(value) === 'YTDBNS' ? 'YT' : normalizeScope(value));",
-        "const displayScope = value => window.ShopScope?.display?.(value)",
-        f"{label_prefix} displayScope helper",
-        log,
-    )
+    text = replace_once(text, "  const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');", "  const activeScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || 'ALL');\n  const displayScope = value => window.ShopScope?.display?.(value) || (normalizeScope(value) === 'YTDBNS' ? 'YT' : normalizeScope(value));", "const displayScope = value => window.ShopScope?.display?.(value)", f"{label_prefix} displayScope helper", log)
     replacements = [
         ("setStatus(`正在连接 Amazon-Data-Warehouse · ${scope}…`);", "setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);", "正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}", "connect status"),
         ("setStatus(`正在扫描 ${scope} 店铺文件清单…`);", "setStatus(`正在扫描 ${displayScope(scope)} 店铺文件清单…`);", "正在扫描 ${displayScope(scope)}", "scan status"),
@@ -151,18 +115,13 @@ def validate_javascript(index: str, asset: str) -> None:
 def main() -> None:
     index = INDEX.read_text(encoding="utf-8")
     asset = ASSET.read_text(encoding="utf-8")
-    workflow = SOURCE_WORKFLOW.read_text(encoding="utf-8")
     log: list[str] = []
-
     index = patch_shop_ui(index, log)
     index = patch_cloud_loader(index, log, "embedded loader")
     asset = patch_cloud_loader(asset, log, "source loader")
-    workflow = patch_shop_ui(workflow, log)
-
     validate_javascript(index, asset)
     INDEX.write_text(index, encoding="utf-8")
     ASSET.write_text(asset, encoding="utf-8")
-    SOURCE_WORKFLOW.write_text(workflow, encoding="utf-8")
     DIAGNOSTIC.parent.mkdir(exist_ok=True)
     DIAGNOSTIC.write_text("\n".join(log) + "\nSUCCESS\n", encoding="utf-8")
     print("\n".join(log))
