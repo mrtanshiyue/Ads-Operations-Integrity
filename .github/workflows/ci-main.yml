@@ -1,0 +1,110 @@
+name: Validate Front-end Main
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Static site, loader and migration hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build validation tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s index.html
+          test -s assets/private-cloud-warehouse-v4.js
+          rm -rf .validate _site
+          mkdir -p .validate _site/assets
+          cp index.html _site/index.html
+          cp -a assets/. _site/assets/
+          : > _site/.nojekyll
+
+      - name: Extract inline JavaScript
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          class ScriptExtractor(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False)
+                  self.active = False
+                  self.current = []
+                  self.scripts = []
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() != 'script': return
+                  values = {k.lower(): (v or '') for k, v in attrs}
+                  self.active = 'src' not in values and values.get('type', '').lower() in ('', 'text/javascript', 'application/javascript')
+                  self.current = []
+              def handle_endtag(self, tag):
+                  if tag.lower() == 'script' and self.active:
+                      self.scripts.append(''.join(self.current)); self.active = False; self.current = []
+              def handle_data(self, data):
+                  if self.active: self.current.append(data)
+
+          parser = ScriptExtractor()
+          parser.feed(Path('index.html').read_text(encoding='utf-8'))
+          for index, script in enumerate(parser.scripts, 1):
+              Path(f'.validate/inline-{index:03d}.js').write_text(script, encoding='utf-8')
+          PY
+
+      - name: Validate source syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .validate assets -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+
+      - name: Verify V4 production invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
+          grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
+          grep -Fq "IndexedDB" <(sed 's/indexedDB/IndexedDB/g' assets/private-cloud-warehouse-v4.js)
+          grep -Fq "FETCH_CONCURRENCY = 3" assets/private-cloud-warehouse-v4.js
+          grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
+          ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
+
+      - name: Reject completed migration artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          transient="$(find .github -type f \( -name '*.trigger' -o -name '*-result.json' -o -name '*canary*.json' \) -print 2>/dev/null || true)"
+          if [ -n "$transient" ]; then
+            echo "Completed migration artifact(s) remain in the active tree:"
+            printf '%s\n' "$transient"
+            exit 1
+          fi
+
+      - name: Verify Pages artifact contains application assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s _site/index.html
+          test -s _site/assets/private-cloud-warehouse-v3.js
+          test -s _site/assets/private-cloud-warehouse-v4.js
