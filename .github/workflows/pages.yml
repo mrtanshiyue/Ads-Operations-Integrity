@@ -1,64 +1,53 @@
 name: Deploy Ads Operations Integrity
-# Redeploy marker: cloud CSV importer compatibility 2026-07-23
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - index.html
-      - .github/workflows/pages.yml
-  workflow_dispatch:
+      - "index.html"
+      - "assets/**"
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/ci-main.yml"
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: pages-production
+  cancel-in-progress: false
 
 jobs:
   build:
+    name: Build and validate static site
     runs-on: ubuntu-latest
-    outputs:
-      pages_ready: ${{ steps.pages.outcome == 'success' }}
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Checkout exact production commit
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - name: Prepare static site
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build immutable Pages artifact
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          set -euo pipefail
+          test -s index.html
+          test -s assets/private-cloud-warehouse-v4.js
+          rm -rf _site .validate
+          mkdir -p _site/assets .validate
+          cp index.html _site/index.html
+          cp -a assets/. _site/assets/
+          : > _site/.nojekyll
 
-          source = Path('index.html')
-          if not source.exists() or source.stat().st_size < 1000:
-              raise SystemExit('index.html is missing or unexpectedly small')
-
-          data = source.read_bytes()
-          fixes = (
-              (b"newline: '\r\n'", b"newline: '\\r\\n'"),
-              (b"newline: '\n'", b"newline: '\\r\\n'"),
-          )
-          applied = 0
-          for broken, corrected in fixes:
-              count = data.count(broken)
-              if count:
-                  data = data.replace(broken, corrected)
-                  applied += count
-
-          output = Path('_site')
-          output.mkdir(exist_ok=True)
-          (output / 'index.html').write_bytes(data)
-          (output / '.nojekyll').write_text('', encoding='utf-8')
-          print(f'Prepared {len(data):,} bytes; repaired {applied} broken newline literal(s)')
-          PY
-
-      - name: Extract inline JavaScript
+      - name: Extract inline JavaScript without modifying source
         shell: bash
         run: |
           python3 - <<'PY'
@@ -90,69 +79,45 @@ jobs:
                   if self.active:
                       self.current.append(data)
 
-          html = Path('_site/index.html').read_text(encoding='utf-8')
+          source = Path('index.html')
+          if source.stat().st_size < 1000:
+              raise SystemExit('index.html is unexpectedly small')
           parser = ScriptExtractor()
-          parser.feed(html)
+          parser.feed(source.read_text(encoding='utf-8'))
           target = Path('.validate')
-          target.mkdir(exist_ok=True)
           for index, script in enumerate(parser.scripts, 1):
               (target / f'inline-{index:03d}.js').write_text(script, encoding='utf-8')
           print(f'Extracted {len(parser.scripts)} inline script(s)')
           PY
 
-      - name: Validate JavaScript syntax
-        shell: bash
-        run: find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
-
-      - name: Publish repaired site branch
+      - name: Validate JavaScript and production loader invariants
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git show-ref --verify --quiet refs/heads/gh-pages || git fetch origin gh-pages:gh-pages
-          rm -rf /tmp/ads-operations-gh-pages
-          git worktree add /tmp/ads-operations-gh-pages gh-pages
-          find /tmp/ads-operations-gh-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp -a _site/. /tmp/ads-operations-gh-pages/
-          cd /tmp/ads-operations-gh-pages
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Deploy repaired static site"
-            git push origin gh-pages
-          else
-            echo "gh-pages is already current"
-          fi
+          set -euo pipefail
+          find .validate assets -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+          grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
+          grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
+          grep -Fq "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
+          ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
 
       - name: Configure Pages
-        id: pages
-        continue-on-error: true
-        uses: actions/configure-pages@v6
-
-      - name: Record Pages readiness
-        shell: bash
-        run: |
-          cd /tmp/ads-operations-gh-pages
-          printf '%s\n' "${{ steps.pages.outcome }}" > .pages-status
-          git add .pages-status
-          if ! git diff --cached --quiet; then
-            git commit -m "Record Pages configuration status"
-            git push origin gh-pages
-          fi
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
-        if: steps.pages.outcome == 'success'
         uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
   deploy:
-    if: needs.build.outputs.pages_ready == 'true'
+    name: Deploy GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy exact validated artifact
         id: deployment
         uses: actions/deploy-pages@v4
