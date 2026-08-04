@@ -29,9 +29,12 @@
     }, true);
   };
 
+  const currentScriptUrl = document.currentScript?.src
+    || [...document.scripts].map(item => item.src).find(src => /private-cloud-warehouse-v3\.js(?:$|\?)/.test(src))
+    || document.baseURI;
   const script = document.createElement('script');
-  script.src = new URL('assets/private-cloud-warehouse-v4.js', document.baseURI).href;
-  script.defer = true;
+  script.src = new URL('private-cloud-warehouse-v4.js', currentScriptUrl).href;
+  script.async = false;
   script.dataset.warehouseLoader = 'v4-production';
   script.onload = installProductionGuard;
   script.onerror = () => {
