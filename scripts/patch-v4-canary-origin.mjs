@@ -8,15 +8,18 @@ const OLD_VERSION_ERROR = "Cloudflare Worker 尚未升级到私密仓库 V3 接�
 const NEW_VERSION_ERROR = "私密仓库接口版本不兼容";
 const OLD_CHANNEL = "channel: () => 'warehouse-v3'";
 const NEW_CHANNEL = "channel: () => 'warehouse-v4-canary'";
+const OLD_TOTAL_ROWS = "const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);";
+const NEW_TOTAL_ROWS = "const totalRows = Number(fetchedRows || manifest?.totalRows || importedRows || 0);";
 const files = ["assets/private-cloud-warehouse-v3.js", "index.html"];
 const result = {
-  schemaVersion: "1.1",
+  schemaVersion: "1.2",
   generatedAt: new Date().toISOString(),
   branch: "cloud-migration-phase-1",
   oldOrigin: OLD_ORIGIN,
   newOrigin: NEW_ORIGIN,
   supportedApiMajors: [3, 4],
   channel: "warehouse-v4-canary",
+  rowSummaryBasis: "manifest-file-row-counts",
   files: [],
   conclusion: "failed",
 };
@@ -29,12 +32,14 @@ for (const path of files) {
     versionGuard: occurrences(source, OLD_VERSION_GUARD),
     versionError: occurrences(source, OLD_VERSION_ERROR),
     channel: occurrences(source, OLD_CHANNEL),
+    cumulativeRowSummary: occurrences(source, OLD_TOTAL_ROWS),
   };
-  let output = source
+  const output = source
     .split(OLD_ORIGIN).join(NEW_ORIGIN)
     .split(OLD_VERSION_GUARD).join(NEW_VERSION_GUARD)
     .split(OLD_VERSION_ERROR).join(NEW_VERSION_ERROR)
-    .split(OLD_CHANNEL).join(NEW_CHANNEL);
+    .split(OLD_CHANNEL).join(NEW_CHANNEL)
+    .split(OLD_TOTAL_ROWS).join(NEW_TOTAL_ROWS);
 
   if (output.includes(OLD_ORIGIN)) throw new Error(`${path} still contains the old Worker origin`);
   if (!output.includes(NEW_ORIGIN)) throw new Error(`${path} does not contain the V4 Worker origin`);
@@ -42,6 +47,8 @@ for (const path of files) {
   if (!output.includes(NEW_VERSION_GUARD)) throw new Error(`${path} does not allow API versions 3 and 4`);
   if (output.includes(OLD_CHANNEL)) throw new Error(`${path} still reports the V3-only channel`);
   if (!output.includes(NEW_CHANNEL)) throw new Error(`${path} does not report the V4 canary channel`);
+  if (output.includes(OLD_TOTAL_ROWS)) throw new Error(`${path} still prioritizes cumulative batch totals`);
+  if (!output.includes(NEW_TOTAL_ROWS)) throw new Error(`${path} does not prioritize manifest file row counts`);
 
   if (output !== source) await writeFile(path, output, "utf8");
   const replacements = Object.values(counts).reduce((sum, value) => sum + value, 0);
@@ -56,6 +63,8 @@ for (const path of files) {
     newVersionGuardAfter: occurrences(output, NEW_VERSION_GUARD),
     oldChannelAfter: occurrences(output, OLD_CHANNEL),
     newChannelAfter: occurrences(output, NEW_CHANNEL),
+    oldRowSummaryAfter: occurrences(output, OLD_TOTAL_ROWS),
+    newRowSummaryAfter: occurrences(output, NEW_TOTAL_ROWS),
   });
 }
 
