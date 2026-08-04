@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "2026-08-04T12:39:53.704Z",
+  "branch": "cloud-migration-phase-1",
+  "oldOrigin": "https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev",
+  "newOrigin": "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev",
+  "files": [
+    {
+      "path": "assets/private-cloud-warehouse-v3.js",
+      "oldOccurrencesBefore": 1,
+      "newOccurrencesBefore": 0,
+      "replacements": 1,
+      "oldOccurrencesAfter": 0,
+      "newOccurrencesAfter": 1
+    },
+    {
+      "path": "index.html",
+      "oldOccurrencesBefore": 2,
+      "newOccurrencesBefore": 0,
+      "replacements": 2,
+      "oldOccurrencesAfter": 0,
+      "newOccurrencesAfter": 2
+    }
+  ],
+  "conclusion": "passed",
+  "totalReplacements": 3
+}

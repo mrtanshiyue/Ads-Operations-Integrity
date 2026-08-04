@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const API_ORIGIN = 'https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev';
+  const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const SESSION_KEY = 'lr_private_cloud_password';
   const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
   const state = {
