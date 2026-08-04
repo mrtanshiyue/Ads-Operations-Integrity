@@ -14202,7 +14202,7 @@ window.addEventListener('load', AdsDashboardApp.init);
         }
       }
 
-      const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);
+      const totalRows = Number(fetchedRows || manifest?.totalRows || importedRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
