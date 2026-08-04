@@ -1,6 +1,0 @@
-OK global safe array helpers already present
-PATCH bare arrayMax calls: 0
-PATCH bare arrayMin calls: 0
-remaining bare arrayMax calls: 0
-remaining bare arrayMin calls: 0
-SUCCESS
