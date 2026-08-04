@@ -1,27 +1,48 @@
 {
-  "schemaVersion": "1.0",
-  "generatedAt": "2026-08-04T12:39:53.704Z",
+  "schemaVersion": "1.1",
+  "generatedAt": "2026-08-04T12:42:07.369Z",
   "branch": "cloud-migration-phase-1",
   "oldOrigin": "https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev",
   "newOrigin": "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev",
+  "supportedApiMajors": [
+    3,
+    4
+  ],
+  "channel": "warehouse-v4-canary",
   "files": [
     {
       "path": "assets/private-cloud-warehouse-v3.js",
-      "oldOccurrencesBefore": 1,
-      "newOccurrencesBefore": 0,
-      "replacements": 1,
-      "oldOccurrencesAfter": 0,
-      "newOccurrencesAfter": 1
+      "replacements": 3,
+      "replacementCounts": {
+        "origin": 0,
+        "versionGuard": 1,
+        "versionError": 1,
+        "channel": 1
+      },
+      "oldOriginAfter": 0,
+      "newOriginAfter": 1,
+      "oldVersionGuardAfter": 0,
+      "newVersionGuardAfter": 1,
+      "oldChannelAfter": 0,
+      "newChannelAfter": 1
     },
     {
       "path": "index.html",
-      "oldOccurrencesBefore": 2,
-      "newOccurrencesBefore": 0,
-      "replacements": 2,
-      "oldOccurrencesAfter": 0,
-      "newOccurrencesAfter": 2
+      "replacements": 3,
+      "replacementCounts": {
+        "origin": 0,
+        "versionGuard": 1,
+        "versionError": 1,
+        "channel": 1
+      },
+      "oldOriginAfter": 0,
+      "newOriginAfter": 2,
+      "oldVersionGuardAfter": 0,
+      "newVersionGuardAfter": 1,
+      "oldChannelAfter": 0,
+      "newChannelAfter": 1
     }
   ],
   "conclusion": "passed",
-  "totalReplacements": 3
+  "totalReplacements": 6
 }

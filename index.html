@@ -14072,8 +14072,8 @@ window.addEventListener('load', AdsDashboardApp.init);
       setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
-      if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
-        throw new Error('Cloudflare Worker 尚未升级到私密仓库 V3 接口');
+      if (health?.service !== 'amazon-data-warehouse' || !/^(3|4)\./.test(String(health?.version || ''))) {
+        throw new Error('私密仓库接口版本不兼容');
       }
       state.apiVersion = String(health.version || '3');
 
@@ -14261,7 +14261,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       reload: () => loadPrivateCloudData({ reason: 'shop-change' }),
       clearPassword: () => sessionSafe.remove(SESSION_KEY),
       apiBase: API_ORIGIN,
-      channel: () => 'warehouse-v3',
+      channel: () => 'warehouse-v4-canary',
       state: () => ({
         loading: state.loading,
         loadedOnce: state.loadedOnce,
