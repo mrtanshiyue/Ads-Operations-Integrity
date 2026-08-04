@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1.0",
+  "approvedAt": "2026-08-04T22:17:00+08:00",
+  "approvedScope": "production-cutover-preparation",
+  "approvedBy": "repository-owner",
+  "automaticMergeAuthorized": false,
+  "productionSwitchAuthorized": false,
+  "notes": "Preparation is authorized. Final merge and GitHub Pages production switch require a separate explicit approval after final gates pass."
+}

@@ -6,7 +6,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
-<meta content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://generativelanguage.googleapis.com https://openrouter.ai https://api.groq.com https://huggingface.co https://*.huggingface.co https://*.hf.co https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev https://amazon-ad-private-api.tanshiyuesir.workers.dev; img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" http-equiv="Content-Security-Policy"/>
+<meta content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://cdn.sheetjs.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://generativelanguage.googleapis.com https://openrouter.ai https://api.groq.com https://huggingface.co https://*.huggingface.co https://*.hf.co https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev https://amazon-ad-private-api.tanshiyuesir.workers.dev; img-src 'self' data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" http-equiv="Content-Security-Policy"/>
 <meta content="strict-origin-when-cross-origin" name="referrer"/>
 <meta content="camera=(), microphone=(), geolocation=(), payment=(), usb=()" http-equiv="Permissions-Policy"/>
 <title>朗容眼镜 - 广告运营工作台 V61.5.4.7 Trend First</title>
@@ -13825,7 +13825,7 @@ window.addEventListener('load', AdsDashboardApp.init);
 (() => {
   'use strict';
 
-  const API_ORIGIN = 'https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev';
+  const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const SESSION_KEY = 'lr_private_cloud_password';
   const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
   const state = {
@@ -14072,8 +14072,8 @@ window.addEventListener('load', AdsDashboardApp.init);
       setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
-      if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
-        throw new Error('Cloudflare Worker 尚未升级到私密仓库 V3 接口');
+      if (health?.service !== 'amazon-data-warehouse' || !/^(3|4)\./.test(String(health?.version || ''))) {
+        throw new Error('私密仓库接口版本不兼容');
       }
       state.apiVersion = String(health.version || '3');
 
@@ -14202,7 +14202,7 @@ window.addEventListener('load', AdsDashboardApp.init);
         }
       }
 
-      const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);
+      const totalRows = Number(fetchedRows || manifest?.totalRows || importedRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
@@ -14261,7 +14261,7 @@ window.addEventListener('load', AdsDashboardApp.init);
       reload: () => loadPrivateCloudData({ reason: 'shop-change' }),
       clearPassword: () => sessionSafe.remove(SESSION_KEY),
       apiBase: API_ORIGIN,
-      channel: () => 'warehouse-v3',
+      channel: () => 'warehouse-v4-canary',
       state: () => ({
         loading: state.loading,
         loadedOnce: state.loadedOnce,

@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const API_ORIGIN = 'https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev';
+  const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const SESSION_KEY = 'lr_private_cloud_password';
   const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
   const state = {
@@ -248,8 +248,8 @@
       setStatus(`正在连接 Amazon-Data-Warehouse · ${displayScope(scope)}…`);
       const health = await apiFetchJson('/health', password);
       if (!health?.ok) throw new Error('私有接口健康检查失败');
-      if (health?.service !== 'amazon-data-warehouse' || !String(health?.version || '').startsWith('3.')) {
-        throw new Error('Cloudflare Worker 尚未升级到私密仓库 V3 接口');
+      if (health?.service !== 'amazon-data-warehouse' || !/^(3|4)\./.test(String(health?.version || ''))) {
+        throw new Error('私密仓库接口版本不兼容');
       }
       state.apiVersion = String(health.version || '3');
 
@@ -378,7 +378,7 @@
         }
       }
 
-      const totalRows = Number(importedRows || fetchedRows || manifest?.totalRows || 0);
+      const totalRows = Number(fetchedRows || manifest?.totalRows || importedRows || 0);
       const costRows = Number(costSummary?.rowCount || 0);
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
@@ -437,7 +437,7 @@
       reload: () => loadPrivateCloudData({ reason: 'shop-change' }),
       clearPassword: () => sessionSafe.remove(SESSION_KEY),
       apiBase: API_ORIGIN,
-      channel: () => 'warehouse-v3',
+      channel: () => 'warehouse-v4-canary',
       state: () => ({
         loading: state.loading,
         loadedOnce: state.loadedOnce,

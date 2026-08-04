@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "status": "ready-for-final-approval",
+  "preparedAt": "2026-08-04T22:46:00+08:00",
+  "frontendCodeEvidenceSha": "fd8b863639f5fe9e7ba07a9aa3a5a9b40a5b541f",
+  "warehouseEvidenceSha": "cd77e4182f892407a2dda14abdc159229079fd0b",
+  "frontendMainBaseline": "151115608b2677bcf0d6029532eccf5b1daf0930",
+  "warehouseMainBaseline": "683488d8dd22ec6923d3a454711a62dee3f6178a",
+  "expectedFiles": 32,
+  "expectedRows": 215800,
+  "expectedRedactedTransactionFiles": 18,
+  "browserCanaryPassed": true,
+  "moduleInspectionPassed": true,
+  "rollbackBranchesCreated": true,
+  "finalMergeAuthorized": false,
+  "productionSwitchAuthorized": false
+}

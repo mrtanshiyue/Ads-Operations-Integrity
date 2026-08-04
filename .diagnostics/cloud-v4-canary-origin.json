@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1.2",
+  "generatedAt": "2026-08-04T12:49:43.586Z",
+  "branch": "cloud-migration-phase-1",
+  "oldOrigin": "https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev",
+  "newOrigin": "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev",
+  "supportedApiMajors": [
+    3,
+    4
+  ],
+  "channel": "warehouse-v4-canary",
+  "rowSummaryBasis": "manifest-file-row-counts",
+  "files": [
+    {
+      "path": "assets/private-cloud-warehouse-v3.js",
+      "replacements": 1,
+      "replacementCounts": {
+        "origin": 0,
+        "versionGuard": 0,
+        "versionError": 0,
+        "channel": 0,
+        "cumulativeRowSummary": 1
+      },
+      "oldOriginAfter": 0,
+      "newOriginAfter": 1,
+      "oldVersionGuardAfter": 0,
+      "newVersionGuardAfter": 1,
+      "oldChannelAfter": 0,
+      "newChannelAfter": 1,
+      "oldRowSummaryAfter": 0,
+      "newRowSummaryAfter": 1
+    },
+    {
+      "path": "index.html",
+      "replacements": 1,
+      "replacementCounts": {
+        "origin": 0,
+        "versionGuard": 0,
+        "versionError": 0,
+        "channel": 0,
+        "cumulativeRowSummary": 1
+      },
+      "oldOriginAfter": 0,
+      "newOriginAfter": 2,
+      "oldVersionGuardAfter": 0,
+      "newVersionGuardAfter": 1,
+      "oldChannelAfter": 0,
+      "newChannelAfter": 1,
+      "oldRowSummaryAfter": 0,
+      "newRowSummaryAfter": 1
+    }
+  ],
+  "conclusion": "passed",
+  "totalReplacements": 2
+}

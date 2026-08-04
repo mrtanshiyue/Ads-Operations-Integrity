@@ -1,0 +1,37 @@
+name: Validate Cloud V4 Canary Tools
+
+on:
+  push:
+    branches:
+      - cloud-migration-phase-1
+    paths:
+      - "scripts/compare-warehouse-v3-v4.mjs"
+      - "docs/CLOUD_V4_CANARY.md"
+      - ".github/workflows/validate-cloud-v4-canary.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/compare-warehouse-v3-v4.mjs"
+      - "docs/CLOUD_V4_CANARY.md"
+      - ".github/workflows/validate-cloud-v4-canary.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check canary comparison script syntax
+        run: node --check scripts/compare-warehouse-v3-v4.mjs
