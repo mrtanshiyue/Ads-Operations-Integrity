@@ -1,0 +1,69 @@
+name: Apply Canonical Manifest Digest Priority
+
+on:
+  push:
+    branches: [phase-5-7-frontend-optimization-2026-08-05]
+    paths:
+      - .github/frontend-fix/canonical-digest.trigger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-canonical-manifest-digest-priority
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact front-end candidate
+        uses: actions/checkout@v4
+        with:
+          ref: phase-5-7-frontend-optimization-2026-08-05
+          fetch-depth: 1
+
+      - name: Apply minimal loader fix and CI regression guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          loader_path = Path('assets/private-cloud-warehouse-v4.js')
+          loader = loader_path.read_text(encoding='utf-8')
+          old = "    const value = String(entry?.servingSha256 || entry?.sha || entry?.sourceSha256 || '').trim().toLowerCase();"
+          new = "    const value = String(entry?.sha || entry?.servingSha256 || entry?.sourceSha256 || '').trim().toLowerCase();"
+          if loader.count(old) != 1:
+              raise SystemExit(f'Expected one legacy digest-priority expression, found {loader.count(old)}')
+          loader_path.write_text(loader.replace(old, new, 1), encoding='utf-8')
+
+          ci_path = Path('.github/workflows/ci-main.yml')
+          ci = ci_path.read_text(encoding='utf-8')
+          anchor = '          grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js\n'
+          guard = (
+              '          grep -Fq "entry?.sha || entry?.servingSha256 || entry?.sourceSha256" assets/private-cloud-warehouse-v4.js\n'
+              '          ! grep -Fq "entry?.servingSha256 || entry?.sha || entry?.sourceSha256" assets/private-cloud-warehouse-v4.js\n'
+          )
+          if guard not in ci:
+              if ci.count(anchor) != 1:
+                  raise SystemExit(f'Expected one CI insertion anchor, found {ci.count(anchor)}')
+              ci = ci.replace(anchor, anchor + guard, 1)
+              ci_path.write_text(ci, encoding='utf-8')
+          PY
+
+          node --check assets/private-cloud-warehouse-v4.js
+          grep -Fq "entry?.sha || entry?.servingSha256 || entry?.sourceSha256" assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "entry?.servingSha256 || entry?.sha || entry?.sourceSha256" assets/private-cloud-warehouse-v4.js
+
+      - name: Commit fix and self-clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/apply-canonical-manifest-digest.yml .github/frontend-fix/canonical-digest.trigger
+          git add assets/private-cloud-warehouse-v4.js .github/workflows/ci-main.yml
+          git diff --cached --check
+          git commit -m "Prefer canonical Manifest digest for immutable cache"
+          git push origin HEAD:phase-5-7-frontend-optimization-2026-08-05
