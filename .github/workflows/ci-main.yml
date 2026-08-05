@@ -106,7 +106,7 @@ jobs:
               raise SystemExit('CDN URL remains in index.html')
           PY
 
-      - name: Verify V4.2 query, retry and credential invariants
+      - name: Verify V4.2 query, retry, CORS and credential invariants
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +115,7 @@ jobs:
           grep -Fq "FETCH_CONCURRENCY = 2" assets/private-cloud-warehouse-v4.js
           grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
           grep -Fq "setPassword: value => memoryCredential.set(value)" assets/private-cloud-warehouse-v4.js
-          grep -Fq "const LOADER_VERSION = '4.2.1'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.2'" assets/private-cloud-warehouse-v4.js
           grep -Fq "new URL('./private-cloud-query-v1.js', SCRIPT_URL).href" assets/private-cloud-warehouse-v4.js
           grep -Fq "queryRequest" assets/private-cloud-warehouse-v4.js
           grep -Fq "credentialAccepted: Boolean(memoryCredential.get())" assets/private-cloud-warehouse-v4.js
@@ -126,6 +126,7 @@ jobs:
           grep -Fq "window.PrivateCloudAds?.queryRequest" assets/private-cloud-query-v1.js
           grep -Fq "MAX_PAGE_SIZE = 500" assets/private-cloud-query-v1.js
           grep -Fq "isCanonicalDate" assets/private-cloud-query-v1.js
+          ! grep -Fq "headers.set('Cache-Control'" assets/private-cloud-warehouse-v4.js
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
           ! grep -Eq "lr_private_cloud_password|sessionStorage|const sessionSafe|getPassword" assets/private-cloud-warehouse-v4.js assets/private-cloud-query-v1.js
           ! grep -Eq "Authorization.*password|Bearer.*password" assets/private-cloud-query-v1.js
