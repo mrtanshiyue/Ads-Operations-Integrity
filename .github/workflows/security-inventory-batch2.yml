@@ -1,0 +1,75 @@
+name: Inventory Front-end Security Batch 2
+
+on:
+  push:
+    branches:
+      - fix/frontend-security-batch2-2026-08-05
+    paths:
+      - index.html
+      - assets/**
+      - .github/workflows/security-inventory-batch2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Inspect CSP, script sources and credential persistence
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const html = readFileSync('index.html', 'utf8');
+          const loader = readFileSync('assets/private-cloud-warehouse-v4.js', 'utf8');
+          const csp = [...html.matchAll(/<meta[^>]+http-equiv=["']Content-Security-Policy["'][^>]+content=["']([^"']*)["'][^>]*>/gi)].map(match => match[1]);
+          const scripts = [...html.matchAll(/<script\b([^>]*)>/gi)].map((match, index) => {
+            const attrs = match[1];
+            const src = attrs.match(/\bsrc=["']([^"']+)["']/i)?.[1] || null;
+            const integrity = attrs.match(/\bintegrity=["']([^"']+)["']/i)?.[1] || null;
+            return { index, src, integrity, inline: !src };
+          });
+          const styles = [...html.matchAll(/<style\b[^>]*>/gi)].length;
+          const links = [...html.matchAll(/<link\b([^>]*)>/gi)].map(match => ({
+            href: match[1].match(/\bhref=["']([^"']+)["']/i)?.[1] || null,
+            integrity: match[1].match(/\bintegrity=["']([^"']+)["']/i)?.[1] || null,
+          })).filter(item => item.href);
+          const externalHosts = [...new Set(scripts.filter(item => item.src).map(item => {
+            try { return new URL(item.src, 'https://example.invalid').hostname; } catch { return 'invalid'; }
+          }))];
+          const result = {
+            generatedAt: new Date().toISOString(),
+            csp,
+            scripts,
+            links,
+            inlineScriptCount: scripts.filter(item => item.inline).length,
+            inlineStyleCount: styles,
+            externalHosts,
+            dynamicScriptCreationCount: (html.match(/createElement\s*\(\s*["']script["']\s*\)/g) || []).length,
+            scriptOnErrorCount: (html.match(/\bonerror\s*=/gi) || []).length,
+            sessionStorageReferences: (html.match(/sessionStorage/g) || []).length + (loader.match(/sessionStorage/g) || []).length,
+            credentialKeyReferences: (html.match(/lr_private_cloud_password/g) || []).length + (loader.match(/lr_private_cloud_password/g) || []).length,
+          };
+          writeFileSync('security-inventory-batch2.json', JSON.stringify(result, null, 2) + '\n');
+          console.log(JSON.stringify({
+            cspCount: csp.length,
+            scriptCount: scripts.length,
+            externalScriptCount: scripts.filter(item => item.src).length,
+            inlineScriptCount: result.inlineScriptCount,
+            inlineStyleCount: result.inlineStyleCount,
+            externalHosts,
+            dynamicScriptCreationCount: result.dynamicScriptCreationCount,
+            scriptOnErrorCount: result.scriptOnErrorCount,
+            sessionStorageReferences: result.sessionStorageReferences,
+          }));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-inventory-batch2-${{ github.run_id }}
+          path: security-inventory-batch2.json
+          retention-days: 7
