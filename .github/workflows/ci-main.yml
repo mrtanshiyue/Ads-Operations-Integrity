@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   validate:
-    name: Static site, loader and migration hygiene
+    name: Static site, TiDB query client and migration hygiene
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout exact commit
         uses: actions/checkout@v4
@@ -36,6 +36,7 @@ jobs:
           set -euo pipefail
           test -s index.html
           test -s assets/private-cloud-warehouse-v4.js
+          test -s assets/private-cloud-query-v1.js
           rm -rf .validate _site
           mkdir -p .validate _site/assets
           cp index.html _site/index.html
@@ -78,13 +79,20 @@ jobs:
           set -euo pipefail
           find .validate assets -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
 
-      - name: Verify V4 production invariants
+      - name: Verify V4.2 TiDB production invariants
         shell: bash
         run: |
           set -euo pipefail
           grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.0'" assets/private-cloud-warehouse-v4.js
           grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
-          grep -Fq "IndexedDB" <(sed 's/indexedDB/IndexedDB/g' assets/private-cloud-warehouse-v4.js)
+          grep -Fq "private-cloud-query-v1.js" assets/private-cloud-warehouse-v4.js
+          grep -Fq "TiDB 主数据源" assets/private-cloud-warehouse-v4.js
+          grep -Fq "window.PrivateCloudQuery" assets/private-cloud-query-v1.js
+          grep -Fq "/api/v1/query/status" assets/private-cloud-query-v1.js
+          grep -Fq "/api/v1/query/overview" assets/private-cloud-query-v1.js
+          grep -Fq "/api/v1/query/ads" assets/private-cloud-query-v1.js
+          grep -Fq "/api/v1/query/transactions" assets/private-cloud-query-v1.js
           grep -Fq "FETCH_CONCURRENCY = 3" assets/private-cloud-warehouse-v4.js
           grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
@@ -115,16 +123,24 @@ jobs:
           section = loader[start:end] if start >= 0 and end >= 0 else ''
           if section.count('event.stopImmediatePropagation();') != 1 or '}, true);' not in section:
               raise SystemExit('V4 loader does not own the import controls in capture phase')
+          if "new URL('./private-cloud-query-v1.js', SCRIPT_URL).href" not in loader:
+              raise SystemExit('V4 loader does not resolve the query client from its own asset URL')
           PY
 
       - name: Reject completed migration artifacts
         shell: bash
         run: |
           set -euo pipefail
-          transient="$(find .github -type f \( -name '*.trigger' -o -name '*-result.json' -o -name '*canary*.json' \) -print 2>/dev/null || true)"
+          transient="$(find .github -type f \( -name '*.trigger' -o -name '*-result.json' -o -name '*canary*.json' -o -path '*/phase8/*' \) -print 2>/dev/null || true)"
           if [ -n "$transient" ]; then
             echo "Completed migration artifact(s) remain in the active tree:"
             printf '%s\n' "$transient"
+            exit 1
+          fi
+          temporary_workflows="$(find .github/workflows -type f -name 'phase8-*' -print 2>/dev/null || true)"
+          if [ -n "$temporary_workflows" ]; then
+            echo "Temporary Phase 8 workflow(s) remain in the active tree:"
+            printf '%s\n' "$temporary_workflows"
             exit 1
           fi
 
@@ -135,3 +151,4 @@ jobs:
           test -s _site/index.html
           test -s _site/assets/private-cloud-warehouse-v3.js
           test -s _site/assets/private-cloud-warehouse-v4.js
+          test -s _site/assets/private-cloud-query-v1.js
