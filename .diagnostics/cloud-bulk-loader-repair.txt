@@ -1,5 +1,0 @@
-PATCH embedded loader retrying request API
-PATCH embedded loader bounded-memory batch import
-PATCH source loader retrying request API
-PATCH source loader bounded-memory batch import
-SUCCESS
