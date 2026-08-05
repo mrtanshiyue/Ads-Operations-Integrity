@@ -2,7 +2,9 @@ name: Validate Front-end Main
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - phase-5-7-frontend-optimization-2026-08-05
   push:
     branches: [main]
   workflow_dispatch:
