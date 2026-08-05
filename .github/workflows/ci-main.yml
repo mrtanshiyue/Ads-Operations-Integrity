@@ -106,19 +106,22 @@ jobs:
               raise SystemExit('CDN URL remains in index.html')
           PY
 
-      - name: Verify V4.2 production, query and credential invariants
+      - name: Verify V4.2 query, retry and credential invariants
         shell: bash
         run: |
           set -euo pipefail
           grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
           grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
-          grep -Fq "FETCH_CONCURRENCY = 3" assets/private-cloud-warehouse-v4.js
+          grep -Fq "FETCH_CONCURRENCY = 2" assets/private-cloud-warehouse-v4.js
           grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
           grep -Fq "setPassword: value => memoryCredential.set(value)" assets/private-cloud-warehouse-v4.js
-          grep -Fq "const LOADER_VERSION = '4.2.0'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.1'" assets/private-cloud-warehouse-v4.js
           grep -Fq "new URL('./private-cloud-query-v1.js', SCRIPT_URL).href" assets/private-cloud-warehouse-v4.js
           grep -Fq "queryRequest" assets/private-cloud-warehouse-v4.js
           grep -Fq "credentialAccepted: Boolean(memoryCredential.get())" assets/private-cloud-warehouse-v4.js
+          grep -Fq "maxAttempts: 8" assets/private-cloud-warehouse-v4.js
+          grep -Fq "__warehouseRetry" assets/private-cloud-warehouse-v4.js
+          grep -Fq "retryMaxMs: 15000" assets/private-cloud-warehouse-v4.js
           grep -Fq "const CLIENT_VERSION = '1.1.0'" assets/private-cloud-query-v1.js
           grep -Fq "window.PrivateCloudAds?.queryRequest" assets/private-cloud-query-v1.js
           grep -Fq "MAX_PAGE_SIZE = 500" assets/private-cloud-query-v1.js
