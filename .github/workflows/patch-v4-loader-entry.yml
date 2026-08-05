@@ -43,59 +43,37 @@ jobs:
           if len(matches) > 1:
               raise SystemExit(f'Expected at most one formal V4 loader tag, found {len(matches)}')
           if not matches:
-              marker = '</body>'
-              position = html.lower().rfind(marker)
+              position = html.lower().rfind('</body>')
               if position < 0:
-                  marker = '</html>'
-                  position = html.lower().rfind(marker)
+                  position = html.lower().rfind('</html>')
               if position < 0:
                   raise SystemExit('index.html has no closing body/html tag')
-              tag = '  <script src="assets/private-cloud-warehouse-v4.js"></script>\n'
-              html = html[:position] + tag + html[position:]
+              html = html[:position] + '  <script src="assets/private-cloud-warehouse-v4.js"></script>\n' + html[position:]
 
-          old = """  const bindUi = () => {
-            if (window.__WAREHOUSE_V4_UI_BOUND__) return;
-            window.__WAREHOUSE_V4_UI_BOUND__ = true;
-            document.addEventListener('click', event => {
-              const target = event.target?.closest?.('#btnPrivateCloudImport, #btnPrivateCloudLogout');
-              if (!target) return;
-              if (target.id === 'btnPrivateCloudImport') {
-                loadPrivateCloudData({ reason: 'manual' });
-              } else {
-                sessionSafe.remove(SESSION_KEY);
-                state.loadedOnce = false;
-                state.loadedScope = '';
-                setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
-                notifyUser('私有云会话密码已清除。', 'good');
-              }
-            });
-          };
-          """
-          new = """  const bindUi = () => {
-            if (window.__WAREHOUSE_V4_UI_BOUND__) return;
-            window.__WAREHOUSE_V4_UI_BOUND__ = true;
-            document.addEventListener('click', event => {
-              const target = event.target?.closest?.('#btnPrivateCloudImport, #btnPrivateCloudLogout');
-              if (!target) return;
-              event.preventDefault();
-              event.stopImmediatePropagation();
-              if (target.id === 'btnPrivateCloudImport') {
-                loadPrivateCloudData({ reason: 'manual' });
-              } else {
-                sessionSafe.remove(SESSION_KEY);
-                state.loadedOnce = false;
-                state.loadedScope = '';
-                setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
-                notifyUser('私有云会话密码已清除。', 'good');
-              }
-            }, true);
-          };
-          """
-
-          if old in loader:
-              loader = loader.replace(old, new, 1)
-          elif "event.stopImmediatePropagation();" not in loader or "}, true);" not in loader:
-              raise SystemExit('Could not locate the expected V4 UI binding block')
+          start_marker = "  const bindUi = () => {"
+          end_marker = "\n\n  const requestPassword"
+          start = loader.find(start_marker)
+          end = loader.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit('Could not locate bindUi function boundaries')
+          section = loader[start:end]
+          if 'event.stopImmediatePropagation();' not in section:
+              section, count = re.subn(
+                  r'(\n\s*if \(!target\) return;)',
+                  r'\1\n      event.preventDefault();\n      event.stopImmediatePropagation();',
+                  section,
+                  count=1,
+              )
+              if count != 1:
+                  raise SystemExit('Could not locate the button target guard')
+          if '}, true);' not in section:
+              close_position = section.rfind('\n    });')
+              if close_position < 0:
+                  raise SystemExit('Could not locate the bindUi event listener closing line')
+              section = section[:close_position] + '\n    }, true);' + section[close_position + len('\n    });'):]
+          if section.count('event.stopImmediatePropagation();') != 1 or '}, true);' not in section:
+              raise SystemExit('Capture-phase event ownership validation failed')
+          loader = loader[:start] + section + loader[end:]
 
           index_path.write_text(html, encoding='utf-8')
           loader_path.write_text(loader, encoding='utf-8')
@@ -103,7 +81,8 @@ jobs:
           final_matches = list(script_pattern.finditer(html))
           if len(final_matches) != 1:
               raise SystemExit(f'Expected exactly one formal V4 loader tag, found {len(final_matches)}')
-          if final_matches[0].start() > html.lower().rfind('</body>') >= 0:
+          body_end = html.lower().rfind('</body>')
+          if body_end >= 0 and final_matches[0].start() > body_end:
               raise SystemExit('Formal V4 loader tag is outside the body')
           print('Formal V4 loader entry and capture-phase event ownership are installed.')
           PY
