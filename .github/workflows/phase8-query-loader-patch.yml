@@ -1,0 +1,42 @@
+name: Phase 8 Query Loader Patch
+
+on:
+  push:
+    branches: [phase-8-query-client-rebase-2026-08-05]
+    paths:
+      - scripts/phase8-query-loader-patch.mjs
+      - .github/workflows/phase8-query-loader-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-8-query-client-rebase-2026-08-05
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Patch loader and remove one-time machinery
+        run: |
+          set -euo pipefail
+          node scripts/phase8-query-loader-patch.mjs
+          node --check assets/private-cloud-warehouse-v4.js
+          rm scripts/phase8-query-loader-patch.mjs
+          rm .github/workflows/phase8-query-loader-patch.yml
+          ! grep -Eq 'lr_private_cloud_password|sessionStorage|const sessionSafe' assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.0'" assets/private-cloud-warehouse-v4.js
+          grep -Fq 'queryRequest' assets/private-cloud-warehouse-v4.js
+      - name: Commit generated hardened loader
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add assets/private-cloud-warehouse-v4.js scripts/phase8-query-loader-patch.mjs .github/workflows/phase8-query-loader-patch.yml
+          git commit -m "Harden Phase 8 Query Loader bridge"
+          git push origin HEAD:phase-8-query-client-rebase-2026-08-05
