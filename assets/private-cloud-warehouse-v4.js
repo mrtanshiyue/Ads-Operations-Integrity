@@ -1,9 +1,10 @@
 (() => {
   'use strict';
 
+  const SCRIPT_URL = document.currentScript?.src || new URL('assets/private-cloud-warehouse-v4.js', window.location.href).href;
   const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const CHANNEL = 'warehouse-v4-production';
-  const LOADER_VERSION = '4.1.1';
+  const LOADER_VERSION = '4.2.0';
   const BATCH_SIZE = 6;
   const FETCH_CONCURRENCY = 3;
   const CACHE_DB = 'amazon-warehouse-v4-cache';
@@ -16,6 +17,8 @@
     loadedOnce: false,
     loadedScope: '',
     apiVersion: '',
+    storage: 'unknown',
+    queryStatus: null,
     autoReloadTimer: null,
     cacheStats: emptyCacheStats(),
   };
@@ -294,6 +297,7 @@
       if (!health?.ok) throw new Error('私有接口健康检查失败');
       if (health?.service !== 'amazon-data-warehouse' || !/^4\./.test(String(health?.version || ''))) throw new Error('私密仓库接口版本不兼容：生产页面只接受 V4');
       state.apiVersion = String(health.version || '4');
+      state.storage = String(health.storage || 'unknown');
       state.summary = await apiFetchJson(`/summary?scope=${encodeURIComponent(scope)}`, password, { optional: true }).catch(() => null);
       if (state.summary?.totals) setStatus(`已连接 ${displayScope(scope)} · ${Number(state.summary.totals.fileCount || 0)} 个文件 · ${Number(state.summary.totals.rowCount || 0).toLocaleString()} 行，正在读取清单…`);
       else setStatus(`正在扫描 ${displayScope(scope)} 店铺文件清单…`);
@@ -405,14 +409,15 @@
       const months = Array.isArray(manifest?.months) ? manifest.months : [...new Set(entries.map(entry => entry.month).filter(Boolean))].sort();
       const monthText = months.length ? `${months[0]}${months.length > 1 ? ` → ${months[months.length - 1]}` : ''}` : '月份未标记';
       const cacheText = state.cacheStats.hits ? ` · 缓存复用 ${state.cacheStats.hits} 个` : '';
-      const statusText = `${displayScope(scope)} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${cacheText}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
+      const storageText = state.storage === 'tidb-primary' ? ' · TiDB 主数据源' : ` · ${state.storage || '未知数据源'}`;
+      const statusText = `${displayScope(scope)} 私密仓库已加载：${totalRows.toLocaleString()} 行 · ${entries.length} 个文件 · ${monthText}${redactedFiles ? ` · ${redactedFiles} 个联合报告已脱敏` : ''}${storageText}${cacheText}${costRows ? ` · 成本库 ${costRows.toLocaleString()} SKU` : ''}`;
       state.loadedOnce = true;
       state.loadedScope = scope;
       document.documentElement.dataset.loadedShopScope = scope;
       setStatus(statusText, costWarning ? 'warn' : 'good');
       const brand = byId('brandStatus');
       if (brand) brand.textContent = `系统就绪 · ${displayScope(scope)} 私密仓库 ${totalRows.toLocaleString()} 行`;
-      window.dispatchEvent(new CustomEvent('lr:cloud-loaded', { detail: { scope, files: entries.length, rows: totalRows, months, redactedFiles, apiVersion: state.apiVersion, summary: state.summary, cacheStats: { ...state.cacheStats } } }));
+      window.dispatchEvent(new CustomEvent('lr:cloud-loaded', { detail: { scope, files: entries.length, rows: totalRows, months, redactedFiles, apiVersion: state.apiVersion, storage: state.storage, summary: state.summary, queryStatus: state.queryStatus, cacheStats: { ...state.cacheStats } } }));
       notifyUser(costWarning ? `${statusText}；${costWarning}` : statusText, costWarning ? 'warn' : 'good');
     } catch (error) {
       console.error('Private warehouse import failed:', error);
@@ -425,6 +430,44 @@
     }
   };
 
+  const ensureQueryClient = () => {
+    if (window.PrivateCloudQuery || window.__WAREHOUSE_QUERY_CLIENT_LOADING__) return;
+    window.__WAREHOUSE_QUERY_CLIENT_LOADING__ = true;
+    const script = document.createElement('script');
+    script.src = new URL('./private-cloud-query-v1.js', SCRIPT_URL).href;
+    script.async = true;
+    script.dataset.warehouseQueryClient = 'v1';
+    script.onload = () => {
+      window.__WAREHOUSE_QUERY_CLIENT_LOADING__ = false;
+      if (memoryCredential.get() && state.loadedOnce) {
+        window.PrivateCloudQuery?.refresh?.({ scope: activeScope() }).then(result => {
+          state.queryStatus = result?.status || null;
+        }).catch(error => console.warn('TiDB query status refresh skipped:', error));
+      }
+    };
+    script.onerror = () => {
+      window.__WAREHOUSE_QUERY_CLIENT_LOADING__ = false;
+      console.warn('TiDB query client failed to load');
+    };
+    document.head.appendChild(script);
+  };
+
+  const queryRequest = async (target, options = {}) => {
+    const path = normalizeApiTarget(target);
+    if (!path.startsWith('/api/v1/query/')) {
+      const error = new Error('只允许调用 /api/v1/query 查询接口');
+      error.status = 400;
+      throw error;
+    }
+    const password = memoryCredential.get();
+    if (!password) {
+      const error = new Error('私有云内存访问密码不存在，请先加载私有云数据');
+      error.status = 401;
+      throw error;
+    }
+    return requestApi(path, password, { ...options, responseType: 'json' });
+  };
+
   const scheduleScopeReload = () => {
     clearTimeout(state.autoReloadTimer);
     if (!state.loadedOnce || !memoryCredential.get()) return;
@@ -434,6 +477,7 @@
   const installApi = () => {
     ensureUi();
     bindUi();
+    ensureQueryClient();
     window.__WAREHOUSE_V4_LOADER_VERSION__ = LOADER_VERSION;
     window.PrivateCloudAds = {
       load: options => loadPrivateCloudData(options || {}),
@@ -441,9 +485,11 @@
       setPassword: value => memoryCredential.set(value),
       clearPassword: () => memoryCredential.clear(),
       clearCache: clearFileCache,
+      queryRequest,
+      query: () => window.PrivateCloudQuery || null,
       apiBase: API_ORIGIN,
       channel: () => CHANNEL,
-      state: () => ({ loading: state.loading, loadedOnce: state.loadedOnce, loadedScope: state.loadedScope, apiVersion: state.apiVersion, manifest: state.manifest, summary: state.summary, cacheStats: { ...state.cacheStats }, loaderVersion: LOADER_VERSION }),
+      state: () => ({ loading: state.loading, loadedOnce: state.loadedOnce, loadedScope: state.loadedScope, apiVersion: state.apiVersion, storage: state.storage, queryStatus: state.queryStatus, credentialAccepted: Boolean(memoryCredential.get()), manifest: state.manifest, summary: state.summary, cacheStats: { ...state.cacheStats }, loaderVersion: LOADER_VERSION }),
     };
     if (memoryCredential.get() && !state.loading && !state.loadedOnce) setStatus(`访问密码仅保存在当前页面内存中；点击加载 ${displayScope(activeScope())} 私密仓库数据`);
     if (!window.__WAREHOUSE_V4_SCOPE_BOUND__) {
