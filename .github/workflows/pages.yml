@@ -1,70 +1,52 @@
 name: Deploy Ads Operations Integrity
-# Legacy GitHub Pages deployment: publish the complete static site to gh-pages.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - index.html
+      - "index.html"
       - "assets/**"
-      - .github/workflows/pages.yml
-  workflow_dispatch:
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/ci-main.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: pages-production
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    name: Validate and publish complete static site
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Checkout exact production commit
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Prepare complete static site
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build immutable Pages artifact
         shell: bash
         run: |
           set -euo pipefail
+          test -s index.html
+          test -s assets/private-cloud-warehouse-v3.js
+          test -s assets/private-cloud-warehouse-v4.js
           rm -rf _site .validate
-          python3 - <<'PY'
-          from pathlib import Path
-          import shutil
+          mkdir -p _site/assets .validate
+          cp index.html _site/index.html
+          cp -a assets/. _site/assets/
+          : > _site/.nojekyll
 
-          source = Path('index.html')
-          assets = Path('assets')
-          loader = assets / 'private-cloud-warehouse-v3.js'
-          if not source.exists() or source.stat().st_size < 1000:
-              raise SystemExit('index.html is missing or unexpectedly small')
-          if not loader.exists() or loader.stat().st_size < 1000:
-              raise SystemExit('Cloud Warehouse loader is missing or unexpectedly small')
-
-          data = source.read_bytes()
-          fixes = (
-              (b"newline: '\r\n'", b"newline: '\\r\\n'"),
-              (b"newline: '\n'", b"newline: '\\r\\n'"),
-          )
-          applied = 0
-          for broken, corrected in fixes:
-              count = data.count(broken)
-              if count:
-                  data = data.replace(broken, corrected)
-                  applied += count
-
-          output = Path('_site')
-          output.mkdir()
-          (output / 'index.html').write_bytes(data)
-          shutil.copytree(assets, output / 'assets')
-          (output / '.nojekyll').write_text('', encoding='utf-8')
-          print(f'Prepared {len(data):,} HTML bytes and complete assets; repaired {applied} broken newline literal(s)')
-          PY
-          test -f _site/assets/private-cloud-warehouse-v3.js
-
-      - name: Extract inline JavaScript
+      - name: Extract inline JavaScript without modifying source
         shell: bash
         run: |
           set -euo pipefail
@@ -97,26 +79,31 @@ jobs:
                   if self.active:
                       self.current.append(data)
 
-          html = Path('_site/index.html').read_text(encoding='utf-8')
+          source = Path('index.html')
+          if source.stat().st_size < 1000:
+              raise SystemExit('index.html is unexpectedly small')
           parser = ScriptExtractor()
-          parser.feed(html)
+          parser.feed(source.read_text(encoding='utf-8'))
           target = Path('.validate')
-          target.mkdir(exist_ok=True)
           for index, script in enumerate(parser.scripts, 1):
               (target / f'inline-{index:03d}.js').write_text(script, encoding='utf-8')
           print(f'Extracted {len(parser.scripts)} inline script(s)')
           PY
 
-      - name: Validate JavaScript syntax and V4 origin
+      - name: Validate JavaScript and production loader invariants
         shell: bash
         run: |
           set -euo pipefail
-          find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
-          node --check _site/assets/private-cloud-warehouse-v3.js
-          grep -q --fixed-strings "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" _site/assets/private-cloud-warehouse-v3.js
-          ! grep -R --line-number --fixed-strings "https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev" _site/assets/private-cloud-warehouse-v3.js
+          find .validate assets -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+          grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
+          grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
+          grep -Fq "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
+          ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
+          test -s _site/assets/private-cloud-warehouse-v3.js
+          test -s _site/assets/private-cloud-warehouse-v4.js
 
-      - name: Publish complete site to gh-pages
+      - name: Publish exact validated artifact to gh-pages
         shell: bash
         run: |
           set -euo pipefail
@@ -131,7 +118,7 @@ jobs:
           cd /tmp/ads-operations-gh-pages
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "Deploy complete static site from ${GITHUB_SHA}"
+            git commit -m "Deploy validated static site from ${GITHUB_SHA}"
             git push origin gh-pages
           else
             echo "gh-pages is already current"
