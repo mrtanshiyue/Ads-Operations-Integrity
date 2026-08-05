@@ -2,9 +2,8 @@
   'use strict';
 
   const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
-  const SESSION_KEY = 'lr_private_cloud_password';
   const CHANNEL = 'warehouse-v4-production';
-  const LOADER_VERSION = '4.1.0';
+  const LOADER_VERSION = '4.1.1';
   const BATCH_SIZE = 6;
   const FETCH_CONCURRENCY = 3;
   const CACHE_DB = 'amazon-warehouse-v4-cache';
@@ -24,10 +23,11 @@
   const byId = id => document.getElementById(id);
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const sleepFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
-  const sessionSafe = {
-    get: key => { try { return sessionStorage.getItem(key) || ''; } catch (_) { return ''; } },
-    set: (key, value) => { try { sessionStorage.setItem(key, value); return true; } catch (_) { return false; } },
-    remove: key => { try { sessionStorage.removeItem(key); } catch (_) {} },
+  const memoryCredential = {
+    value: '',
+    get: () => memoryCredential.value,
+    set: value => { memoryCredential.value = String(value || ''); return Boolean(memoryCredential.value); },
+    clear: () => { memoryCredential.value = ''; },
   };
 
   const normalizeScope = value => {
@@ -94,7 +94,7 @@
     panel.innerHTML = `
       <div class="privateCloudActions">
         <button class="btn primary" id="btnPrivateCloudImport" type="button">☁ 加载私有云数据</button>
-        <button class="btn" id="btnPrivateCloudLogout" type="button" title="清除当前标签页保存的访问密码">清除密码</button>
+        <button class="btn" id="btnPrivateCloudLogout" type="button" title="清除当前页面内存中的访问密码">清除密码</button>
       </div>
       <div class="small" id="privateCloudImportStatus">Amazon-Data-Warehouse · 未连接</div>
     `;
@@ -112,11 +112,11 @@
       if (target.id === 'btnPrivateCloudImport') {
         loadPrivateCloudData({ reason: 'manual' });
       } else {
-        sessionSafe.remove(SESSION_KEY);
+        memoryCredential.clear();
         state.loadedOnce = false;
         state.loadedScope = '';
-        setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
-        notifyUser('私有云会话密码已清除。', 'good');
+        setStatus('内存访问密码已清除；下次加载时需要重新输入', 'warn');
+        notifyUser('私有云内存访问密码已清除。', 'good');
       }
     }, true);
   };
@@ -279,7 +279,7 @@
     ensureUi();
     setBusy(true);
     state.cacheStats = emptyCacheStats();
-    let password = sessionSafe.get(SESSION_KEY);
+    let password = memoryCredential.get();
     if (!password && reason !== 'shop-change') password = requestPassword();
     if (!password) {
       setBusy(false);
@@ -302,7 +302,7 @@
       const entries = Array.isArray(manifest?.files) ? manifest.files.filter(isImportableEntry) : [];
       if (!entries.length) throw new Error(`${displayScope(scope)} 当前没有可加载的广告、联合交易或业务报表`);
       state.manifest = manifest;
-      sessionSafe.set(SESSION_KEY, password);
+      memoryCredential.set(password);
 
       const cloudImporter = window.__LR_IMPORT_MULTIPLE_FILES__;
       if (typeof cloudImporter !== 'function') throw new Error('网页导入桥接未初始化，请强制刷新页面后重试');
@@ -416,7 +416,7 @@
       notifyUser(costWarning ? `${statusText}；${costWarning}` : statusText, costWarning ? 'warn' : 'good');
     } catch (error) {
       console.error('Private warehouse import failed:', error);
-      if ([401, 403].includes(Number(error?.status || 0))) sessionSafe.remove(SESSION_KEY);
+      if ([401, 403].includes(Number(error?.status || 0))) memoryCredential.clear();
       const detail = String(error?.message || error || '未知错误');
       setStatus(`私有云加载失败：${detail}`, 'bad');
       notifyUser(`私有云加载失败：${detail}`, 'bad');
@@ -427,7 +427,7 @@
 
   const scheduleScopeReload = () => {
     clearTimeout(state.autoReloadTimer);
-    if (!state.loadedOnce || !sessionSafe.get(SESSION_KEY)) return;
+    if (!state.loadedOnce || !memoryCredential.get()) return;
     state.autoReloadTimer = setTimeout(() => loadPrivateCloudData({ reason: 'shop-change' }), 250);
   };
 
@@ -438,13 +438,14 @@
     window.PrivateCloudAds = {
       load: options => loadPrivateCloudData(options || {}),
       reload: () => loadPrivateCloudData({ reason: 'shop-change' }),
-      clearPassword: () => sessionSafe.remove(SESSION_KEY),
+      setPassword: value => memoryCredential.set(value),
+      clearPassword: () => memoryCredential.clear(),
       clearCache: clearFileCache,
       apiBase: API_ORIGIN,
       channel: () => CHANNEL,
       state: () => ({ loading: state.loading, loadedOnce: state.loadedOnce, loadedScope: state.loadedScope, apiVersion: state.apiVersion, manifest: state.manifest, summary: state.summary, cacheStats: { ...state.cacheStats }, loaderVersion: LOADER_VERSION }),
     };
-    if (sessionSafe.get(SESSION_KEY) && !state.loading && !state.loadedOnce) setStatus(`已保存当前标签页会话密码；点击加载 ${displayScope(activeScope())} 私密仓库数据`);
+    if (memoryCredential.get() && !state.loading && !state.loadedOnce) setStatus(`访问密码仅保存在当前页面内存中；点击加载 ${displayScope(activeScope())} 私密仓库数据`);
     if (!window.__WAREHOUSE_V4_SCOPE_BOUND__) {
       window.__WAREHOUSE_V4_SCOPE_BOUND__ = true;
       window.addEventListener('lr:shop-change', scheduleScopeReload);

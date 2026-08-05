@@ -1,0 +1,2 @@
+window.__criticalDependencyCheck=()=>{const deps={PapaParse:!!window.Papa,SheetJS:!!window.XLSX,ChartJS:!!window.Chart,ExcelJS:!!window.ExcelJS,FileSaver:!!window.saveAs,idbKeyval:!!window.idbKeyval};window.__dependencyHealth=deps;const missing=Object.entries(deps).filter(([,ok])=>!ok).map(([k])=>k);if(missing.length)console.warn('Degraded dependency mode:',missing.join(', '));return {ready:missing.length===0,missing,deps};};
+window.addEventListener('load',()=>setTimeout(window.__criticalDependencyCheck,3500),{once:true});
