@@ -1,0 +1,42 @@
+name: Phase 8 Query Loader Patch
+
+on:
+  push:
+    branches:
+      - phase-8-tidb-query-client-2026-08-05
+    paths:
+      - .github/phase8/query-loader.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-8-tidb-query-client-2026-08-05
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Apply loader patch
+        run: python3 .github/phase8/query_loader_patch.py
+      - name: Validate JavaScript
+        run: |
+          node --check assets/private-cloud-warehouse-v4.js
+          node --check assets/private-cloud-query-v1.js
+          grep -Fq "const LOADER_VERSION = '4.2.0'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "TiDB 主数据源" assets/private-cloud-warehouse-v4.js
+          grep -Fq "window.PrivateCloudQuery" assets/private-cloud-query-v1.js
+      - name: Commit loader patch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/private-cloud-warehouse-v4.js
+          git diff --cached --check
+          git commit -m "Phase 8: connect V4 loader to TiDB query client"
+          git push origin HEAD:phase-8-tidb-query-client-2026-08-05
