@@ -217,7 +217,7 @@
   };
 
   const immutableDigest = entry => {
-    const value = String(entry?.servingSha256 || entry?.sha || entry?.sourceSha256 || '').trim().toLowerCase();
+    const value = String(entry?.sha || entry?.servingSha256 || entry?.sourceSha256 || '').trim().toLowerCase();
     return /^[a-f0-9]{64}$/.test(value) ? value : '';
   };
 
