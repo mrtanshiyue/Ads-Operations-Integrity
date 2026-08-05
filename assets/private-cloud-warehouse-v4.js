@@ -4,9 +4,9 @@
   const SCRIPT_URL = document.currentScript?.src || new URL('assets/private-cloud-warehouse-v4.js', window.location.href).href;
   const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const CHANNEL = 'warehouse-v4-production';
-  const LOADER_VERSION = '4.2.2';
+  const LOADER_VERSION = '4.2.3';
   const BATCH_SIZE = 6;
-  const FETCH_CONCURRENCY = 2;
+  const FETCH_CONCURRENCY = 1;
   const CACHE_DB = 'amazon-warehouse-v4-cache';
   const CACHE_STORE = 'immutable-files';
   const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
