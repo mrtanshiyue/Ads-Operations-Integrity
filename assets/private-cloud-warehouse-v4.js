@@ -4,9 +4,9 @@
   const SCRIPT_URL = document.currentScript?.src || new URL('assets/private-cloud-warehouse-v4.js', window.location.href).href;
   const API_ORIGIN = 'https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev';
   const CHANNEL = 'warehouse-v4-production';
-  const LOADER_VERSION = '4.2.0';
+  const LOADER_VERSION = '4.2.1';
   const BATCH_SIZE = 6;
-  const FETCH_CONCURRENCY = 3;
+  const FETCH_CONCURRENCY = 2;
   const CACHE_DB = 'amazon-warehouse-v4-cache';
   const CACHE_STORE = 'immutable-files';
   const IMPORTABLE_DATA_TYPES = new Set(['ads', 'transactions', 'business']);
@@ -140,7 +140,9 @@
   const requestApi = async (target, password, options = {}) => {
     const path = normalizeApiTarget(target);
     const responseType = options.responseType || 'json';
-    const maxAttempts = Number(options.maxAttempts || 4);
+    const maxAttempts = Math.max(1, Math.min(8, Number(options.maxAttempts || 6)));
+    const retryBaseMs = Math.max(250, Number(options.retryBaseMs || 1200));
+    const retryMaxMs = Math.max(retryBaseMs, Number(options.retryMaxMs || 12000));
     let lastError = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const controller = new AbortController();
@@ -148,7 +150,10 @@
       try {
         const headers = new Headers(options.headers || {});
         headers.set('Authorization', `Bearer ${password}`);
-        const response = await fetch(`${API_ORIGIN}${path}`, { method: 'GET', headers, cache: 'no-store', signal: controller.signal });
+        headers.set('Cache-Control', 'no-cache');
+        const requestUrl = new URL(`${API_ORIGIN}${path}`);
+        if (attempt > 1) requestUrl.searchParams.set('__warehouseRetry', `${Date.now()}-${attempt}`);
+        const response = await fetch(requestUrl, { method: 'GET', headers, cache: 'no-store', signal: controller.signal });
         clearTimeout(timeoutId);
         if (response.status === 304) return { payload: null, response, path };
         if (response.ok) {
@@ -172,18 +177,19 @@
         const retryable = [408, 425, 429].includes(response.status) || response.status >= 500;
         if (!retryable || attempt >= maxAttempts) throw error;
         const retryAfter = Number(response.headers.get('Retry-After') || 0);
-        await sleep(retryAfter > 0 ? retryAfter * 1000 : 900 * (2 ** (attempt - 1)));
+        const backoff = Math.min(retryMaxMs, retryBaseMs * (2 ** (attempt - 1)));
+        await sleep(retryAfter > 0 ? Math.min(retryMaxMs, retryAfter * 1000) : backoff);
       } catch (networkError) {
         clearTimeout(timeoutId);
         if (networkError?.status && networkError.status < 500 && ![408, 425, 429].includes(networkError.status)) throw networkError;
         lastError = networkError;
         if (attempt >= maxAttempts) break;
-        await sleep(900 * (2 ** (attempt - 1)));
+        await sleep(Math.min(retryMaxMs, retryBaseMs * (2 ** (attempt - 1))));
       } finally {
         clearTimeout(timeoutId);
       }
     }
-    const detail = lastError?.name === 'AbortError' ? '单个文件请求超过 4 分钟' : (lastError?.message || '网络错误');
+    const detail = lastError?.name === 'AbortError' ? `单个文件请求超过 ${Math.round(Number(options.timeoutMs || 240000) / 60000)} 分钟` : (lastError?.message || '网络错误');
     const error = new Error(`无法连接私有云接口（已重试 ${maxAttempts} 次）：${detail}`);
     error.status = lastError?.status;
     error.path = path;
@@ -236,7 +242,7 @@
     const cached = digest ? await cacheGet(digest) : null;
     const headers = {};
     if (cached?.blob) headers['If-None-Match'] = `"${digest}"`;
-    const result = await requestApi(url, password, { responseType: 'blob', headers });
+    const result = await requestApi(url, password, { responseType: 'blob', headers, maxAttempts: 8, timeoutMs: 300000, retryBaseMs: 1500, retryMaxMs: 15000 });
     let blob = result.payload;
     let cacheState = 'miss';
     if (result.response.status === 304 && cached?.blob) {
