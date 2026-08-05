@@ -89,6 +89,33 @@ jobs:
           grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
           ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
+          python3 - <<'PY'
+          from pathlib import Path
+          from html.parser import HTMLParser
+
+          class ExternalScripts(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False)
+                  self.sources = []
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() != 'script': return
+                  values = {key.lower(): (value or '') for key, value in attrs}
+                  if values.get('src'): self.sources.append(values['src'])
+
+          parser = ExternalScripts()
+          parser.feed(Path('index.html').read_text(encoding='utf-8'))
+          expected = 'assets/private-cloud-warehouse-v4.js'
+          count = sum(source == expected for source in parser.sources)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one formal V4 loader reference, found {count}')
+
+          loader = Path('assets/private-cloud-warehouse-v4.js').read_text(encoding='utf-8')
+          start = loader.find('  const bindUi = () => {')
+          end = loader.find('\n\n  const requestPassword', start)
+          section = loader[start:end] if start >= 0 and end >= 0 else ''
+          if section.count('event.stopImmediatePropagation();') != 1 or '}, true);' not in section:
+              raise SystemExit('V4 loader does not own the import controls in capture phase')
+          PY
 
       - name: Reject completed migration artifacts
         shell: bash
