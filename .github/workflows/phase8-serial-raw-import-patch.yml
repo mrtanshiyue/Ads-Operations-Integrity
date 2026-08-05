@@ -1,0 +1,45 @@
+name: Phase 8 Serial Raw Import Patch
+
+on:
+  push:
+    branches: [fix/phase8-serial-raw-import-2026-08-05]
+    paths:
+      - scripts/phase8-serial-raw-import-patch.mjs
+      - .github/workflows/phase8-serial-raw-import-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/phase8-serial-raw-import-2026-08-05
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Serialize Raw imports and validate loader
+        run: |
+          set -euo pipefail
+          node scripts/phase8-serial-raw-import-patch.mjs
+          node --check assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.3'" assets/private-cloud-warehouse-v4.js
+          grep -Fq 'FETCH_CONCURRENCY = 1' assets/private-cloud-warehouse-v4.js
+          grep -Fq '__warehouseRetry' assets/private-cloud-warehouse-v4.js
+          grep -Fq 'maxAttempts: 8' assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "headers.set('Cache-Control'" assets/private-cloud-warehouse-v4.js
+          ! grep -Eq 'lr_private_cloud_password|sessionStorage|const sessionSafe|getPassword' assets/private-cloud-warehouse-v4.js assets/private-cloud-query-v1.js
+          rm scripts/phase8-serial-raw-import-patch.mjs
+          rm .github/workflows/phase8-serial-raw-import-patch.yml
+      - name: Commit serial Raw importer
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add assets/private-cloud-warehouse-v4.js scripts/phase8-serial-raw-import-patch.mjs .github/workflows/phase8-serial-raw-import-patch.yml
+          git commit -m "Serialize TiDB Raw browser imports"
+          git push origin HEAD:fix/phase8-serial-raw-import-2026-08-05
