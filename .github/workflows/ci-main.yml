@@ -112,10 +112,10 @@ jobs:
           set -euo pipefail
           grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
           grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
-          grep -Fq "FETCH_CONCURRENCY = 2" assets/private-cloud-warehouse-v4.js
+          grep -Fq "FETCH_CONCURRENCY = 1" assets/private-cloud-warehouse-v4.js
           grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
           grep -Fq "setPassword: value => memoryCredential.set(value)" assets/private-cloud-warehouse-v4.js
-          grep -Fq "const LOADER_VERSION = '4.2.2'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.3'" assets/private-cloud-warehouse-v4.js
           grep -Fq "new URL('./private-cloud-query-v1.js', SCRIPT_URL).href" assets/private-cloud-warehouse-v4.js
           grep -Fq "queryRequest" assets/private-cloud-warehouse-v4.js
           grep -Fq "credentialAccepted: Boolean(memoryCredential.get())" assets/private-cloud-warehouse-v4.js
