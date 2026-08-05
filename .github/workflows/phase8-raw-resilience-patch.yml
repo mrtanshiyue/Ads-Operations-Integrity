@@ -1,0 +1,44 @@
+name: Phase 8 Raw Resilience Patch
+
+on:
+  push:
+    branches: [phase-8-query-client-rebase-2026-08-05]
+    paths:
+      - scripts/phase8-raw-resilience-patch.mjs
+      - .github/workflows/phase8-raw-resilience-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-8-query-client-rebase-2026-08-05
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Patch loader and validate security invariants
+        run: |
+          set -euo pipefail
+          node scripts/phase8-raw-resilience-patch.mjs
+          node --check assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.2.1'" assets/private-cloud-warehouse-v4.js
+          grep -Fq 'FETCH_CONCURRENCY = 2' assets/private-cloud-warehouse-v4.js
+          grep -Fq 'maxAttempts: 8' assets/private-cloud-warehouse-v4.js
+          grep -Fq '__warehouseRetry' assets/private-cloud-warehouse-v4.js
+          ! grep -Eq 'lr_private_cloud_password|sessionStorage|const sessionSafe|getPassword' assets/private-cloud-warehouse-v4.js assets/private-cloud-query-v1.js
+          rm scripts/phase8-raw-resilience-patch.mjs
+          rm .github/workflows/phase8-raw-resilience-patch.yml
+      - name: Commit resilient loader
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add assets/private-cloud-warehouse-v4.js scripts/phase8-raw-resilience-patch.mjs .github/workflows/phase8-raw-resilience-patch.yml
+          git commit -m "Harden TiDB Raw retries for browser imports"
+          git push origin HEAD:phase-8-query-client-rebase-2026-08-05
