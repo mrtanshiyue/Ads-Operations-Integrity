@@ -1,0 +1,122 @@
+name: Patch V4 Loader Entry
+
+on:
+  push:
+    branches: [phase-5-7-frontend-optimization-2026-08-05]
+    paths:
+      - .github/patch/v4-loader-entry.trigger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: patch-v4-loader-entry
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate branch
+        uses: actions/checkout@v4
+        with:
+          ref: phase-5-7-frontend-optimization-2026-08-05
+          fetch-depth: 1
+
+      - name: Patch loader entry and event ownership
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          index_path = Path('index.html')
+          loader_path = Path('assets/private-cloud-warehouse-v4.js')
+          html = index_path.read_text(encoding='utf-8')
+          loader = loader_path.read_text(encoding='utf-8')
+
+          script_pattern = re.compile(
+              r'<script\b(?=[^>]*\bsrc\s*=\s*["\']assets/private-cloud-warehouse-v4\.js["\'])[^>]*>\s*</script>',
+              re.IGNORECASE,
+          )
+          matches = list(script_pattern.finditer(html))
+          if len(matches) > 1:
+              raise SystemExit(f'Expected at most one formal V4 loader tag, found {len(matches)}')
+          if not matches:
+              marker = '</body>'
+              position = html.lower().rfind(marker)
+              if position < 0:
+                  marker = '</html>'
+                  position = html.lower().rfind(marker)
+              if position < 0:
+                  raise SystemExit('index.html has no closing body/html tag')
+              tag = '  <script src="assets/private-cloud-warehouse-v4.js"></script>\n'
+              html = html[:position] + tag + html[position:]
+
+          old = """  const bindUi = () => {
+            if (window.__WAREHOUSE_V4_UI_BOUND__) return;
+            window.__WAREHOUSE_V4_UI_BOUND__ = true;
+            document.addEventListener('click', event => {
+              const target = event.target?.closest?.('#btnPrivateCloudImport, #btnPrivateCloudLogout');
+              if (!target) return;
+              if (target.id === 'btnPrivateCloudImport') {
+                loadPrivateCloudData({ reason: 'manual' });
+              } else {
+                sessionSafe.remove(SESSION_KEY);
+                state.loadedOnce = false;
+                state.loadedScope = '';
+                setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
+                notifyUser('私有云会话密码已清除。', 'good');
+              }
+            });
+          };
+          """
+          new = """  const bindUi = () => {
+            if (window.__WAREHOUSE_V4_UI_BOUND__) return;
+            window.__WAREHOUSE_V4_UI_BOUND__ = true;
+            document.addEventListener('click', event => {
+              const target = event.target?.closest?.('#btnPrivateCloudImport, #btnPrivateCloudLogout');
+              if (!target) return;
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              if (target.id === 'btnPrivateCloudImport') {
+                loadPrivateCloudData({ reason: 'manual' });
+              } else {
+                sessionSafe.remove(SESSION_KEY);
+                state.loadedOnce = false;
+                state.loadedScope = '';
+                setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
+                notifyUser('私有云会话密码已清除。', 'good');
+              }
+            }, true);
+          };
+          """
+
+          if old in loader:
+              loader = loader.replace(old, new, 1)
+          elif "event.stopImmediatePropagation();" not in loader or "}, true);" not in loader:
+              raise SystemExit('Could not locate the expected V4 UI binding block')
+
+          index_path.write_text(html, encoding='utf-8')
+          loader_path.write_text(loader, encoding='utf-8')
+
+          final_matches = list(script_pattern.finditer(html))
+          if len(final_matches) != 1:
+              raise SystemExit(f'Expected exactly one formal V4 loader tag, found {len(final_matches)}')
+          if final_matches[0].start() > html.lower().rfind('</body>') >= 0:
+              raise SystemExit('Formal V4 loader tag is outside the body')
+          print('Formal V4 loader entry and capture-phase event ownership are installed.')
+          PY
+
+          node --check assets/private-cloud-warehouse-v4.js
+
+      - name: Commit candidate patch and self-clean
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/patch-v4-loader-entry.yml .github/patch/v4-loader-entry.trigger
+          git add index.html assets/private-cloud-warehouse-v4.js
+          git diff --cached --check
+          git commit -m "Load the formal Warehouse V4 runtime from the application"
+          git push origin HEAD:phase-5-7-frontend-optimization-2026-08-05
