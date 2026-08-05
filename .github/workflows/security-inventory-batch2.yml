@@ -20,10 +20,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Inspect CSP, script sources and credential persistence
+      - name: Inspect CSP, runtime dependencies and fallback code
         shell: bash
         run: |
           node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
           import { readFileSync, writeFileSync } from 'node:fs';
           const html = readFileSync('index.html', 'utf8');
           const loader = readFileSync('assets/private-cloud-warehouse-v4.js', 'utf8');
@@ -35,25 +36,44 @@ jobs:
             return { index, src, integrity, inline: !src };
           });
           const styles = [...html.matchAll(/<style\b[^>]*>/gi)].length;
-          const links = [...html.matchAll(/<link\b([^>]*)>/gi)].map(match => ({
-            href: match[1].match(/\bhref=["']([^"']+)["']/i)?.[1] || null,
-            integrity: match[1].match(/\bintegrity=["']([^"']+)["']/i)?.[1] || null,
-          })).filter(item => item.href);
-          const externalHosts = [...new Set(scripts.filter(item => item.src).map(item => {
-            try { return new URL(item.src, 'https://example.invalid').hostname; } catch { return 'invalid'; }
-          }))];
+          const context = (index, radius = 220) => html.slice(Math.max(0, index - radius), Math.min(html.length, index + radius)).replace(/\s+/g, ' ');
+          const dynamicContexts = [...html.matchAll(/createElement\s*\(\s*["']script["']\s*\)/g)].map(match => context(match.index));
+          const onerrorContexts = [...html.matchAll(/\bonerror\s*=/gi)].map(match => context(match.index));
+          const vendorUrls = [
+            'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js',
+            'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
+            'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
+            'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js',
+            'https://cdn.jsdelivr.net/npm/idb-keyval@6.2.1/dist/umd.js',
+          ];
+          const vendorDigests = [];
+          for (const url of vendorUrls) {
+            const response = await fetch(url, { redirect: 'follow' });
+            if (!response.ok) throw new Error(`Vendor fetch failed ${response.status}: ${url}`);
+            const bytes = Buffer.from(await response.arrayBuffer());
+            vendorDigests.push({
+              url,
+              finalUrl: response.url,
+              bytes: bytes.length,
+              sha256: createHash('sha256').update(bytes).digest('hex'),
+              sri: `sha384-${createHash('sha384').update(bytes).digest('base64')}`,
+            });
+          }
           const result = {
             generatedAt: new Date().toISOString(),
             csp,
             scripts,
-            links,
             inlineScriptCount: scripts.filter(item => item.inline).length,
             inlineStyleCount: styles,
-            externalHosts,
-            dynamicScriptCreationCount: (html.match(/createElement\s*\(\s*["']script["']\s*\)/g) || []).length,
-            scriptOnErrorCount: (html.match(/\bonerror\s*=/gi) || []).length,
+            externalHosts: [...new Set(scripts.filter(item => item.src).map(item => new URL(item.src, 'https://example.invalid').hostname))],
+            dynamicScriptCreationCount: dynamicContexts.length,
+            dynamicContexts,
+            scriptOnErrorCount: onerrorContexts.length,
+            onerrorContexts,
             sessionStorageReferences: (html.match(/sessionStorage/g) || []).length + (loader.match(/sessionStorage/g) || []).length,
             credentialKeyReferences: (html.match(/lr_private_cloud_password/g) || []).length + (loader.match(/lr_private_cloud_password/g) || []).length,
+            vendorDigests,
           };
           writeFileSync('security-inventory-batch2.json', JSON.stringify(result, null, 2) + '\n');
           console.log(JSON.stringify({
@@ -62,10 +82,10 @@ jobs:
             externalScriptCount: scripts.filter(item => item.src).length,
             inlineScriptCount: result.inlineScriptCount,
             inlineStyleCount: result.inlineStyleCount,
-            externalHosts,
             dynamicScriptCreationCount: result.dynamicScriptCreationCount,
             scriptOnErrorCount: result.scriptOnErrorCount,
             sessionStorageReferences: result.sessionStorageReferences,
+            vendorFiles: vendorDigests.length,
           }));
           NODE
       - uses: actions/upload-artifact@v4
