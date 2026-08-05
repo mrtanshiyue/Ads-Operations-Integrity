@@ -1,0 +1,43 @@
+name: Clean Front-end Repair Workflows Batch 2
+
+on:
+  push:
+    branches:
+      - fix/frontend-security-batch2-2026-08-05
+    paths:
+      - .github/workflows/cleanup-frontend-workflows-batch2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/frontend-security-batch2-2026-08-05
+          fetch-depth: 0
+      - name: Retain only formal CI and Pages workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          find .github/workflows -maxdepth 1 -type f \
+            ! -name 'ci-main.yml' \
+            ! -name 'pages.yml' \
+            ! -name 'cleanup-frontend-workflows-batch2.yml' \
+            -print -delete
+          rm -rf .diagnostics .github/canary
+          rm -f .github/workflows/cleanup-frontend-workflows-batch2.yml
+          remaining="$(find .github/workflows -maxdepth 1 -type f -printf '%f\n' | sort)"
+          expected="$(printf 'ci-main.yml\npages.yml')"
+          test "$remaining" = "$expected" || { echo "Unexpected workflow set:"; printf '%s\n' "$remaining"; exit 1; }
+      - name: Commit workflow cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .github .diagnostics
+          git commit -m "Remove completed front-end repair workflows and diagnostics"
+          git push origin HEAD:fix/frontend-security-batch2-2026-08-05
