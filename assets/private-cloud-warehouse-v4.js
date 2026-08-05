@@ -107,6 +107,8 @@
     document.addEventListener('click', event => {
       const target = event.target?.closest?.('#btnPrivateCloudImport, #btnPrivateCloudLogout');
       if (!target) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       if (target.id === 'btnPrivateCloudImport') {
         loadPrivateCloudData({ reason: 'manual' });
       } else {
@@ -116,7 +118,7 @@
         setStatus('会话密码已清除；下次加载时需要重新输入', 'warn');
         notifyUser('私有云会话密码已清除。', 'good');
       }
-    });
+    }, true);
   };
 
   const requestPassword = () => {
