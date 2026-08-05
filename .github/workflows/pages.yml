@@ -11,24 +11,22 @@ on:
       - ".github/workflows/ci-main.yml"
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages-production
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build and validate static site
+  deploy:
+    name: Validate and publish complete static site
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout exact production commit
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -40,6 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s index.html
+          test -s assets/private-cloud-warehouse-v3.js
           test -s assets/private-cloud-warehouse-v4.js
           rm -rf _site .validate
           mkdir -p _site/assets .validate
@@ -50,6 +49,7 @@ jobs:
       - name: Extract inline JavaScript without modifying source
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from html.parser import HTMLParser
           from pathlib import Path
@@ -100,24 +100,26 @@ jobs:
           grep -Fq "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" assets/private-cloud-warehouse-v4.js
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
           ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
+          test -s _site/assets/private-cloud-warehouse-v3.js
+          test -s _site/assets/private-cloud-warehouse-v4.js
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: _site
-
-  deploy:
-    name: Deploy GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy exact validated artifact
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish exact validated artifact to gh-pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git show-ref --verify --quiet refs/heads/gh-pages || git fetch origin gh-pages:gh-pages
+          rm -rf /tmp/ads-operations-gh-pages
+          git worktree add /tmp/ads-operations-gh-pages gh-pages
+          find /tmp/ads-operations-gh-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a _site/. /tmp/ads-operations-gh-pages/
+          printf 'deployed_at=%s\nsource_sha=%s\n' "$(date -u +%FT%TZ)" "$GITHUB_SHA" > /tmp/ads-operations-gh-pages/_pages_config_status.txt
+          cd /tmp/ads-operations-gh-pages
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Deploy validated static site from ${GITHUB_SHA}"
+            git push origin gh-pages
+          else
+            echo "gh-pages is already current"
+          fi
