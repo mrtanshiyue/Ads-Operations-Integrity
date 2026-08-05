@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0",
+  "vendors": [
+    {
+      "name": "papaparse",
+      "url": "https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js",
+      "path": "assets/vendor/papaparse.min.js",
+      "sha256": "b8e870c5d2b29772f10c9fa9a693c8b896aac8540ed6701e3cc6304c683febdb"
+    },
+    {
+      "name": "sheetjs",
+      "url": "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js",
+      "path": "assets/vendor/xlsx.full.min.js",
+      "sha256": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41"
+    },
+    {
+      "name": "chartjs",
+      "url": "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js",
+      "path": "assets/vendor/chart.umd.min.js",
+      "sha256": "d2af8974e95271638772e9e9524db5b9a6f58d6ec2d5d781400447b4a31c681e"
+    },
+    {
+      "name": "exceljs",
+      "url": "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js",
+      "path": "assets/vendor/exceljs.min.js",
+      "sha256": "7e49da68588e250dbb8bba190d2caa8ab3787cc0284bda1d8b2f805c4df742c9"
+    },
+    {
+      "name": "filesaver",
+      "url": "https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js",
+      "path": "assets/vendor/FileSaver.min.js",
+      "sha256": "c68874cbaa2fd1650b7d770b328680ea765fb3376023cc3608427fde4f0d0481"
+    },
+    {
+      "name": "idb-keyval",
+      "url": "https://cdn.jsdelivr.net/npm/idb-keyval@6.2.1/dist/umd.js",
+      "path": "assets/vendor/idb-keyval.umd.js",
+      "sha256": "1f890e0f76dbde2b9119d56e234e64451a1d4a4928104ff504c2cf5b820c3b37"
+    },
+    {
+      "name": "html2pdf",
+      "url": "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js",
+      "path": "assets/vendor/html2pdf.bundle.min.js",
+      "sha256": "85e6ee9ce246e3ae4424313f7e46a5ed860a28d757811de8dc9c43f306049d65"
+    }
+  ]
+}
