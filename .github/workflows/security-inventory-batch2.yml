@@ -39,6 +39,7 @@ jobs:
           const context = (index, radius = 220) => html.slice(Math.max(0, index - radius), Math.min(html.length, index + radius)).replace(/\s+/g, ' ');
           const dynamicContexts = [...html.matchAll(/createElement\s*\(\s*["']script["']\s*\)/g)].map(match => context(match.index));
           const onerrorContexts = [...html.matchAll(/\bonerror\s*=/gi)].map(match => context(match.index));
+          const javascriptUrls = [...new Set([...html.matchAll(/https:\/\/[^\s"'<>]+\.js(?:\?[^\s"'<>]*)?/gi)].map(match => match[0]))].sort();
           const vendorUrls = [
             'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js',
             'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js',
@@ -46,6 +47,7 @@ jobs:
             'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
             'https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js',
             'https://cdn.jsdelivr.net/npm/idb-keyval@6.2.1/dist/umd.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js',
           ];
           const vendorDigests = [];
           for (const url of vendorUrls) {
@@ -71,6 +73,7 @@ jobs:
             dynamicContexts,
             scriptOnErrorCount: onerrorContexts.length,
             onerrorContexts,
+            javascriptUrls,
             sessionStorageReferences: (html.match(/sessionStorage/g) || []).length + (loader.match(/sessionStorage/g) || []).length,
             credentialKeyReferences: (html.match(/lr_private_cloud_password/g) || []).length + (loader.match(/lr_private_cloud_password/g) || []).length,
             vendorDigests,
@@ -84,6 +87,7 @@ jobs:
             inlineStyleCount: result.inlineStyleCount,
             dynamicScriptCreationCount: result.dynamicScriptCreationCount,
             scriptOnErrorCount: result.scriptOnErrorCount,
+            javascriptUrlCount: javascriptUrls.length,
             sessionStorageReferences: result.sessionStorageReferences,
             vendorFiles: vendorDigests.length,
           }));
