@@ -1,43 +1,47 @@
 name: Deploy Ads Operations Integrity
-# Redeploy marker: cloud CSV importer compatibility 2026-07-23
+# Legacy GitHub Pages deployment: publish the complete static site to gh-pages.
 
 on:
   push:
     branches: [main]
     paths:
       - index.html
+      - "assets/**"
       - .github/workflows/pages.yml
   workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-    outputs:
-      pages_ready: ${{ steps.pages.outcome == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Prepare static site
+      - name: Prepare complete static site
         shell: bash
         run: |
+          set -euo pipefail
+          rm -rf _site .validate
           python3 - <<'PY'
           from pathlib import Path
+          import shutil
 
           source = Path('index.html')
+          assets = Path('assets')
+          loader = assets / 'private-cloud-warehouse-v3.js'
           if not source.exists() or source.stat().st_size < 1000:
               raise SystemExit('index.html is missing or unexpectedly small')
+          if not loader.exists() or loader.stat().st_size < 1000:
+              raise SystemExit('Cloud Warehouse loader is missing or unexpectedly small')
 
           data = source.read_bytes()
           fixes = (
@@ -52,15 +56,18 @@ jobs:
                   applied += count
 
           output = Path('_site')
-          output.mkdir(exist_ok=True)
+          output.mkdir()
           (output / 'index.html').write_bytes(data)
+          shutil.copytree(assets, output / 'assets')
           (output / '.nojekyll').write_text('', encoding='utf-8')
-          print(f'Prepared {len(data):,} bytes; repaired {applied} broken newline literal(s)')
+          print(f'Prepared {len(data):,} HTML bytes and complete assets; repaired {applied} broken newline literal(s)')
           PY
+          test -f _site/assets/private-cloud-warehouse-v3.js
 
       - name: Extract inline JavaScript
         shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from html.parser import HTMLParser
           from pathlib import Path
@@ -100,13 +107,19 @@ jobs:
           print(f'Extracted {len(parser.scripts)} inline script(s)')
           PY
 
-      - name: Validate JavaScript syntax
-        shell: bash
-        run: find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
-
-      - name: Publish repaired site branch
+      - name: Validate JavaScript syntax and V4 origin
         shell: bash
         run: |
+          set -euo pipefail
+          find .validate -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+          node --check _site/assets/private-cloud-warehouse-v3.js
+          grep -q --fixed-strings "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" _site/assets/private-cloud-warehouse-v3.js
+          ! grep -R --line-number --fixed-strings "https://amazon-ad-private-api-v2.tanshiyuesir.workers.dev" _site/assets/private-cloud-warehouse-v3.js
+
+      - name: Publish complete site to gh-pages
+        shell: bash
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git show-ref --verify --quiet refs/heads/gh-pages || git fetch origin gh-pages:gh-pages
@@ -114,45 +127,12 @@ jobs:
           git worktree add /tmp/ads-operations-gh-pages gh-pages
           find /tmp/ads-operations-gh-pages -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           cp -a _site/. /tmp/ads-operations-gh-pages/
+          printf 'deployed_at=%s\nsource_sha=%s\n' "$(date -u +%FT%TZ)" "$GITHUB_SHA" > /tmp/ads-operations-gh-pages/_pages_config_status.txt
           cd /tmp/ads-operations-gh-pages
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "Deploy repaired static site"
+            git commit -m "Deploy complete static site from ${GITHUB_SHA}"
             git push origin gh-pages
           else
             echo "gh-pages is already current"
           fi
-
-      - name: Configure Pages
-        id: pages
-        continue-on-error: true
-        uses: actions/configure-pages@v6
-
-      - name: Record Pages readiness
-        shell: bash
-        run: |
-          cd /tmp/ads-operations-gh-pages
-          printf '%s\n' "${{ steps.pages.outcome }}" > .pages-status
-          git add .pages-status
-          if ! git diff --cached --quiet; then
-            git commit -m "Record Pages configuration status"
-            git push origin gh-pages
-          fi
-
-      - name: Upload Pages artifact
-        if: steps.pages.outcome == 'success'
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: _site
-
-  deploy:
-    if: needs.build.outputs.pages_ready == 'true'
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
