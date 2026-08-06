@@ -125,7 +125,8 @@
     const style = document.createElement('style');
     style.id = 'privateCloudProgressiveStyles';
     style.textContent = `
-      #privateCloudImportPanel{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px;padding:9px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,var(--input-bg))}
+      #privateCloudImportPanel{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;width:100%;min-width:0;max-width:100%;margin-top:8px;padding:9px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,var(--input-bg));overflow:hidden}
+      #privateCloudImportPanel > .privateCloudActions,#privateCloudImportPanel > .queryFirstRawActions,#privateCloudImportPanel > .queryFirstOverviewCard,#privateCloudImportPanel > #privateCloudImportStatus{grid-column:1 / -1;width:100%;min-width:0;max-width:100%;justify-self:stretch}
       #privateCloudImportPanel .privateCloudActions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
       #privateCloudImportPanel .btn{justify-content:center;padding:8px 10px;border-radius:10px;font-size:11.2px;min-width:0}
       #privateCloudImportStatus{min-height:16px;line-height:1.4;word-break:break-word}
@@ -134,21 +135,21 @@
       #privateCloudImportStatus[data-kind="bad"]{color:var(--bad)}
       .queryFirstRawActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
       .queryFirstRawActions .btn{padding:7px 5px!important;font-size:10.8px!important}
-      .queryFirstOverviewCard{display:none;gap:8px;padding:9px;border:1px solid var(--line);border-radius:11px;background:var(--card)}
+      .queryFirstOverviewCard{display:none;gap:8px;width:100%;min-width:0;max-width:100%;padding:9px;border:1px solid var(--line);border-radius:11px;background:var(--card);overflow:hidden}
       .queryFirstOverviewCard[data-ready="1"]{display:grid}
-      .queryFirstOverviewHead{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+      .queryFirstOverviewHead{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-width:0}.queryFirstOverviewHead>div{min-width:0}
       .queryFirstOverviewTitle{font-weight:800;font-size:12px;color:var(--text)}
       .queryFirstOverviewMeta{font-size:10.5px;color:var(--muted);line-height:1.35;margin-top:2px}
-      .queryFirstFingerprint{font:600 9.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap}
+      .queryFirstFingerprint{font:600 9.5px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
       .queryFirstSourceBadges{display:flex;gap:5px;flex-wrap:wrap}
       .queryFirstBadge{padding:3px 6px;border-radius:999px;background:var(--chip);font-size:9.8px;color:var(--muted)}
       .queryFirstBadge[data-available="1"]{background:var(--softGood);color:var(--good)}
       .queryFirstBadge[data-available="0"]{background:var(--softWarn);color:var(--warn)}
-      .queryFirstKpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+      .queryFirstKpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:100%;min-width:0}
       .queryFirstKpi{padding:7px;border-radius:9px;background:color-mix(in srgb,var(--chip) 72%,transparent);min-width:0}
       .queryFirstKpiLabel{font-size:9.8px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .queryFirstKpiValue{margin-top:2px;font-size:12.2px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .queryFirstRawState{padding-top:6px;border-top:1px solid var(--line);font-size:10.2px;line-height:1.45;color:var(--muted)}
+      .queryFirstRawState{padding-top:6px;border-top:1px solid var(--line);font-size:10.2px;line-height:1.45;color:var(--muted);overflow-wrap:anywhere}
       .queryFirstRawState[data-stale="1"]{color:var(--warn)}
       @media(max-width:420px){#privateCloudImportPanel .privateCloudActions{grid-template-columns:1fr}.queryFirstRawActions{grid-template-columns:1fr}}
     `;
@@ -158,8 +159,14 @@
   function ensureProgressiveUi() {
     const panel = byId('privateCloudImportPanel');
     if (!panel) return;
-    if (!byId('queryFirstRawActions')) {
-      const actions = document.createElement('div');
+    const directPanelChild = element => {
+      if (!element) return null;
+      return [...panel.children].find(child => child === element || child.contains(element)) || null;
+    };
+
+    let actions = byId('queryFirstRawActions');
+    if (!actions) {
+      actions = document.createElement('div');
       actions.id = 'queryFirstRawActions';
       actions.className = 'queryFirstRawActions';
       actions.innerHTML = `
@@ -167,12 +174,18 @@
         <button class="btn" id="btnPrivateCloudRecentMonths" type="button" disabled>近 3 月明细</button>
         <button class="btn" id="btnPrivateCloudFullHistory" type="button" disabled>完整历史</button>
       `;
-      const baseActions = panel.querySelector('.privateCloudActions');
-      if (baseActions) baseActions.insertAdjacentElement('afterend', actions);
-      else panel.appendChild(actions);
     }
-    if (!byId('queryFirstOverviewCard')) {
-      const card = document.createElement('div');
+
+    const baseActionsHost = directPanelChild(panel.querySelector('.privateCloudActions'));
+    const status = byId('privateCloudImportStatus');
+    let statusHost = directPanelChild(status);
+    if (actions.parentElement !== panel || (baseActionsHost && actions.previousElementSibling !== baseActionsHost)) {
+      panel.insertBefore(actions, baseActionsHost?.nextElementSibling || statusHost || null);
+    }
+
+    let card = byId('queryFirstOverviewCard');
+    if (!card) {
+      card = document.createElement('div');
       card.id = 'queryFirstOverviewCard';
       card.className = 'queryFirstOverviewCard';
       card.dataset.ready = '0';
@@ -188,9 +201,11 @@
         <div class="queryFirstKpis" id="queryFirstKpis"></div>
         <div class="queryFirstRawState" id="queryFirstRawState">明细数据尚未加载；当前卡片为服务端聚合，不代表页面深度分析库已就绪。</div>
       `;
-      const status = byId('privateCloudImportStatus');
-      if (status) status.insertAdjacentElement('beforebegin', card);
-      else panel.appendChild(card);
+    }
+
+    statusHost = directPanelChild(status);
+    if (card.parentElement !== panel || (statusHost && card.nextElementSibling !== statusHost)) {
+      panel.insertBefore(card, statusHost || null);
     }
     updateRawButtons();
   }
