@@ -46,6 +46,7 @@ jobs:
           test -s assets/private-cloud-query-v1.js
           test -s assets/query-native-module-data-v1.js
           test -s assets/query-native-ads-trend-v1.js
+          test -s assets/query-native-ads-trend-host-v1.js
           test -s scripts/test-progressive-loader.mjs
           test -s scripts/test-query-native-modules.mjs
           test -s scripts/test-query-native-ads-trend.mjs
@@ -114,11 +115,13 @@ jobs:
           grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
           grep -Fq "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" assets/private-cloud-warehouse-v4.js
           grep -Fq "const LOADER_VERSION = '4.3.0'" assets/private-cloud-warehouse-v4.js
-          grep -Fq "const CLIENT_VERSION = '1.2.0'" assets/private-cloud-query-v1.js
+          grep -Fq "const CLIENT_VERSION = '1.3.0'" assets/private-cloud-query-v1.js
+          grep -Fq "ensureQueryNativeModules" assets/private-cloud-query-v1.js
+          grep -Fq "query-native-ads-trend-host-v1.js?v=" assets/private-cloud-query-v1.js
           grep -Fq "const ADAPTER_VERSION = '1.1.0'" assets/query-native-module-data-v1.js
           grep -Fq "const CONTROLLER_VERSION = '1.0.0'" assets/query-native-ads-trend-v1.js
+          grep -Fq "const HOST_VERSION = '1.0.0'" assets/query-native-ads-trend-host-v1.js
           grep -Fq "loadingStrategy: 'query-first-progressive-v1'" assets/private-cloud-warehouse-v4.js
-          grep -Fq "queryNativeAdsTrendV1" index.html
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
           ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
           test -s _site/assets/private-cloud-warehouse-v3.js
@@ -126,6 +129,7 @@ jobs:
           test -s _site/assets/private-cloud-query-v1.js
           test -s _site/assets/query-native-module-data-v1.js
           test -s _site/assets/query-native-ads-trend-v1.js
+          test -s _site/assets/query-native-ads-trend-host-v1.js
 
       - name: Publish exact validated artifact to gh-pages
         shell: bash
