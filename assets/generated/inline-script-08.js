@@ -11,7 +11,8 @@
   const signedMoney=v=>`${num(v)>0?'+':''}${money(v)}`;
   const toneForSigned=v=>num(v)>0?'good':num(v)<0?'bad':'neutral';
   const categoryLabel={ORDER:'订单销售',REFUND:'退款',ADVERTISING:'广告扣费',INBOUND:'入库配置费',STORAGE:'仓储费',ACCOUNT_OVERHEAD:'账户级服务费',LIQUIDATION:'清算收入',ADJUSTMENT:'调整项',OTHER:'其他交易',TRANSFER:'转账'};
-  let chartBag={},lastReport=null,activeTab='overview';
+  const MODULE_VERSION='2.0.0';
+  let chartBag={},lastReport=null,activeTab='overview',sourceMode='query',renderGeneration=0;
 
   const destroyCharts=(prefix='')=>{
     Object.entries(chartBag).forEach(([k,c])=>{if(!prefix||k.startsWith(prefix)){try{c?.destroy?.();}catch(e){}delete chartBag[k];}});
@@ -65,14 +66,17 @@
     </div>`;
     document.body.appendChild(modal);
     byId('btnCloseTransactionFinance')?.addEventListener('click',closeModal);
-    byId('btnRefreshTransactionFinance')?.addEventListener('click',renderReport);
+    byId('btnRefreshTransactionFinance')?.addEventListener('click',()=>renderReport({force:true}));
     byId('btnExportTransactionFinance')?.addEventListener('click',exportReport);
     modal.querySelector('.txFinanceTabs')?.addEventListener('click',e=>{const b=e.target.closest('[data-tx-tab]');if(b)switchTab(b.dataset.txTab);});
     modal.addEventListener('click',e=>{if(e.target===modal)closeModal();});
     return modal;
   };
   const closeModal=()=>{destroyCharts();const m=byId('transactionFinanceModal');if(m)m.style.display='none';};
-  const getAllTransactionRows=()=>{try{const rows=AdsDashboardApp?.debug?.getTransactionRowsForFinance?.();return Array.isArray(rows)?rows:[];}catch(e){return[];}};
+  const moduleData=()=>window.QueryNativeModuleData;
+  const queryScope=()=>String(window.ShopScope?.get?.()||window.ACTIVE_SHOP||'ALL').trim().toUpperCase();
+  const sourceLabel=value=>value==='raw-compat'?'RAW COMPAT · 浏览器内存':'QUERY · TiDB';
+  const isModalOpen=()=>byId('transactionFinanceModal')?.style.display==='flex';
   const currentScope=()=>({start:byId('dateStart')?.value||'',end:byId('dateEnd')?.value||'',mode:byId('transactionStatusMode')?.value||'accrual',market:String(byId('workspaceMarketplace')?.value||'').trim().toUpperCase()});
   const validDate=r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r?.date||''));
   const statusIncluded=(r,mode)=>{const s=String(r?.status||'Released').trim().toLowerCase();return mode==='cash'?s==='released':s==='released'||s==='deferred';};
@@ -148,12 +152,28 @@
     return {...scope,rows,orderSales,refundSales,netProductSales,orderUnits,refundUnits,netUnits,returnRate:safeDiv(refundUnits,orderUnits),refundSalesRate:safeDiv(refundSales,orderSales),orderCount:orderIds.size,skuCount:skuSet.size,orderCredits,refundCredits,sellingFees,fbaFees,promo,otherTx,otherTrade,taxNet,orderSettlement,refundSettlement,refundPreTaxLoss,advertising,inbound,storage,overhead,otherCategory,liquidation,adjustments,transfer,settlementTotal,operatingSettlement,purchaseCost,fbmShippingCost,finalNetProfit,finalNetMargin,costMatchedOrderUnits,costCoverage,amazonTradeFees,operatingExpenses,nonAdOperatingExpenses,tradeFeeRate:safeDiv(amazonTradeFees,netProductSales),adRate:safeDiv(advertising,netProductSales),nonAdRate:safeDiv(nonAdOperatingExpenses,netProductSales),expenseLoad:safeDiv(amazonTradeFees+operatingExpenses+purchaseCost+fbmShippingCost,netProductSales),operatingMargin:safeDiv(operatingSettlement,netProductSales),aov:safeDiv(orderSales,orderIds.size),netPerOrder:safeDiv(finalNetProfit,orderIds.size),unitNet:safeDiv(finalNetProfit,netUnits),unitFees:safeDiv(amazonTradeFees,orderUnits),unitAds:safeDiv(advertising,orderUnits),refundLossRate:safeDiv(refundPreTaxLoss,orderSales),daily,sku,categories,expense,waterfall,top3Share};
   };
 
-  const buildReport=()=>{
-    const all=getAllTransactionRows(),scope=currentScope(),rows=rowsFor(all,scope.start,scope.end,scope.mode,scope.market),current=aggregate(rows,scope);
-    let previous=null,previousLabel='无上期数据';
-    const startD=parseDate(scope.start),endD=parseDate(scope.end),span=daySpan(startD,endD);
-    if(startD&&endD&&span){const prevEnd=addDays(startD,-1),prevStart=addDays(prevEnd,-span+1);const ps=fmtDate(prevStart),pe=fmtDate(prevEnd),pr=rowsFor(all,ps,pe,scope.mode,scope.market);previous=aggregate(pr,{start:ps,end:pe,mode:scope.mode,market:scope.market});previousLabel=`${ps} → ${pe}`;}
-    return {all,current,previous,previousLabel};
+  const buildReport=async({force=false,source=sourceMode}={})=>{
+    const adapter=moduleData();
+    if(typeof adapter?.periodTransactions!=='function')throw new Error('Query-native 数据适配器尚未就绪，请刷新页面后重试。');
+    const scope=currentScope(),startD=parseDate(scope.start),endD=parseDate(scope.end),span=daySpan(startD,endD);
+    let previousRange=null,previousLabel='无上期数据';
+    if(startD&&endD&&span){
+      const prevEnd=addDays(startD,-1),prevStart=addDays(prevEnd,-span+1),ps=fmtDate(prevStart),pe=fmtDate(prevEnd);
+      previousRange={from:ps,to:pe};previousLabel=`${ps} → ${pe}`;
+    }
+    const periods=await adapter.periodTransactions({
+      scope:queryScope(),statusMode:scope.mode,marketplace:scope.market,source,force,maxRows:300000,
+      current:{from:scope.start,to:scope.end},previous:previousRange
+    });
+    const currentRows=Array.isArray(periods?.current?.rows)?periods.current.rows:[];
+    const resolvedSource=periods?.current?.source||'query-tidb';
+    const current=aggregate(currentRows,{...scope,source:resolvedSource,sourceLabel:sourceLabel(resolvedSource)});
+    let previous=null;
+    if(periods?.previous){
+      const previousRows=Array.isArray(periods.previous.rows)?periods.previous.rows:[];
+      previous=aggregate(previousRows,{start:previousRange?.from||'',end:previousRange?.to||'',mode:scope.mode,market:scope.market,source:periods.previous.source||resolvedSource,sourceLabel:sourceLabel(periods.previous.source||resolvedSource)});
+    }
+    return {all:currentRows,current,previous,previousLabel,source:resolvedSource,sourceLabel:sourceLabel(resolvedSource),queryScope:queryScope(),loadedAt:new Date().toISOString()};
   };
 
   const insightRows=r=>{
@@ -234,9 +254,8 @@
   const renderBody=r=>{
     const body=byId('transactionFinanceBody');if(!body)return;
     const c=r.current;
-    if(!r.all.length){body.innerHTML='<div class="txFinanceEmpty"><b>尚未导入联合交易报告</b><br>请先导入 Amazon 联合报告（交易），再生成财务报表。</div>';return;}
-    if(!c.rows.length){body.innerHTML='<div class="txFinanceEmpty"><b>当前日期范围没有联合交易记录</b><br>请调整左侧日期，确保与联合报告 Posted Date 重叠。</div>';return;}
-    body.innerHTML=`<section class="txFinancePanel ${activeTab==='overview'?'active':''}" data-tx-panel="overview">${renderOverview(r)}</section><section class="txFinancePanel ${activeTab==='costs'?'active':''}" data-tx-panel="costs">${renderCosts(r)}</section><section class="txFinancePanel ${activeTab==='refunds'?'active':''}" data-tx-panel="refunds">${renderRefunds(r)}</section><section class="txFinancePanel ${activeTab==='sku'?'active':''}" data-tx-panel="sku">${renderSku(r)}</section><div class="txFinanceFootnote"><b>口径说明：</b>经营结算净额使用联合报告非Transfer交易Total；预估净利润在此基础上扣除GitHub成本库中的采购、头程及适用的FBM配送成本。成本库未匹配的SKU不虚构成本，请结合成本覆盖率判断结果完整性。Cost of Advertising只使用联合报告扣费，不与广告报表花费重复扣除。</div>`;
+    if(!c.rows.length){body.innerHTML=`<div class="txFinanceEmpty"><b>当前日期范围没有交易记录</b><br>${esc(r.sourceLabel)} 已完成查询，请调整左侧日期，确保与 Posted Date 重叠。</div>`;return;}
+    body.innerHTML=`<section class="txFinancePanel ${activeTab==='overview'?'active':''}" data-tx-panel="overview">${renderOverview(r)}</section><section class="txFinancePanel ${activeTab==='costs'?'active':''}" data-tx-panel="costs">${renderCosts(r)}</section><section class="txFinancePanel ${activeTab==='refunds'?'active':''}" data-tx-panel="refunds">${renderRefunds(r)}</section><section class="txFinancePanel ${activeTab==='sku'?'active':''}" data-tx-panel="sku">${renderSku(r)}</section><div class="txFinanceFootnote"><b>数据来源：</b>${esc(r.sourceLabel)}。<b>口径说明：</b>经营结算净额使用联合报告非Transfer交易Total；预估净利润在此基础上扣除GitHub成本库中的采购、头程及适用的FBM配送成本。成本库未匹配的SKU不虚构成本，请结合成本覆盖率判断结果完整性。Cost of Advertising只使用联合报告扣费，不与广告报表花费重复扣除。</div>`;
   };
 
   const chartTheme=()=>{const s=getComputedStyle(document.documentElement);return {text:s.getPropertyValue('--text').trim()||'#1d1d1f',muted:s.getPropertyValue('--muted').trim()||'#6e6e73',grid:s.getPropertyValue('--chart-grid').trim()||'rgba(0,0,0,.08)',accent:s.getPropertyValue('--accent').trim()||'#2563eb',good:s.getPropertyValue('--good').trim()||'#16a34a',bad:s.getPropertyValue('--bad').trim()||'#dc2626',warn:s.getPropertyValue('--warn').trim()||'#d97706',line:s.getPropertyValue('--line').trim()||'#e5e7eb'};};
@@ -267,15 +286,39 @@
     document.querySelectorAll('#transactionFinanceModal [data-tx-panel]').forEach(p=>p.classList.toggle('active',p.dataset.txPanel===activeTab));
     requestAnimationFrame(()=>renderChartsForTab(activeTab,lastReport));
   };
-  const renderReport=()=>{
+  const renderReport=async({force=false}={})=>{
     const body=byId('transactionFinanceBody');if(!body)return;
+    const generation=++renderGeneration;
     destroyCharts();
-    const r=buildReport();lastReport=r;
-    const c=r.current,mode=c.mode==='cash'?'现金口径 · Released':'权责口径 · Released + Deferred';
-    byId('transactionFinanceHeaderMeta').innerHTML=`<span class="txFinanceHeaderPill"><strong>${esc(c.start||'最早')}</strong> → <strong>${esc(c.end||'最新')}</strong></span><span class="txFinanceHeaderPill">${esc(c.market||'ALL')}</span><span class="txFinanceHeaderPill">${esc(mode)}</span><span class="txFinanceHeaderPill">对比：${esc(r.previousLabel)}</span>`;
-    byId('transactionFinanceTabMeta').textContent=`${c.rows.length.toLocaleString()} 条交易 · ${c.skuCount.toLocaleString()} SKU · 成本覆盖 ${pct(c.costCoverage)} · Posted Date`;
-    renderBody(r);
-    switchTab(activeTab);
+    body.innerHTML='<div class="txFinanceEmpty"><b>正在读取 Query 数据…</b><br>按当前店铺、日期与结算口径从 TiDB 分页查询交易明细。</div>';
+    const refresh=byId('btnRefreshTransactionFinance'),exportButton=byId('btnExportTransactionFinance');
+    if(refresh)refresh.disabled=true;if(exportButton)exportButton.disabled=true;
+    try{
+      const r=await buildReport({force,source:sourceMode});
+      if(generation!==renderGeneration)return;
+      lastReport=r;
+      const c=r.current,mode=c.mode==='cash'?'现金口径 · Released':'权责口径 · Released + Deferred';
+      const switchControl=sourceMode==='raw'?'<button class="btn" id="btnTxFinanceUseQuery" type="button">切回 Query</button>':'';
+      byId('transactionFinanceHeaderMeta').innerHTML=`<span class="txFinanceHeaderPill"><strong>${esc(c.start||'最早')}</strong> → <strong>${esc(c.end||'最新')}</strong></span><span class="txFinanceHeaderPill">${esc(c.market||'ALL')}</span><span class="txFinanceHeaderPill">${esc(mode)}</span><span class="txFinanceHeaderPill">${esc(r.sourceLabel)}</span><span class="txFinanceHeaderPill">对比：${esc(r.previousLabel)}</span>${switchControl}`;
+      byId('transactionFinanceTabMeta').textContent=`${c.rows.length.toLocaleString()} 条交易 · ${c.skuCount.toLocaleString()} SKU · 成本覆盖 ${pct(c.costCoverage)} · Posted Date · ${r.queryScope}`;
+      renderBody(r);
+      byId('btnTxFinanceUseQuery')?.addEventListener('click',()=>{sourceMode='query';renderReport({force:true});});
+      switchTab(activeTab);
+    }catch(error){
+      if(generation!==renderGeneration)return;
+      lastReport=null;
+      const message=String(error?.message||error);
+      const action=sourceMode==='query'
+        ? '<button class="btn primary" id="btnTxFinanceUseRawCompat" type="button">使用已导入 Raw 数据</button>'
+        : '<button class="btn primary" id="btnTxFinanceRetryQuery" type="button">返回 Query 模式</button>';
+      body.innerHTML=`<div class="txFinanceEmpty"><b>${sourceMode==='query'?'Query-native 数据读取失败':'Raw 兼容数据不可用'}</b><br>${esc(message)}<div style="margin-top:12px">${action}</div></div>`;
+      byId('transactionFinanceHeaderMeta').innerHTML=`<span class="txFinanceHeaderPill">${sourceMode==='query'?'QUERY · TiDB':'RAW COMPAT · 浏览器内存'}</span><span class="txFinanceHeaderPill">读取失败</span>`;
+      byId('transactionFinanceTabMeta').textContent='未生成报表 · 数据源未就绪';
+      byId('btnTxFinanceUseRawCompat')?.addEventListener('click',()=>{sourceMode='raw';renderReport({force:true});});
+      byId('btnTxFinanceRetryQuery')?.addEventListener('click',()=>{sourceMode='query';renderReport({force:true});});
+    }finally{
+      if(generation===renderGeneration){if(refresh)refresh.disabled=false;if(exportButton)exportButton.disabled=false;}
+    }
   };
 
   const downloadBlob=(blob,filename)=>{
@@ -329,7 +372,8 @@
   };
 
   const exportReport=async()=>{
-    const r=buildReport(),c=r.current;if(!c.rows.length){try{notify('当前日期范围没有联合交易数据。','warn');}catch(e){alert('当前日期范围没有联合交易数据。');}return;}
+    let r;try{r=await buildReport({force:false,source:sourceMode});}catch(err){const message=`无法读取交易数据：${err?.message||err}`;try{notify(message,'bad');}catch(e){alert(message);}return;}
+    const c=r.current;if(!c.rows.length){try{notify('当前日期范围没有联合交易数据。','warn');}catch(e){alert('当前日期范围没有联合交易数据。');}return;}
     const summary=[['日期开始',c.start],['日期结束',c.end],['站点',c.market||'ALL'],['交易口径',c.mode],['交易行数',c.rows.length],['订单数',c.orderCount],['SKU数',c.skuCount],['商品销售',c.orderSales],['退款商品额',c.refundSales],['净商品销售',c.netProductSales],['销售退款率',c.refundSalesRate],['件数退款率',c.returnRate],['交易费用',c.amazonTradeFees],['交易费用率',c.tradeFeeRate],['广告扣费',c.advertising],['广告占比',c.adRate],['非广告运营支出',c.nonAdOperatingExpenses],['商品采购及头程成本',c.purchaseCost],['FBM配送成本',c.fbmShippingCost],['成本库覆盖率',c.costCoverage],['经营结算净额',c.operatingSettlement],['预估净利润',c.finalNetProfit],['预估净利率',c.finalNetMargin],['Transfer',c.transfer],['结算总额',c.settlementTotal]];
     const expenses=c.expense.map(x=>[x.name,x.value,x.rate,x.note]);
     const daily=c.daily.map(x=>[x.date,x.rows,x.sales,x.refund,x.fees,x.ads,x.productCost,x.refundRate,x.net,x.finalNet,x.finalNetRate,x.costCoverage]);
@@ -340,13 +384,15 @@
     const filename=`Transaction_Finance_Report_${c.start||'start'}_${c.end||'end'}_${ts}.xlsx`;
     const btn=byId('btnExportTransactionFinance'),oldText=btn?.textContent;try{if(btn){btn.disabled=true;btn.textContent='正在导出…';}const method=await exportFinanceWorkbook(sheets,filename);const msg=method==='CSV'?'Excel库不可用，已自动导出兼容CSV。':'交易财务报表已导出。';try{notify(msg,method==='CSV'?'warn':'good');}catch(e){console.info(msg);}}catch(err){console.error(err);alert(`导出失败：${err?.message||err}`);}finally{if(btn){btn.disabled=false;btn.textContent=oldText||'导出 Excel';}}
   };
-  const openModal=()=>{const m=ensureModal();m.style.display='flex';renderReport();setTimeout(()=>byId('btnCloseTransactionFinance')?.focus(),0);};
+  const openModal=()=>{const m=ensureModal();m.style.display='flex';renderReport({force:false});setTimeout(()=>byId('btnCloseTransactionFinance')?.focus(),0);};
   const init=()=>{
     ensureModal();
     byId('btnTransactionFinanceReport')?.addEventListener('click',openModal);
-    ['dateStart','dateEnd','transactionStatusMode'].forEach(id=>byId(id)?.addEventListener('change',()=>{const m=byId('transactionFinanceModal');if(m&&m.style.display!=='none')setTimeout(renderReport,260);}));
+    ['dateStart','dateEnd','transactionStatusMode','workspaceMarketplace'].forEach(id=>byId(id)?.addEventListener('change',()=>{if(isModalOpen())setTimeout(()=>renderReport({force:false}),260);}));
+    window.addEventListener('lr:shop-change',()=>{if(isModalOpen())renderReport({force:true});});
+    window.addEventListener('lr:query-client-ready',()=>{if(isModalOpen()&&sourceMode==='query'&&!lastReport)renderReport({force:true});});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&byId('transactionFinanceModal')?.style.display==='flex')closeModal();});
-    window.TransactionFinanceReport={open:openModal,render:renderReport,build:buildReport,export:exportReport,switchTab};
+    window.TransactionFinanceReport={version:MODULE_VERSION,open:openModal,render:renderReport,build:buildReport,export:exportReport,switchTab,useQuery:()=>{sourceMode='query';return renderReport({force:true});},useRawCompatibility:()=>{sourceMode='raw';return renderReport({force:true});},source:()=>sourceMode};
   };
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();

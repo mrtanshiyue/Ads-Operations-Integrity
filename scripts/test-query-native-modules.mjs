@@ -45,7 +45,7 @@ assert.ok(
 
 assert.match(finance, /const MODULE_VERSION='2\.0\.0'/);
 assert.match(finance, /sourceMode='query'/);
-assert.match(finance, /QueryNativeModuleData\.periodTransactions/);
+assert.match(finance, /adapter\.periodTransactions/);
 assert.match(finance, /renderGeneration/);
 assert.match(finance, /raw-compat/);
 assert.match(finance, /使用已导入 Raw 数据/);
