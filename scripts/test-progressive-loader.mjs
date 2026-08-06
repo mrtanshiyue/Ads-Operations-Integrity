@@ -12,7 +12,7 @@ const section = (source, startNeedle, endNeedle) => {
   return source.slice(start, end);
 };
 
-assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
+assert.match(loader, /const LOADER_VERSION = '4\.3\.1'/);
 assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
@@ -21,6 +21,11 @@ assert.match(loader, /btnPrivateCloudRecentMonths/);
 assert.match(loader, /btnPrivateCloudFullHistory/);
 assert.match(loader, /loadFullHistory: \(\) => loadRawRange\(\{ mode: 'full' \}\)/);
 assert.match(loader, /dataFingerprint/);
+assert.match(loader, /const directPanelChild = element =>/);
+assert.match(loader, /panel\.insertBefore\(card, statusHost \|\| null\)/);
+assert.match(loader, /#privateCloudImportPanel > \.queryFirstOverviewCard/);
+assert.match(loader, /\.queryFirstOverviewCard\{[^}]*width:100%;[^}]*min-width:0/);
+assert.doesNotMatch(loader, /status\.insertAdjacentElement\('beforebegin', card\)/);
 assert.match(query, /\/api\/v1\/query\/bootstrap/);
 assert.match(query, /If-None-Match/);
 
