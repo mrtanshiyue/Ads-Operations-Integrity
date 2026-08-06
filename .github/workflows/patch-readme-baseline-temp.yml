@@ -1,0 +1,76 @@
+name: Patch frontend README production baseline (temporary)
+
+on:
+  push:
+    branches:
+      - docs/refresh-production-baseline-20260806
+    paths:
+      - .github/workflows/patch-readme-baseline-temp.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-readme:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/refresh-production-baseline-20260806
+          fetch-depth: 0
+
+      - name: Update verified production baseline
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('README.md')
+          text = path.read_text(encoding='utf-8')
+
+          replacements = {
+              '31002270134': '31074460434',
+              '96613dc7c74f5bd6e8be0ba405dda77c1e263a6e': '5f9a4bd8190e57bcbf993884028cef9c70467c87',
+              '19a2bad7078b2fb08529494913a29673587d0b4e': 'b43bab4bc7a953b1555aca56268b17489af17307',
+              '| 最终 Chromium 总耗时 | 约 63 秒 |': '| 最终 Chromium 总耗时 | 约 135 秒 |',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'missing expected README baseline: {old}')
+              text = text.replace(old, new)
+
+          marker = '- Worker API：`4.2.2`\n'
+          addition = '- Worker API：`4.2.2`\n- Cloudflare Worker 版本：`39`（100% 流量）\n'
+          if '- Cloudflare Worker 版本：`39`（100% 流量）' not in text:
+              if marker not in text:
+                  raise SystemExit('missing Worker API marker')
+              text = text.replace(marker, addition, 1)
+
+          marker = '- 最后一个应用代码基线：`5f9a4bd8190e57bcbf993884028cef9c70467c87`\n'
+          addition = marker + '- 最新成功 GitHub Pages：Run `31073518918`\n'
+          if '- 最新成功 GitHub Pages：Run `31073518918`' not in text:
+              if marker not in text:
+                  raise SystemExit('missing frontend baseline marker')
+              text = text.replace(marker, addition, 1)
+
+          table_marker = '| Worker | `amazon-warehouse-cloud-v4` / API `4.2.2` |\n'
+          table_addition = table_marker + '| Worker deployment | Cloudflare version `39` / 100% traffic |\n'
+          if '| Worker deployment | Cloudflare version `39` / 100% traffic |' not in text:
+              if table_marker not in text:
+                  raise SystemExit('missing Worker table marker')
+              text = text.replace(table_marker, table_addition, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit README-only update and remove temporary workflow
+        run: |
+          rm .github/workflows/patch-readme-baseline-temp.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md .github/workflows/patch-readme-baseline-temp.yml
+          git diff --cached --exit-code -- .github/workflows/patch-readme-baseline-temp.yml
+          git diff --cached --name-only | grep -Fx 'README.md'
+          test "$(git diff --cached --name-only | wc -l)" -eq 1
+          git commit -m 'Refresh verified frontend handoff baseline'
+          git push origin HEAD:docs/refresh-production-baseline-20260806
