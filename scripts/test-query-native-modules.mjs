@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const queryClient = readFileSync(new URL('../assets/private-cloud-query-v1.js', import.meta.url), 'utf8');
 const adapter = readFileSync(new URL('../assets/query-native-module-data-v1.js', import.meta.url), 'utf8');
 const finance = readFileSync(new URL('../assets/generated/inline-script-08.js', import.meta.url), 'utf8');
 
@@ -39,13 +40,16 @@ assert.match(cachedRowsSection, /await queryLoader\(request\)/);
 assert.doesNotMatch(cachedRowsSection, /catch[\s\S]*rawLoader\(request\)/);
 assert.match(adapter, /return cachedRows\('transactions', request, queryTransactions, rawTransactions\)/);
 
-assert.match(index, /assets\/query-native-module-data-v1\.js\?v=1\.1\.0/);
+assert.match(index, /assets\/query-native-module-data-v1\.js\?v=1\.0\.0/);
 assert.match(index, /assets\/generated\/inline-script-08\.js\?v=2\.0\.0/);
 assert.ok(
-  index.indexOf('assets/query-native-module-data-v1.js?v=1.1.0')
+  index.indexOf('assets/query-native-module-data-v1.js?v=1.0.0')
     < index.indexOf('assets/generated/inline-script-08.js?v=2.0.0'),
-  'Query-native adapter must load before the transaction finance module',
+  'The bootstrap adapter tag must remain before the transaction finance module',
 );
+assert.match(queryClient, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.1\.0'/);
+assert.match(queryClient, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
+assert.match(queryClient, /window\.QueryNativeModuleData\?\.version !== QUERY_NATIVE_ADAPTER_VERSION/);
 
 assert.match(finance, /const MODULE_VERSION='2\.0\.0'/);
 assert.match(finance, /sourceMode='query'/);
