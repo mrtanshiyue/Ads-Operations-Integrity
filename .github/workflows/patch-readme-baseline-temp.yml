@@ -63,14 +63,14 @@ jobs:
           path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Commit README-only update and remove temporary workflow
+      - name: Commit README update and remove temporary workflow
         run: |
           rm .github/workflows/patch-readme-baseline-temp.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add README.md .github/workflows/patch-readme-baseline-temp.yml
-          git diff --cached --exit-code -- .github/workflows/patch-readme-baseline-temp.yml
-          git diff --cached --name-only | grep -Fx 'README.md'
-          test "$(git diff --cached --name-only | wc -l)" -eq 1
+          printf '%s\n' '.github/workflows/patch-readme-baseline-temp.yml' 'README.md' > /tmp/expected-files
+          git diff --cached --name-only | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
           git commit -m 'Refresh verified frontend handoff baseline'
           git push origin HEAD:docs/refresh-production-baseline-20260806
