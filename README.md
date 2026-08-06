@@ -10,8 +10,10 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 - Loader：`4.2.3`
 - Query Client：`1.1.0`
 - Worker API：`4.2.2`
-- 最后一次完整生产验收：Warehouse Run `31002270134`
-- 最后一个应用代码基线：`96613dc7c74f5bd6e8be0ba405dda77c1e263a6e`
+- Cloudflare Worker 版本：`39`（100% 流量）
+- 最后一次完整生产验收：Warehouse Run `31074460434`
+- 最后一个应用代码基线：`5f9a4bd8190e57bcbf993884028cef9c70467c87`
+- 最新成功 GitHub Pages：Run `31073518918`
 
 > README 是项目交接文档，不是实时监控面板。文件数、行数、版本和健康状态应以当前 `main`、Worker `/api/v1/health`、Manifest、Query Status 和最新成功的生产 Run 为准。
 
@@ -60,6 +62,7 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | Private Warehouse | `mrtanshiyue/Amazon-Data-Warehouse` |
 | GitHub Pages | `https://mrtanshiyue.github.io/Ads-Operations-Integrity/` |
 | Worker | `amazon-warehouse-cloud-v4` / API `4.2.2` |
+| Worker deployment | Cloudflare version `39` / 100% traffic |
 | Loader | `assets/private-cloud-warehouse-v4.js` / `4.2.3` |
 | Query Client | `assets/private-cloud-query-v1.js` / `1.1.0` |
 | Query primary storage | TiDB Cloud |
@@ -84,7 +87,7 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | 页面错误 | 0 |
 | 控制台错误 | 0 |
 | Query Status / Overview | 通过 |
-| 最终 Chromium 总耗时 | 约 63 秒 |
+| 最终 Chromium 总耗时 | 约 135 秒 |
 
 最后一次完整生产关闭门禁同时验证：Worker、TiDB 迁移与对账、Raw、Query APIs、32 文件历史完整性审计、GitHub Pages、Loader、Query Client 和真实 Chromium 全量导入。
 
@@ -466,9 +469,9 @@ Frontend `main` 分支保护已启用。Warehouse 因私有仓库分支保护需
 最后生产代码基线：
 
 ```text
-Frontend: 96613dc7c74f5bd6e8be0ba405dda77c1e263a6e
-Warehouse: 19a2bad7078b2fb08529494913a29673587d0b4e
-Final Run: 31002270134
+Frontend: 5f9a4bd8190e57bcbf993884028cef9c70467c87
+Warehouse: b43bab4bc7a953b1555aca56268b17489af17307
+Final Run: 31074460434
 ```
 
 旧 Phase 8 草案已被正式实现取代。不要复活 Frontend PR #4、Warehouse PR #5 或 #14；新工作从当前 `main` 重建。
@@ -486,7 +489,7 @@ Final Run: 31002270134
 | 浏览器大 Raw 并发失败 | 两个 TiDB BLOB 请求同时进入平台 | `FETCH_CONCURRENCY = 1` |
 | 混合版本被误接受 | Cloudflare 发布期间节点版本不一致 | smoke 要求精确 Worker 版本 |
 
-历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31002270134`。
+历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31074460434`。
 
 ---
 
