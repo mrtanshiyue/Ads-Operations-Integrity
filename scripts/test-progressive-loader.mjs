@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const loader = readFileSync(new URL('../assets/private-cloud-warehouse-v4.js', import.meta.url), 'utf8');
 const query = readFileSync(new URL('../assets/private-cloud-query-v1.js', import.meta.url), 'utf8');
 const shopUi = readFileSync(new URL('../assets/generated/inline-script-11.js', import.meta.url), 'utf8');
@@ -13,6 +14,8 @@ const section = (source, startNeedle, endNeedle) => {
   return source.slice(start, end);
 };
 
+assert.match(index, /assets\/generated\/inline-script-11\.js\?v=1\.1\.0/);
+assert.match(index, /assets\/private-cloud-warehouse-v4\.js\?v=4\.3\.0-layout2/);
 assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
 assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
 assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
