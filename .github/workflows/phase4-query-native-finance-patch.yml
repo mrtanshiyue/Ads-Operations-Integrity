@@ -1,0 +1,41 @@
+name: Phase 4 Query-native Finance Patch
+
+on:
+  push:
+    branches: [phase4/query-native-finance-batch1]
+    paths:
+      - "tools/phase4_patch_query_native_finance.py"
+      - ".github/workflows/phase4-query-native-finance-patch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply Query-native finance patch
+        run: python3 tools/phase4_patch_query_native_finance.py
+      - name: Validate patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check assets/query-native-module-data-v1.js
+          node --check assets/generated/inline-script-08.js
+          node --check scripts/test-query-native-modules.mjs
+          node scripts/test-progressive-loader.mjs
+          node scripts/test-query-native-modules.mjs
+          grep -Fq 'assets/query-native-module-data-v1.js?v=1.0.0' index.html
+          grep -Fq 'assets/generated/inline-script-08.js?v=2.0.0' index.html
+      - name: Commit Phase 4 implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets/generated/inline-script-08.js .github/workflows/ci-main.yml .github/workflows/pages.yml
+          git commit -m "Make transaction finance Query-native"
+          git push origin HEAD:phase4/query-native-finance-batch1
