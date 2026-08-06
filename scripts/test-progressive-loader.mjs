@@ -21,6 +21,11 @@ assert.match(loader, /btnPrivateCloudRecentMonths/);
 assert.match(loader, /btnPrivateCloudFullHistory/);
 assert.match(loader, /loadFullHistory: \(\) => loadRawRange\(\{ mode: 'full' \}\)/);
 assert.match(loader, /dataFingerprint/);
+assert.match(loader, /const directPanelChild = element =>/);
+assert.match(loader, /panel\.insertBefore\(card, statusHost \|\| null\)/);
+assert.match(loader, /#privateCloudImportPanel > \.queryFirstOverviewCard/);
+assert.match(loader, /\.queryFirstOverviewCard\{[^}]*width:100%;[^}]*min-width:0/);
+assert.doesNotMatch(loader, /status\.insertAdjacentElement\('beforebegin', card\)/);
 assert.match(query, /\/api\/v1\/query\/bootstrap/);
 assert.match(query, /If-None-Match/);
 
