@@ -1,15 +1,19 @@
 (() => {
   'use strict';
 
-  const CLIENT_VERSION = '1.1.0';
+  const CLIENT_VERSION = '1.2.0';
   const DEFAULT_PAGE_SIZE = 250;
   const MAX_PAGE_SIZE = 500;
+  const responseCache = new Map();
   const state = {
+    bootstrap: null,
     status: null,
     overview: null,
     lastScope: 'ALL',
     lastError: null,
     source: 'unknown',
+    dataFingerprint: '',
+    lastCacheState: 'none',
   };
 
   const normalizeScope = value => {
@@ -17,7 +21,8 @@
     return ['ALL', 'YTDBNS', 'YY', 'JJ'].includes(scope) ? scope : 'ALL';
   };
 
-  const currentScope = () => normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || state.lastScope || 'ALL');
+  const currentScope = () =>
+    normalizeScope(window.ShopScope?.get?.() || window.ACTIVE_SHOP || state.lastScope || 'ALL');
 
   const queryBridge = () => {
     const request = window.PrivateCloudAds?.queryRequest;
@@ -27,13 +32,57 @@
 
   async function request(path, options = {}) {
     const normalized = normalizePath(path);
+    const cached = responseCache.get(normalized);
+    const headers = { ...(options.headers || {}) };
+    if (cached?.etag && options.useCache !== false) headers['If-None-Match'] = cached.etag;
     const result = await queryBridge()(normalized, {
-      headers: options.headers || {},
+      headers,
       timeoutMs: boundedInteger(options.timeoutMs, 120000, 1000, 300000),
       maxAttempts: boundedInteger(options.maxAttempts, 4, 1, 6),
     });
     if (!result || typeof result !== 'object') throw clientError(502, '私有云查询返回格式无效');
-    return result;
+    if (result.response?.status === 304) {
+      if (!cached?.payload) throw clientError(502, '查询返回 304，但当前页面没有可复用缓存');
+      state.lastCacheState = 'hit';
+      return { ...result, payload: cached.payload, cache: 'hit' };
+    }
+    const etag = String(result.response?.headers?.get?.('ETag') || '');
+    if (result.payload && options.useCache !== false) {
+      responseCache.set(normalized, {
+        payload: result.payload,
+        etag,
+        dataFingerprint: String(result.payload?.dataFingerprint || ''),
+        storedAt: Date.now(),
+      });
+    }
+    state.lastCacheState = 'miss';
+    return { ...result, cache: 'miss' };
+  }
+
+  async function getBootstrap(options = {}) {
+    const scope = normalizeScope(options.scope || currentScope());
+    const params = new URLSearchParams({
+      scope,
+      grain: options.grain === 'day' ? 'day' : 'month',
+    });
+    appendDate(params, 'from', options.from);
+    appendDate(params, 'to', options.to);
+    const { payload, cache } = await request(`/api/v1/query/bootstrap?${params}`, options);
+    if (!payload || payload.bootstrapVersion !== 'query-first-bootstrap-v1') {
+      throw clientError(502, 'Query-first Bootstrap 契约无效');
+    }
+    state.bootstrap = payload;
+    state.status = payload.status || null;
+    state.overview = payload.overview || null;
+    state.lastScope = scope;
+    state.source = payload?.status?.primaryStorage || 'unknown';
+    state.dataFingerprint = String(payload.dataFingerprint || '');
+    state.lastCacheState = cache || 'none';
+    state.lastError = null;
+    dispatch('lr:query-bootstrap', payload);
+    dispatch('lr:query-status', state.status);
+    dispatch('lr:query-overview', state.overview);
+    return payload;
   }
 
   async function getStatus(options = {}) {
@@ -89,7 +138,7 @@
       const value = String(options[key] || '').trim();
       if (value) params.set(key, value);
     }
-    const { payload } = await request(`${path}?${params}`, options);
+    const { payload } = await request(`${path}?${params}`, { ...options, useCache: false });
     state.lastScope = scope;
     state.lastError = null;
     return payload;
@@ -113,14 +162,29 @@
 
   async function refresh(options = {}) {
     try {
-      const status = await getStatus(options);
-      const overview = status?.analyticsReady ? await getOverview(options) : null;
-      return { status, overview };
+      const bootstrap = await getBootstrap({ grain: 'month', ...options });
+      return {
+        bootstrap,
+        status: bootstrap.status || null,
+        overview: bootstrap.overview || null,
+      };
     } catch (error) {
       state.lastError = String(error?.message || error);
       dispatch('lr:query-error', { message: state.lastError, status: Number(error?.status || 0) });
       throw error;
     }
+  }
+
+  function adoptBootstrap(payload) {
+    if (!payload || payload.bootstrapVersion !== 'query-first-bootstrap-v1') return false;
+    state.bootstrap = payload;
+    state.status = payload.status || null;
+    state.overview = payload.overview || null;
+    state.lastScope = normalizeScope(payload.scope || currentScope());
+    state.source = payload?.status?.primaryStorage || 'unknown';
+    state.dataFingerprint = String(payload.dataFingerprint || '');
+    state.lastError = null;
+    return true;
   }
 
   function normalizePath(value) {
@@ -145,7 +209,9 @@
     const day = Number(match[3]);
     if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return false;
     const date = new Date(Date.UTC(year, month - 1, day));
-    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+    return date.getUTCFullYear() === year
+      && date.getUTCMonth() === month - 1
+      && date.getUTCDate() === day;
   }
 
   function boundedInteger(value, fallback, minimum, maximum) {
@@ -167,6 +233,7 @@
   window.PrivateCloudQuery = Object.freeze({
     version: CLIENT_VERSION,
     apiBase: () => window.PrivateCloudAds?.apiBase || '',
+    bootstrap: getBootstrap,
     status: getStatus,
     overview: getOverview,
     ads: getAds,
@@ -174,16 +241,33 @@
     allAds: getAllAds,
     allTransactions: getAllTransactions,
     refresh,
-    state: () => ({ ...state }),
+    clearMemoryCache: () => responseCache.clear(),
+    state: () => ({
+      ...state,
+      cacheEntries: responseCache.size,
+    }),
+  });
+
+  window.addEventListener('lr:query-bootstrap', event => {
+    adoptBootstrap(event.detail || null);
+  });
+
+  window.addEventListener('lr:cloud-overview-ready', event => {
+    adoptBootstrap(event.detail?.bootstrap || null);
   });
 
   window.addEventListener('lr:cloud-loaded', event => {
     const detail = event.detail || {};
     const scope = normalizeScope(detail.scope || currentScope());
-    const storage = String(detail.storage || detail.health?.storage || '');
+    const storage = String(detail.storage || '');
     if (storage) state.source = storage;
+    if (state.bootstrap && state.lastScope === scope) return;
     refresh({ scope }).catch(error => console.warn('TiDB query client refresh skipped:', error));
   });
 
-  dispatch('lr:query-client-ready', { version: CLIENT_VERSION, apiBase: window.PrivateCloudAds?.apiBase || '' });
+  dispatch('lr:query-client-ready', {
+    version: CLIENT_VERSION,
+    apiBase: window.PrivateCloudAds?.apiBase || '',
+    capabilities: ['bootstrap', 'etag-memory-cache', 'status', 'overview', 'ads', 'transactions'],
+  });
 })();
