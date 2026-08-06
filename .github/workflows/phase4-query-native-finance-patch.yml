@@ -39,6 +39,6 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html assets/generated/inline-script-08.js scripts/test-query-native-modules.mjs .github/workflows/ci-main.yml .github/workflows/pages.yml
+          git add index.html assets/generated/inline-script-08.js scripts/test-query-native-modules.mjs
           git commit -m "Make transaction finance Query-native"
           git push origin HEAD:phase4/query-native-finance-batch1
