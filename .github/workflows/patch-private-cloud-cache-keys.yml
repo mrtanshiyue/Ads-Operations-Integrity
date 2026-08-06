@@ -1,0 +1,39 @@
+name: Patch Private Cloud Cache Keys
+
+on:
+  push:
+    branches: [fix/private-cloud-shop-ui-preserve-v2]
+    paths:
+      - "tools/patch_private_cloud_cache_keys.py"
+      - ".github/workflows/patch-private-cloud-cache-keys.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch versioned private cloud script URLs
+        run: python3 tools/patch_private_cloud_cache_keys.py
+      - name: Validate patched source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'assets/generated/inline-script-11.js?v=1.1.0' index.html
+          grep -Fq 'assets/private-cloud-warehouse-v4.js?v=4.3.0-layout2' index.html
+          node --check assets/generated/inline-script-11.js
+          node --check assets/private-cloud-warehouse-v4.js
+          node scripts/test-progressive-loader.mjs
+      - name: Commit index cache keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Version private cloud layout assets"
+          git push origin HEAD:fix/private-cloud-shop-ui-preserve-v2
