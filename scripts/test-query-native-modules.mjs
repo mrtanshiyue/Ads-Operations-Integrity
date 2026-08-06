@@ -14,11 +14,11 @@ const section = (source, startNeedle, endNeedle) => {
   return source.slice(start, end);
 };
 
-assert.match(adapter, /const ADAPTER_VERSION = '1\.0\.0'/);
-assert.match(adapter, /PrivateCloudQuery\?\.allTransactions/);
+assert.match(adapter, /const ADAPTER_VERSION = '1\.1\.0'/);
+assert.match(adapter, /waitForQueryClient\('allTransactions'\)/);
 assert.match(adapter, /client\.allTransactions\(\{/);
 assert.match(adapter, /statusMode: request\.statusMode/);
-assert.match(adapter, /source: String\(options\.source \|\| 'query'\)/);
+assert.match(adapter, /source: normalizeSource\(options\.source\)/);
 assert.match(adapter, /request\.source === 'raw'/);
 assert.match(adapter, /explicit-raw-compatibility/);
 assert.match(adapter, /transactionPreTaxNet/);
@@ -28,19 +28,21 @@ assert.doesNotMatch(adapter, /\/manifest\?/);
 assert.doesNotMatch(adapter, /\/api\/v1\/raw\//);
 assert.doesNotMatch(adapter, /__LR_IMPORT_MULTIPLE_FILES__/);
 
-const transactionsSection = section(
+const cachedRowsSection = section(
   adapter,
-  '  async function transactions(options = {}) {',
-  '\n\n  async function periodTransactions',
+  '  async function cachedRows(module, request, queryLoader, rawLoader) {',
+  '\n\n  async function transactions',
 );
-assert.match(transactionsSection, /request\.source === 'raw'/);
-assert.match(transactionsSection, /await queryTransactions\(request\)/);
-assert.doesNotMatch(transactionsSection, /catch[\s\S]*rawTransactions\(request\)/);
+assert.match(cachedRowsSection, /request\.source === 'raw'/);
+assert.match(cachedRowsSection, /await rawLoader\(request\)/);
+assert.match(cachedRowsSection, /await queryLoader\(request\)/);
+assert.doesNotMatch(cachedRowsSection, /catch[\s\S]*rawLoader\(request\)/);
+assert.match(adapter, /return cachedRows\('transactions', request, queryTransactions, rawTransactions\)/);
 
-assert.match(index, /assets\/query-native-module-data-v1\.js\?v=1\.0\.0/);
+assert.match(index, /assets\/query-native-module-data-v1\.js\?v=1\.1\.0/);
 assert.match(index, /assets\/generated\/inline-script-08\.js\?v=2\.0\.0/);
 assert.ok(
-  index.indexOf('assets/query-native-module-data-v1.js?v=1.0.0')
+  index.indexOf('assets/query-native-module-data-v1.js?v=1.1.0')
     < index.indexOf('assets/generated/inline-script-08.js?v=2.0.0'),
   'Query-native adapter must load before the transaction finance module',
 );
