@@ -7,18 +7,42 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 - 在线应用：<https://mrtanshiyue.github.io/Ads-Operations-Integrity/>
 - 生产数据 API：`https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev`
 - 生产分支：`main`
-- Loader：`4.2.3`
-- Query Client：`1.1.0`
+- Loader：`4.3.0`
+- Query Client：`1.2.0`
 - Worker API：`4.2.2`
 - Cloudflare Worker 发布：以最新成功 Warehouse Run 与 Worker `/api/v1/health` 为准
-- 最后一次完整生产验收：Warehouse Run `31077568702`
-- 最后一个应用代码基线：`5f9a4bd8190e57bcbf993884028cef9c70467c87`
-- Warehouse 生产代码/验收基线：`58d31c6867e40a6deaff70cd3eb8461a65e267a5`
-- 最新成功 GitHub Pages：Run `31073518918`
+- 最后一次完整生产验收：Warehouse Run `31090843724`
+- 最后一个应用代码基线：`94254f7b7c364d17f25807337ba3424262e92b39`
+- Warehouse 生产代码/验收基线：`3f008f756007949a8833aba1b6e7674c565b727a`
+- 最新成功 GitHub Pages：Run `31087845759`
 
 > README 是项目交接文档，不是实时监控面板。文件数、行数、版本和健康状态应以当前 `main`、Worker `/api/v1/health`、Manifest、Query Status 和最新成功的生产 Run 为准。
 
 ---
+
+## 第三阶段生产结果：Frontend 渐进式加载
+
+```text
+Frontend main / Pages source: 94254f7b7c364d17f25807337ba3424262e92b39
+Frontend PR: #17
+Frontend PR CI: 31087776985
+Frontend main CI: 31087845755
+Pages: 31087845759
+Warehouse acceptance main: 3f008f756007949a8833aba1b6e7674c565b727a
+Warehouse production Run: 31090843724
+```
+
+真实 Chromium 验收：
+
+- Loader `4.3.0`，Query Client `1.2.0`。
+- 首屏 Bootstrap 约 `5.8s`，3 个查询请求，Manifest `0`，Raw `0`。
+- 数据指纹：`f2902e1920069ad54d7afbe20922a0fd8729e80491a6f66910be6d426a80800d`。
+- 显式完整历史覆盖 `2025-01` 至 `2026-06` 共 18 个月。
+- 完整历史 `32` 文件、`215,800` 行、`18` 个脱敏联合报告，约 `110.6s` 完成。
+- Bootstrap、Manifest 与 Raw 数据指纹完全一致。
+- 页面错误 `0`；有 1 次网络资源长度错误被有限重试恢复，最终内容完整性全部通过。
+
+默认按钮不再下载全部 CSV。Raw 只在用户明确选择月份范围或完整历史时触发；店铺切换优先刷新服务端概览。
 
 ## 新对话接手入口
 
@@ -63,14 +87,14 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | Private Warehouse | `mrtanshiyue/Amazon-Data-Warehouse` |
 | GitHub Pages | `https://mrtanshiyue.github.io/Ads-Operations-Integrity/` |
 | Worker | `amazon-warehouse-cloud-v4` / API `4.2.2` |
-| Worker deployment | Warehouse Run `31077568702`; 实时版本以 Worker Health 为准 |
-| Loader | `assets/private-cloud-warehouse-v4.js` / `4.2.3` |
-| Query Client | `assets/private-cloud-query-v1.js` / `1.1.0` |
+| Worker deployment | Warehouse Run `31090843724`; 实时版本以 Worker Health 为准 |
+| Loader | `assets/private-cloud-warehouse-v4.js` / `4.3.0` |
+| Query Client | `assets/private-cloud-query-v1.js` / `1.2.0` |
 | Query primary storage | TiDB Cloud |
 | Archive / recovery source | Private GitHub immutable objects |
 | Browser credential | Current-tab JavaScript closure memory only |
 
-### 最终 Phase 8 验收快照
+### 第三阶段 Query-first 渐进式验收快照
 
 | 项目 | 验收结果 |
 |---|---:|
@@ -86,13 +110,15 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | 月度 Overview 期间 | 18 |
 | 浏览器导入阶段 | `complete` |
 | 页面错误 | 0 |
-| 控制台错误 | 0 |
+| 控制台记录 | 1 次已恢复的 `ERR_CONTENT_LENGTH_MISMATCH` |
 | Query Status / Overview | 通过 |
-| 最终 Chromium 总耗时 | 约 209 秒 |
+| 首屏 Bootstrap | 约 5.8 秒，3 个查询，0 Manifest / 0 Raw |
+| 显式完整历史 | 约 110.6 秒，18 个月 / 32 文件 / 215,800 行 |
+| 最终 Chromium 总耗时 | 约 125.8 秒 |
 
 最后一次完整生产关闭门禁同时验证：Worker、TiDB 迁移与对账、Raw、Query APIs、32 文件历史完整性审计、GitHub Pages、Loader、Query Client 和真实 Chromium 全量导入。
 
-GitHub Actions 的生产 Chromium 验收为规避 Runner 到 workers.dev 的 HTTP/3 不稳定，仅在 CI 启动参数中使用 `--disable-quic`；真实用户浏览器和生产页面不受影响。Warehouse 历史审计只对已识别的瞬时 socket/stream 响应体中断做有界重试，所有摘要、行数、脱敏和 TiDB 来源断言保持 fail-closed。
+GitHub Actions 的生产 Chromium 验收为隔离 Runner 到 workers.dev 的 HTTP/3 与长连接 HTTP/2 不稳定，仅在 CI 启动参数中使用 `--disable-quic` 和 `--disable-http2`，强制验收浏览器使用 HTTP/1.1；真实用户浏览器和生产页面不受影响。最终验收中记录到一次被 Loader 有界重试恢复的 `ERR_CONTENT_LENGTH_MISMATCH`，但 32 个文件的字节、SHA-256、行数、脱敏状态和数据指纹均通过。
 
 ---
 
@@ -199,8 +225,8 @@ Ads-Operations-Integrity/
 ├─ index.html
 │  └─ 页面结构、样式、业务模块、筛选与渲染逻辑
 ├─ assets/
-│  ├─ private-cloud-warehouse-v4.js  正式 Loader 4.2.3
-│  ├─ private-cloud-query-v1.js      Query Client 1.1.0
+│  ├─ private-cloud-warehouse-v4.js  正式 Loader 4.3.0
+│  ├─ private-cloud-query-v1.js      Query Client 1.2.0
 │  ├─ private-cloud-warehouse-v3.js  历史兼容桥接，不是正式 Loader
 │  ├─ generated/                     外置的历史内联脚本
 │  └─ vendor/                        锁定字节的第三方依赖
@@ -241,16 +267,24 @@ Ads-Operations-Integrity/
 
 ```text
 1. 用户选择 ALL 或单店铺范围
-2. 点击“加载私有云数据”
-3. 输入访问密码
-4. Loader 调用 /api/v1/health
-5. Worker 返回 Manifest 与 Summary
-6. Loader 按 Manifest 串行请求 TiDB Raw CSV
-7. 校验响应摘要、ETag、行数、脱敏状态和 TiDB 来源
-8. 页面解析并追加本批文件
-9. 最终批次统一去重、索引、聚合和渲染
-10. Query Client 调用 Status 与 Overview
-11. 页面触发 lr:cloud-loaded 等状态事件
+2. 点击“加载私有云数据”并输入访问密码
+3. Loader 调用 Health、Summary 与 Query-first Bootstrap
+4. 首屏显示经营概览、数据覆盖、最新月份和数据指纹
+5. 首屏不请求 Manifest，也不下载 Raw CSV
+6. 用户按需选择“最新月明细”“近 3 月明细”或“完整历史”
+7. Loader 使用月份过滤 Manifest，仅串行请求所需 TiDB Raw
+8. 校验摘要、ETag、字节、行数、脱敏状态、TiDB 来源与数据指纹
+9. 页面分批解析、去重、索引、聚合和渲染
+10. 完整历史仍保留全部深度分析与导出能力
+```
+
+生产渐进式契约：
+
+```text
+loadingStrategy = query-first-progressive-v1
+Loader = 4.3.0
+Query Client = 1.2.0
+Bootstrap = query-first-bootstrap-v1
 ```
 
 ### 凭据模型
@@ -271,7 +305,7 @@ Ads-Operations-Integrity/
 生产 Loader 当前固定：
 
 ```text
-LOADER_VERSION = 4.2.3
+LOADER_VERSION = 4.3.0
 BATCH_SIZE = 6
 FETCH_CONCURRENCY = 1
 Raw maxAttempts = 8
@@ -472,9 +506,9 @@ Frontend `main` 分支保护已启用。Warehouse 因私有仓库分支保护需
 最后生产代码基线：
 
 ```text
-Frontend: 5f9a4bd8190e57bcbf993884028cef9c70467c87
-Warehouse: 58d31c6867e40a6deaff70cd3eb8461a65e267a5
-Final Run: 31077568702
+Frontend: 94254f7b7c364d17f25807337ba3424262e92b39
+Warehouse: 3f008f756007949a8833aba1b6e7674c565b727a
+Final Run: 31090843724
 ```
 
 旧 Phase 8 草案已被正式实现取代。不要复活 Frontend PR #4、Warehouse PR #5 或 #14；新工作从当前 `main` 重建。
@@ -492,7 +526,7 @@ Final Run: 31077568702
 | 浏览器大 Raw 并发失败 | 两个 TiDB BLOB 请求同时进入平台 | `FETCH_CONCURRENCY = 1` |
 | 混合版本被误接受 | Cloudflare 发布期间节点版本不一致 | smoke 要求精确 Worker 版本 |
 
-历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31077568702`。
+历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31090843724`。
 
 ---
 
@@ -629,7 +663,7 @@ https://mrtanshiyue.github.io/Ads-Operations-Integrity/?v=YYYYMMDD-01
 4. Manifest / Summary 是否正常。
 5. 页面显示的首个失败文件。
 6. Raw 是否为 408、425、429、5xx 或浏览器网络错误。
-7. Loader 是否仍是 4.2.3、串行读取、8 次有限重试。
+7. Loader 是否仍是 4.3.0、串行读取、8 次有限重试。
 8. Console 和页面错误指示器。
 
 不要添加 `Cache-Control` 等未经 Worker CORS 允许的请求头。
