@@ -157,8 +157,17 @@
         if (response.status === 304) return { payload: null, response, path };
         if (response.ok) {
           let payload;
-          if (responseType === 'blob') payload = await response.blob();
-          else if (responseType === 'text') payload = await response.text();
+          if (responseType === 'blob') {
+            payload = await response.blob();
+            const declaredLength = Number(response.headers.get('Content-Length') || 0);
+            const invalidLength = Number.isFinite(declaredLength) && declaredLength > 0 && payload.size !== declaredLength;
+            if (!payload.size || invalidLength) {
+              const error = new Error(`私有云返回的文件内容不完整（实际 ${Number(payload.size || 0)} 字节${declaredLength > 0 ? `，预期 ${declaredLength} 字节` : ''}） · ${path}`);
+              error.status = 502;
+              error.path = path;
+              throw error;
+            }
+          } else if (responseType === 'text') payload = await response.text();
           else {
             const text = await response.text();
             try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
@@ -240,11 +249,11 @@
     const digest = immutableDigest(entry);
     const cached = digest ? await cacheGet(digest) : null;
     const headers = {};
-    if (cached?.blob) headers['If-None-Match'] = `"${digest}"`;
+    if (cached?.blob?.size) headers['If-None-Match'] = `"${digest}"`;
     const result = await requestApi(url, password, { responseType: 'blob', headers, maxAttempts: 8, timeoutMs: 300000, retryBaseMs: 1500, retryMaxMs: 15000 });
     let blob = result.payload;
     let cacheState = 'miss';
-    if (result.response.status === 304 && cached?.blob) {
+    if (result.response.status === 304 && cached?.blob?.size) {
       blob = cached.blob;
       cacheState = 'hit';
       state.cacheStats.hits += 1;
