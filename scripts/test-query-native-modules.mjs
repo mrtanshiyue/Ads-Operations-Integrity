@@ -22,6 +22,8 @@ assert.match(adapter, /source: String\(options\.source \|\| 'query'\)/);
 assert.match(adapter, /request\.source === 'raw'/);
 assert.match(adapter, /explicit-raw-compatibility/);
 assert.match(adapter, /transactionPreTaxNet/);
+assert.match(adapter, /MARKETPLACE_ALIASES/);
+assert.match(adapter, /marketplaceMatches/);
 assert.doesNotMatch(adapter, /\/manifest\?/);
 assert.doesNotMatch(adapter, /\/api\/v1\/raw\//);
 assert.doesNotMatch(adapter, /__LR_IMPORT_MULTIPLE_FILES__/);
@@ -49,6 +51,8 @@ assert.match(finance, /adapter\.periodTransactions/);
 assert.match(finance, /renderGeneration/);
 assert.match(finance, /raw-compat/);
 assert.match(finance, /使用已导入 Raw 数据/);
+assert.match(finance, /正在读取 Raw 兼容数据/);
+assert.doesNotMatch(finance, /const rowsFor=/);
 assert.doesNotMatch(finance, /const getAllTransactionRows=/);
 
 const queryCalls = [];
@@ -120,7 +124,7 @@ const queryResult = await window.QueryNativeModuleData.transactions({
   from: '2026-06-01',
   to: '2026-06-30',
   statusMode: 'accrual',
-  marketplace: 'amazon.com',
+  marketplace: 'US',
   force: true,
 });
 assert.equal(queryCalls.length, 1);
@@ -146,7 +150,7 @@ const rawResult = await window.QueryNativeModuleData.transactions({
   source: 'raw',
   from: '2026-06-01',
   to: '2026-06-30',
-  marketplace: 'amazon.com',
+  marketplace: 'US',
   force: true,
 });
 assert.equal(rawResult.source, 'raw-compat');

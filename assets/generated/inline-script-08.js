@@ -78,10 +78,6 @@
   const sourceLabel=value=>value==='raw-compat'?'RAW COMPAT · 浏览器内存':'QUERY · TiDB';
   const isModalOpen=()=>byId('transactionFinanceModal')?.style.display==='flex';
   const currentScope=()=>({start:byId('dateStart')?.value||'',end:byId('dateEnd')?.value||'',mode:byId('transactionStatusMode')?.value||'accrual',market:String(byId('workspaceMarketplace')?.value||'').trim().toUpperCase()});
-  const validDate=r=>/^\d{4}-\d{2}-\d{2}$/.test(String(r?.date||''));
-  const statusIncluded=(r,mode)=>{const s=String(r?.status||'Released').trim().toLowerCase();return mode==='cash'?s==='released':s==='released'||s==='deferred';};
-  const marketIncluded=(r,market)=>!market||!r?.marketplace||String(r.marketplace).trim().toUpperCase()===market;
-  const rowsFor=(all,start,end,mode,market)=>all.filter(r=>validDate(r)&&statusIncluded(r,mode)&&marketIncluded(r,market)&&(!start||r.date>=start)&&(!end||r.date<=end));
   const resolveCost=(sku,asin='')=>{try{return window.__LR_RESOLVE_PRODUCT_COST__?.(sku,asin)||null;}catch(_){return null;}};
   const isMerchantFulfilled=r=>/fbm|mfn|merchant|seller/i.test(String(r?.fulfillment||r?.fulfillmentType||r?.fulfillmentChannel||''));
 
@@ -290,7 +286,9 @@
     const body=byId('transactionFinanceBody');if(!body)return;
     const generation=++renderGeneration;
     destroyCharts();
-    body.innerHTML='<div class="txFinanceEmpty"><b>正在读取 Query 数据…</b><br>按当前店铺、日期与结算口径从 TiDB 分页查询交易明细。</div>';
+    body.innerHTML=sourceMode==='raw'
+      ? '<div class="txFinanceEmpty"><b>正在读取 Raw 兼容数据…</b><br>仅使用当前浏览器已显式导入的联合交易明细。</div>'
+      : '<div class="txFinanceEmpty"><b>正在读取 Query 数据…</b><br>按当前店铺、日期与结算口径从 TiDB 分页查询交易明细。</div>';
     const refresh=byId('btnRefreshTransactionFinance'),exportButton=byId('btnExportTransactionFinance');
     if(refresh)refresh.disabled=true;if(exportButton)exportButton.disabled=true;
     try{

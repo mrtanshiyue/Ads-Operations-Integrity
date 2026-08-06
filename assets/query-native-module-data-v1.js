@@ -39,7 +39,33 @@
   const normalizeStatusMode = value =>
     String(value || '').trim().toLowerCase() === 'cash' ? 'cash' : 'accrual';
 
-  const normalizeMarketplace = value => String(value || '').trim().toUpperCase();
+  const MARKETPLACE_ALIASES = Object.freeze({
+    US: ['US', 'AMAZON.COM', 'WWW.AMAZON.COM'],
+    CA: ['CA', 'AMAZON.CA', 'WWW.AMAZON.CA'],
+    MX: ['MX', 'AMAZON.COM.MX', 'WWW.AMAZON.COM.MX'],
+    UK: ['UK', 'GB', 'AMAZON.CO.UK', 'WWW.AMAZON.CO.UK'],
+    DE: ['DE', 'AMAZON.DE', 'WWW.AMAZON.DE'],
+    FR: ['FR', 'AMAZON.FR', 'WWW.AMAZON.FR'],
+    IT: ['IT', 'AMAZON.IT', 'WWW.AMAZON.IT'],
+    ES: ['ES', 'AMAZON.ES', 'WWW.AMAZON.ES'],
+    JP: ['JP', 'AMAZON.CO.JP', 'WWW.AMAZON.CO.JP'],
+    AU: ['AU', 'AMAZON.COM.AU', 'WWW.AMAZON.COM.AU'],
+  });
+
+  const marketplaceToken = value => String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^HTTPS?:\/\//, '')
+    .replace(/\/.*$/, '');
+
+  const normalizeMarketplace = value => marketplaceToken(value);
+
+  const marketplaceMatches = (rowValue, requestedValue) => {
+    const row = marketplaceToken(rowValue);
+    const requested = marketplaceToken(requestedValue);
+    if (!row || !requested) return true;
+    return (MARKETPLACE_ALIASES[requested] || [requested]).includes(row);
+  };
 
   const transactionPreTaxNet = row => [
     'productSales',
@@ -107,7 +133,7 @@
     if (request.to && row.date > request.to) return false;
     if (!statusIncluded(row, request.statusMode)) return false;
     if (request.marketplace && row.marketplace
-      && String(row.marketplace).trim().toUpperCase() !== request.marketplace) return false;
+      && !marketplaceMatches(row.marketplace, request.marketplace)) return false;
     if (request.scope !== 'ALL' && row.storeId && row.storeId !== request.scope) return false;
     return true;
   };
