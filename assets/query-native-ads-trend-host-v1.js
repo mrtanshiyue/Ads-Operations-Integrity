@@ -11,14 +11,28 @@
     destroy() {},
   };
 
+  const resolveDashboardApp = () => {
+    try {
+      if (typeof AdsDashboardApp !== 'undefined' && AdsDashboardApp) return AdsDashboardApp;
+    } catch (_) {}
+    return window.AdsDashboardApp || null;
+  };
+
   const installRawCompatibilityBridge = () => {
     try {
-      const debug = window.AdsDashboardApp?.debug;
-      if (!debug || typeof debug.getAdsRowsForQueryCompatibility === 'function') return;
-      if (typeof AdsStore === 'undefined') return;
-      debug.getAdsRowsForQueryCompatibility = () => Array.isArray(AdsStore?.all) ? AdsStore.all : [];
+      const app = resolveDashboardApp();
+      if (!app) return false;
+      if (!window.AdsDashboardApp) window.AdsDashboardApp = app;
+      const debug = app.debug;
+      if (!debug) return false;
+      if (typeof debug.getAdsRowsForQueryCompatibility !== 'function') {
+        if (typeof AdsStore === 'undefined') return false;
+        debug.getAdsRowsForQueryCompatibility = () => Array.isArray(AdsStore?.all) ? AdsStore.all : [];
+      }
+      return true;
     } catch (error) {
       console.warn('Query-native Raw compatibility bridge was not installed:', error);
+      return false;
     }
   };
 
@@ -61,7 +75,7 @@
   window.QueryNativeAdsTrendHost = Object.freeze({
     version: HOST_VERSION,
     install,
-    hasRawBridge: () => typeof window.AdsDashboardApp?.debug?.getAdsRowsForQueryCompatibility === 'function',
+    hasRawBridge: () => typeof resolveDashboardApp()?.debug?.getAdsRowsForQueryCompatibility === 'function',
     guarded: () => {
       try { return typeof trendChart !== 'undefined' && trendChart === hostGuard; }
       catch (_) { return false; }
