@@ -18,7 +18,21 @@ assert.match(index, /assets\/generated\/inline-script-11\.js\?v=1\.1\.0/);
 assert.match(index, /assets\/private-cloud-warehouse-v4\.js/);
 assert.doesNotMatch(index, /assets\/private-cloud-warehouse-v4\.js\?v=/);
 assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
-assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
+assert.match(query, /const CLIENT_VERSION = '1\.3\.0'/);
+assert.match(query, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.1\.0'/);
+assert.match(query, /const QUERY_NATIVE_TREND_VERSION = '1\.0\.0'/);
+assert.match(query, /const QUERY_NATIVE_HOST_VERSION = '1\.0\.0'/);
+assert.match(query, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
+assert.match(query, /query-native-ads-trend-v1\.js\?v=\$\{QUERY_NATIVE_TREND_VERSION\}/);
+assert.match(query, /query-native-ads-trend-host-v1\.js\?v=\$\{QUERY_NATIVE_HOST_VERSION\}/);
+assert.match(query, /async function ensureQueryNativeModules\(\)/);
+assert.ok(
+  query.indexOf('window.QueryNativeModuleData?.version !== QUERY_NATIVE_ADAPTER_VERSION')
+    < query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
+    && query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
+      < query.indexOf('window.QueryNativeAdsTrendHost?.version !== QUERY_NATIVE_HOST_VERSION'),
+  'Query-native module assets must load in adapter → controller → host order',
+);
 assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
@@ -34,6 +48,7 @@ assert.match(loader, /\.queryFirstOverviewCard\{[^}]*width:100%;[^}]*min-width:0
 assert.doesNotMatch(loader, /status\.insertAdjacentElement\('beforebegin', card\)/);
 assert.match(query, /\/api\/v1\/query\/bootstrap/);
 assert.match(query, /If-None-Match/);
+assert.match(query, /query-native-module-assets/);
 
 assert.match(shopUi, /'queryFirstRawActions'/);
 assert.match(shopUi, /'queryFirstOverviewCard'/);
