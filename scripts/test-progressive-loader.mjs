@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const loader = readFileSync(new URL('../assets/private-cloud-warehouse-v4.js', import.meta.url), 'utf8');
 const query = readFileSync(new URL('../assets/private-cloud-query-v1.js', import.meta.url), 'utf8');
+const shopUi = readFileSync(new URL('../assets/generated/inline-script-11.js', import.meta.url), 'utf8');
 
 const section = (source, startNeedle, endNeedle) => {
   const start = source.indexOf(startNeedle);
@@ -14,6 +15,7 @@ const section = (source, startNeedle, endNeedle) => {
 
 assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
 assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
+assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
 assert.match(loader, /btnPrivateCloudCurrentMonth/);
@@ -28,6 +30,33 @@ assert.match(loader, /\.queryFirstOverviewCard\{[^}]*width:100%;[^}]*min-width:0
 assert.doesNotMatch(loader, /status\.insertAdjacentElement\('beforebegin', card\)/);
 assert.match(query, /\/api\/v1\/query\/bootstrap/);
 assert.match(query, /If-None-Match/);
+
+assert.match(shopUi, /'queryFirstRawActions'/);
+assert.match(shopUi, /'queryFirstOverviewCard'/);
+assert.match(shopUi, /const progressiveNodes = collectProgressiveNodes\(\)/);
+assert.match(shopUi, /restoreProgressiveNodes\(panel, progressiveNodes\)/);
+assert.match(shopUi, /for \(const node of nodes\) panel\.insertBefore\(node, statusRow \|\| null\)/);
+assert.match(shopUi, /panel\.dataset\.shopUiVersion = SHOP_UI_VERSION/);
+assert.match(shopUi, /window\.__SHOP_SCOPE_UI_VERSION__ = SHOP_UI_VERSION/);
+
+const shopMount = section(
+  shopUi,
+  '  const mount = () => {',
+  '\n\n  const init = () => {',
+);
+assert.match(shopMount, /const progressiveNodes = collectProgressiveNodes\(\)/);
+assert.match(shopMount, /panel\.replaceChildren\(\.\.\.shell\.childNodes\)/);
+assert.match(shopMount, /restoreProgressiveNodes\(panel, progressiveNodes\)/);
+assert.ok(
+  shopMount.indexOf('const progressiveNodes = collectProgressiveNodes()')
+    < shopMount.indexOf('panel.replaceChildren(...shell.childNodes)'),
+  'Progressive nodes must be captured before the shop UI replaces panel children',
+);
+assert.ok(
+  shopMount.indexOf('panel.replaceChildren(...shell.childNodes)')
+    < shopMount.indexOf('restoreProgressiveNodes(panel, progressiveNodes)'),
+  'Progressive nodes must be restored immediately after the shop UI replaces panel children',
+);
 
 const connect = section(
   loader,
@@ -69,4 +98,4 @@ for (const forbidden of [
   assert.equal(query.includes(forbidden), false, `Forbidden query pattern: ${forbidden}`);
 }
 
-console.log('Progressive Query-first loader invariants passed');
+console.log('Progressive Query-first loader and shop UI invariants passed');
