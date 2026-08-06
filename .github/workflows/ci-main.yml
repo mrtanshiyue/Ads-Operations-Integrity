@@ -37,7 +37,9 @@ jobs:
           test -s index.html
           test -s assets/private-cloud-warehouse-v4.js
           test -s assets/private-cloud-query-v1.js
+          test -s assets/query-native-module-data-v1.js
           test -s scripts/test-progressive-loader.mjs
+          test -s scripts/test-query-native-modules.mjs
           rm -rf _site
           mkdir -p _site/assets
           cp index.html _site/index.html
@@ -51,13 +53,19 @@ jobs:
           node --check assets/private-cloud-warehouse-v3.js
           node --check assets/private-cloud-warehouse-v4.js
           node --check assets/private-cloud-query-v1.js
+          node --check assets/query-native-module-data-v1.js
           node --check scripts/harden-static-site.mjs
           node --check scripts/test-progressive-loader.mjs
+          node --check scripts/test-query-native-modules.mjs
           find assets/generated -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
 
       - name: Verify Query-first progressive loading contract
         shell: bash
         run: node scripts/test-progressive-loader.mjs
+
+      - name: Verify Query-native module contracts
+        shell: bash
+        run: node scripts/test-query-native-modules.mjs
 
       - name: Verify locked vendor bytes
         shell: bash
@@ -140,6 +148,9 @@ jobs:
           grep -Fq "window.PrivateCloudAds?.queryRequest" assets/private-cloud-query-v1.js
           grep -Fq "MAX_PAGE_SIZE = 500" assets/private-cloud-query-v1.js
           grep -Fq "isCanonicalDate" assets/private-cloud-query-v1.js
+          grep -Fq "const ADAPTER_VERSION = '1.0.0'" assets/query-native-module-data-v1.js
+          grep -Fq "client.allTransactions" assets/query-native-module-data-v1.js
+          grep -Fq "explicit-raw-compatibility" assets/query-native-module-data-v1.js
           ! grep -Fq "headers.set('Cache-Control'" assets/private-cloud-warehouse-v4.js
           ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
           ! grep -Eq "lr_private_cloud_password|sessionStorage|const sessionSafe|getPassword" assets/private-cloud-warehouse-v4.js assets/private-cloud-query-v1.js
@@ -201,6 +212,7 @@ jobs:
           test -s _site/assets/private-cloud-warehouse-v3.js
           test -s _site/assets/private-cloud-warehouse-v4.js
           test -s _site/assets/private-cloud-query-v1.js
+          test -s _site/assets/query-native-module-data-v1.js
           test -s _site/assets/vendor/xlsx.full.min.js
           test -s _site/assets/vendor/html2pdf.bundle.min.js
           test -s _site/assets/generated/inline-script-01.js
