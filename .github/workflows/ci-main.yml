@@ -17,7 +17,7 @@ concurrency:
 jobs:
   validate:
     name: Static site and security invariants
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout exact commit without Marketplace actions
