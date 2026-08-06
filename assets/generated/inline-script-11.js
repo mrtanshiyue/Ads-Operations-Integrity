@@ -1,5 +1,6 @@
 (() => {
   'use strict';
+  const SHOP_UI_VERSION = '1.1.0';
   const SHOPS = Object.freeze(['ALL','YTDBNS','YY','JJ']);
   const SHOP_SHORT_LABELS = Object.freeze({ALL:'ALL',YTDBNS:'YT',YY:'YY',JJ:'JJ'});
   const SHOP_LABELS = Object.freeze({ALL:'全部店铺',YTDBNS:'YT 店铺',YY:'YY 店铺',JJ:'JJ 店铺'});
@@ -13,6 +14,26 @@
     set: value => { try { localStorage.setItem(STORAGE_KEY, value); } catch (_) {} }
   };
   let activeShop = normalizeShop(storage.get());
+
+  const progressiveNodeIds = Object.freeze([
+    'queryFirstRawActions',
+    'queryFirstOverviewCard',
+  ]);
+
+  const collectProgressiveNodes = () => progressiveNodeIds
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+
+  const directChild = (panel, selector) => [...panel.children]
+    .find(child => child.matches(selector)) || null;
+
+  const restoreProgressiveNodes = (panel, suppliedNodes = null) => {
+    const nodes = suppliedNodes || collectProgressiveNodes();
+    const statusRow = directChild(panel, '.cloudStatusRow');
+    for (const node of nodes) panel.insertBefore(node, statusRow || null);
+    panel.dataset.shopUiVersion = SHOP_UI_VERSION;
+    return nodes.length;
+  };
 
   const syncShopUi = shop => {
     document.querySelectorAll('#privateCloudImportPanel [data-shop]').forEach(button => {
@@ -53,10 +74,12 @@
     const status = document.getElementById('privateCloudImportStatus');
     if (!panel || !loadButton || !logoutButton || !status) return false;
     if (panel.dataset.shopUiReady === '1') {
+      restoreProgressiveNodes(panel);
       syncShopUi(activeShop);
       return true;
     }
 
+    const progressiveNodes = collectProgressiveNodes();
     loadButton.textContent = '☁ 加载私有云数据';
     logoutButton.textContent = '清除密码';
     const shell = document.createElement('div');
@@ -91,6 +114,7 @@
     shell.querySelector('[data-slot="logout"]').replaceWith(logoutButton);
     shell.querySelector('[data-slot="status"]').replaceWith(status);
     panel.replaceChildren(...shell.childNodes);
+    restoreProgressiveNodes(panel, progressiveNodes);
     panel.dataset.shopUiReady = '1';
     panel.addEventListener('click', event => {
       const button = event.target.closest('[data-shop]');
@@ -110,13 +134,15 @@
     };
     tryMount();
     window.ShopScope = Object.freeze({
-    options: SHOPS,
-    labels: SHOP_LABELS,
-    shortLabels: SHOP_SHORT_LABELS,
-    display: value => SHOP_SHORT_LABELS[normalizeShop(value)],
-    get: () => activeShop,
+      version: SHOP_UI_VERSION,
+      options: SHOPS,
+      labels: SHOP_LABELS,
+      shortLabels: SHOP_SHORT_LABELS,
+      display: value => SHOP_SHORT_LABELS[normalizeShop(value)],
+      get: () => activeShop,
       set: value => setActiveShop(value, { source: 'api' })
     });
+    window.__SHOP_SCOPE_UI_VERSION__ = SHOP_UI_VERSION;
   };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
