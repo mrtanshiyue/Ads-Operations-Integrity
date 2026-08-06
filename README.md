@@ -10,9 +10,10 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 - Loader：`4.2.3`
 - Query Client：`1.1.0`
 - Worker API：`4.2.2`
-- Cloudflare Worker 版本：`39`（100% 流量）
-- 最后一次完整生产验收：Warehouse Run `31074460434`
+- Cloudflare Worker 发布：以最新成功 Warehouse Run 与 Worker `/api/v1/health` 为准
+- 最后一次完整生产验收：Warehouse Run `31077568702`
 - 最后一个应用代码基线：`5f9a4bd8190e57bcbf993884028cef9c70467c87`
+- Warehouse 生产代码/验收基线：`58d31c6867e40a6deaff70cd3eb8461a65e267a5`
 - 最新成功 GitHub Pages：Run `31073518918`
 
 > README 是项目交接文档，不是实时监控面板。文件数、行数、版本和健康状态应以当前 `main`、Worker `/api/v1/health`、Manifest、Query Status 和最新成功的生产 Run 为准。
@@ -62,7 +63,7 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | Private Warehouse | `mrtanshiyue/Amazon-Data-Warehouse` |
 | GitHub Pages | `https://mrtanshiyue.github.io/Ads-Operations-Integrity/` |
 | Worker | `amazon-warehouse-cloud-v4` / API `4.2.2` |
-| Worker deployment | Cloudflare version `39` / 100% traffic |
+| Worker deployment | Warehouse Run `31077568702`; 实时版本以 Worker Health 为准 |
 | Loader | `assets/private-cloud-warehouse-v4.js` / `4.2.3` |
 | Query Client | `assets/private-cloud-query-v1.js` / `1.1.0` |
 | Query primary storage | TiDB Cloud |
@@ -87,9 +88,11 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 | 页面错误 | 0 |
 | 控制台错误 | 0 |
 | Query Status / Overview | 通过 |
-| 最终 Chromium 总耗时 | 约 135 秒 |
+| 最终 Chromium 总耗时 | 约 209 秒 |
 
 最后一次完整生产关闭门禁同时验证：Worker、TiDB 迁移与对账、Raw、Query APIs、32 文件历史完整性审计、GitHub Pages、Loader、Query Client 和真实 Chromium 全量导入。
+
+GitHub Actions 的生产 Chromium 验收为规避 Runner 到 workers.dev 的 HTTP/3 不稳定，仅在 CI 启动参数中使用 `--disable-quic`；真实用户浏览器和生产页面不受影响。Warehouse 历史审计只对已识别的瞬时 socket/stream 响应体中断做有界重试，所有摘要、行数、脱敏和 TiDB 来源断言保持 fail-closed。
 
 ---
 
@@ -470,8 +473,8 @@ Frontend `main` 分支保护已启用。Warehouse 因私有仓库分支保护需
 
 ```text
 Frontend: 5f9a4bd8190e57bcbf993884028cef9c70467c87
-Warehouse: b43bab4bc7a953b1555aca56268b17489af17307
-Final Run: 31074460434
+Warehouse: 58d31c6867e40a6deaff70cd3eb8461a65e267a5
+Final Run: 31077568702
 ```
 
 旧 Phase 8 草案已被正式实现取代。不要复活 Frontend PR #4、Warehouse PR #5 或 #14；新工作从当前 `main` 重建。
@@ -489,7 +492,7 @@ Final Run: 31074460434
 | 浏览器大 Raw 并发失败 | 两个 TiDB BLOB 请求同时进入平台 | `FETCH_CONCURRENCY = 1` |
 | 混合版本被误接受 | Cloudflare 发布期间节点版本不一致 | smoke 要求精确 Worker 版本 |
 
-历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31074460434`。
+历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31077568702`。
 
 ---
 
