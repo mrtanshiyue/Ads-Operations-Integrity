@@ -12,7 +12,7 @@ const section = (source, startNeedle, endNeedle) => {
   return source.slice(start, end);
 };
 
-assert.match(loader, /const LOADER_VERSION = '4\.3\.1'/);
+assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
 assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
