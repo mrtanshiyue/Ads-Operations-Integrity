@@ -15,7 +15,8 @@ const section = (source, startNeedle, endNeedle) => {
 };
 
 assert.match(index, /assets\/generated\/inline-script-11\.js\?v=1\.1\.0/);
-assert.match(index, /assets\/private-cloud-warehouse-v4\.js\?v=4\.3\.0-layout2/);
+assert.match(index, /assets\/private-cloud-warehouse-v4\.js/);
+assert.doesNotMatch(index, /assets\/private-cloud-warehouse-v4\.js\?v=/);
 assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
 assert.match(query, /const CLIENT_VERSION = '1\.2\.0'/);
 assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
