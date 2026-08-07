@@ -3,9 +3,12 @@ name: Validate Front-end Main
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: validate-frontend-${{ github.ref }}
@@ -15,9 +18,9 @@ jobs:
   validate:
     name: Static site and security invariants
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Checkout branch head
+      - name: Checkout exact commit without Marketplace actions
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -27,49 +30,215 @@ jobs:
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ${auth}"
-          git fetch --no-tags --prune origin phase4/query-native-ads-batch2
-          git checkout -B phase4/query-native-ads-batch2 FETCH_HEAD
+          git fetch --no-tags --prune --depth=1 origin "$GITHUB_REF"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node --version
 
-      - name: Apply adapter fix and push
+      - name: Build validation tree
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('assets/query-native-module-data-v1.js')
-          text = path.read_text(encoding='utf-8')
-          marker = "  const advancedSearchMatches = (value, query, exact = false) => {"
-          helper = (
-              "  const negativeTokenPresent = (value, token) => {\n"
-              "    const normalized = lower(token);\n"
-              "    if (!normalized) return false;\n"
-              "    if (/^[a-z0-9]+$/i.test(normalized)) {\n"
-              "      return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);\n"
-              "    }\n"
-              "    return lower(value).includes(normalized);\n"
-              "  };\n\n"
-          )
-          old = "&& negatives.every(token => !haystack.includes(token));"
-          new = "&& negatives.every(token => !negativeTokenPresent(value, token));"
-          if 'const negativeTokenPresent' not in text:
-              if text.count(marker) != 1:
-                  raise SystemExit(f'advanced search marker count={text.count(marker)}')
-              text = text.replace(marker, helper + marker, 1)
-          text = text.replace(old, new, 1)
-          if new not in text:
-              raise SystemExit('negative boundary fix missing')
-          path.write_text(text, encoding='utf-8')
-          PY
+          test -s index.html
+          test -s assets/private-cloud-warehouse-v4.js
+          test -s assets/private-cloud-query-v1.js
+          test -s assets/query-native-module-data-v1.js
+          test -s assets/query-native-ads-trend-v1.js
+          test -s assets/query-native-ads-trend-host-v1.js
+          test -s scripts/test-progressive-loader.mjs
+          test -s scripts/test-query-native-modules.mjs
+          test -s scripts/test-query-native-ads-trend.mjs
+          rm -rf _site
+          mkdir -p _site/assets
+          cp index.html _site/index.html
+          cp -a assets/. _site/assets/
+          : > _site/.nojekyll
+
+      - name: Validate maintained JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check assets/private-cloud-warehouse-v3.js
+          node --check assets/private-cloud-warehouse-v4.js
+          node --check assets/private-cloud-query-v1.js
           node --check assets/query-native-module-data-v1.js
-          node scripts/test-progressive-loader.mjs
+          node --check assets/query-native-ads-trend-v1.js
+          node --check assets/query-native-ads-trend-host-v1.js
+          node --check scripts/harden-static-site.mjs
+          node --check scripts/test-progressive-loader.mjs
+          node --check scripts/test-query-native-modules.mjs
+          node --check scripts/test-query-native-ads-trend.mjs
+          find assets/generated -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+
+      - name: Verify Query-first progressive loading contract
+        shell: bash
+        run: node scripts/test-progressive-loader.mjs
+
+      - name: Verify Query-native module contracts
+        shell: bash
+        run: |
+          set -euo pipefail
           node scripts/test-query-native-modules.mjs
           node scripts/test-query-native-ads-trend.mjs
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add assets/query-native-module-data-v1.js
-          if git diff --cached --quiet; then
-            echo 'Adapter already fixed'
-            exit 0
+
+      - name: Verify locked vendor bytes
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          const lock = JSON.parse(readFileSync('scripts/vendor-lock.json', 'utf8'));
+          for (const vendor of lock.vendors || []) {
+            const bytes = readFileSync(vendor.path);
+            const digest = createHash('sha256').update(bytes).digest('hex');
+            if (digest !== vendor.sha256) throw new Error(`Vendor digest mismatch: ${vendor.name}`);
+          }
+          console.log(`Verified ${lock.vendors.length} vendor files`);
+          NODE
+
+      - name: Verify same-origin CSP and dependency isolation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          import re
+
+          class SecurityParser(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False)
+                  self.sources = []
+                  self.inline_executable = 0
+                  self.csp = []
+              def handle_starttag(self, tag, attrs):
+                  values = {key.lower(): (value or '') for key, value in attrs}
+                  if tag.lower() == 'meta' and values.get('http-equiv', '').lower() == 'content-security-policy':
+                      self.csp.append(values.get('content', ''))
+                  if tag.lower() != 'script': return
+                  source = values.get('src', '')
+                  if source: self.sources.append(source)
+                  elif values.get('type', '').lower() in ('', 'text/javascript', 'application/javascript', 'module'):
+                      self.inline_executable += 1
+
+          html = Path('index.html').read_text(encoding='utf-8')
+          parser = SecurityParser(); parser.feed(html)
+          if len(parser.csp) != 1: raise SystemExit(f'Expected one CSP meta policy, found {len(parser.csp)}')
+          policy = parser.csp[0]
+          required = ["script-src 'self'", "script-src-attr 'none'", "object-src 'none'", "connect-src 'self' https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev"]
+          for directive in required:
+              if directive not in policy: raise SystemExit(f'CSP directive missing: {directive}')
+          remote = [source for source in parser.sources if re.match(r'^https?://', source, re.I)]
+          if remote: raise SystemExit(f'Remote scripts remain: {remote}')
+          if parser.inline_executable: raise SystemExit(f'Executable inline scripts remain: {parser.inline_executable}')
+          if re.search(r'cdn\.jsdelivr\.net|cdn\.sheetjs\.com|cdnjs\.cloudflare\.com', html, re.I):
+              raise SystemExit('CDN URL remains in index.html')
+          PY
+
+      - name: Verify V4.3 Query-first, retry, CORS and credential invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "warehouse-v4-production" assets/private-cloud-warehouse-v4.js
+          grep -Fq "private-cloud-warehouse-v4.js" assets/private-cloud-warehouse-v3.js
+          grep -Fq "FETCH_CONCURRENCY = 1" assets/private-cloud-warehouse-v4.js
+          grep -Fq "/summary?scope=" assets/private-cloud-warehouse-v4.js
+          grep -Fq "setPassword: value => memoryCredential.set(value)" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const LOADER_VERSION = '4.3.0'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "new URL('./private-cloud-query-v1.js', SCRIPT_URL).href" assets/private-cloud-warehouse-v4.js
+          grep -Fq "queryRequest" assets/private-cloud-warehouse-v4.js
+          grep -Fq "credentialAccepted: Boolean(memoryCredential.get())" assets/private-cloud-warehouse-v4.js
+          grep -Fq "loadingStrategy: 'query-first-progressive-v1'" assets/private-cloud-warehouse-v4.js
+          grep -Fq "btnPrivateCloudCurrentMonth" assets/private-cloud-warehouse-v4.js
+          grep -Fq "btnPrivateCloudRecentMonths" assets/private-cloud-warehouse-v4.js
+          grep -Fq "btnPrivateCloudFullHistory" assets/private-cloud-warehouse-v4.js
+          grep -Fq "loadFullHistory" assets/private-cloud-warehouse-v4.js
+          grep -Fq "dataFingerprint" assets/private-cloud-warehouse-v4.js
+          grep -Fq "maxAttempts: 8" assets/private-cloud-warehouse-v4.js
+          grep -Fq "__warehouseRetry" assets/private-cloud-warehouse-v4.js
+          grep -Fq "retryMaxMs: 15000" assets/private-cloud-warehouse-v4.js
+          grep -Fq "const CLIENT_VERSION = '1.3.0'" assets/private-cloud-query-v1.js
+          grep -Fq "/api/v1/query/bootstrap" assets/private-cloud-query-v1.js
+          grep -Fq "If-None-Match" assets/private-cloud-query-v1.js
+          grep -Fq "window.PrivateCloudAds?.queryRequest" assets/private-cloud-query-v1.js
+          grep -Fq "MAX_PAGE_SIZE = 500" assets/private-cloud-query-v1.js
+          grep -Fq "isCanonicalDate" assets/private-cloud-query-v1.js
+          grep -Fq "ensureQueryNativeModules" assets/private-cloud-query-v1.js
+          grep -Fq "query-native-module-data-v1.js?v=" assets/private-cloud-query-v1.js
+          grep -Fq "query-native-ads-trend-v1.js?v=" assets/private-cloud-query-v1.js
+          grep -Fq "query-native-ads-trend-host-v1.js?v=" assets/private-cloud-query-v1.js
+          grep -Fq "const ADAPTER_VERSION = '1.1.0'" assets/query-native-module-data-v1.js
+          grep -Fq "client.allTransactions" assets/query-native-module-data-v1.js
+          grep -Fq "client.allAds" assets/query-native-module-data-v1.js
+          grep -Fq "client.overview" assets/query-native-module-data-v1.js
+          grep -Fq "explicit-raw-compatibility" assets/query-native-module-data-v1.js
+          grep -Fq "const CONTROLLER_VERSION = '1.0.0'" assets/query-native-ads-trend-v1.js
+          grep -Fq "ownsTrend: () => true" assets/query-native-ads-trend-v1.js
+          grep -Fq "const HOST_VERSION = '1.0.0'" assets/query-native-ads-trend-host-v1.js
+          grep -Fq "trendChart = hostGuard" assets/query-native-ads-trend-host-v1.js
+          ! grep -Fq "headers.set('Cache-Control'" assets/private-cloud-warehouse-v4.js
+          ! grep -Fq "warehouse-v4-canary" assets/private-cloud-warehouse-v4.js
+          ! grep -Eq "lr_private_cloud_password|sessionStorage|const sessionSafe|getPassword" assets/private-cloud-warehouse-v4.js assets/private-cloud-query-v1.js
+          ! grep -Eq "Authorization.*password|Bearer.*password" assets/private-cloud-query-v1.js
+          ! grep -Eq "\^\(3\|4\)|startsWith\(['\"]3" assets/private-cloud-warehouse-v4.js
+          python3 - <<'PY'
+          from pathlib import Path
+          from html.parser import HTMLParser
+
+          class ExternalScripts(HTMLParser):
+              def __init__(self):
+                  super().__init__(convert_charrefs=False)
+                  self.sources = []
+              def handle_starttag(self, tag, attrs):
+                  if tag.lower() != 'script': return
+                  values = {key.lower(): (value or '') for key, value in attrs}
+                  if values.get('src'): self.sources.append(values['src'])
+
+          parser = ExternalScripts(); parser.feed(Path('index.html').read_text(encoding='utf-8'))
+          expected = 'assets/private-cloud-warehouse-v4.js'
+          count = sum(source == expected for source in parser.sources)
+          if count != 1: raise SystemExit(f'Expected exactly one formal V4 loader reference, found {count}')
+
+          loader = Path('assets/private-cloud-warehouse-v4.js').read_text(encoding='utf-8')
+          start = loader.find('  const bindUi = () => {')
+          end = loader.find('\n\n  const requestPassword', start)
+          section = loader[start:end] if start >= 0 and end >= 0 else ''
+          if section.count('event.stopImmediatePropagation();') != 1 or '}, true);' not in section:
+              raise SystemExit('V4 loader does not own the progressive controls in capture phase')
+          bridge_start = loader.find('  const queryRequest = async')
+          bridge_end = loader.find('\n\n  const scheduleScopeReload', bridge_start)
+          bridge = loader[bridge_start:bridge_end] if bridge_start >= 0 and bridge_end >= 0 else ''
+          if "path.startsWith('/api/v1/query/')" not in bridge or 'memoryCredential.get()' not in bridge:
+              raise SystemExit('Query bridge is not path-restricted and memory-backed')
+          PY
+
+      - name: Reject completed repair artifacts and unexpected workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          transient="$(find .github .diagnostics -type f \( -name '*.trigger' -o -name '*-result.json' -o -name '*canary*.json' -o -name '*.log' -o -name '*repair*.txt' -o -name '*context*.txt' -o -name '*patch*.yml' \) -print 2>/dev/null || true)"
+          if [ -n "$transient" ]; then
+            echo "Completed repair artifact(s) remain in the active tree:"
+            printf '%s\n' "$transient"
+            exit 1
           fi
-          git commit -m 'Fix negative search token boundaries'
-          git push origin HEAD:phase4/query-native-ads-batch2
+          unexpected="$(find .github/workflows -maxdepth 1 -type f ! -name 'ci-main.yml' ! -name 'pages.yml' -print)"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected active workflow(s):"
+            printf '%s\n' "$unexpected"
+            exit 1
+          fi
+
+      - name: Verify Pages artifact contains all application assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s _site/index.html
+          test -s _site/assets/private-cloud-warehouse-v3.js
+          test -s _site/assets/private-cloud-warehouse-v4.js
+          test -s _site/assets/private-cloud-query-v1.js
+          test -s _site/assets/query-native-module-data-v1.js
+          test -s _site/assets/query-native-ads-trend-v1.js
+          test -s _site/assets/query-native-ads-trend-host-v1.js
+          test -s _site/assets/vendor/xlsx.full.min.js
+          test -s _site/assets/vendor/html2pdf.bundle.min.js
+          test -s _site/assets/generated/inline-script-01.js
