@@ -49,16 +49,16 @@ jobs:
           adapter = Path('assets/query-native-module-data-v1.js')
           text = adapter.read_text(encoding='utf-8')
           marker = "  const advancedSearchMatches = (value, query, exact = false) => {"
-          helper = """  const negativeTokenPresent = (value, token) => {
-            const normalized = lower(token);
-            if (!normalized) return false;
-            if (/^[a-z0-9]+$/i.test(normalized)) {
-              return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);
-            }
-            return lower(value).includes(normalized);
-          };
-
-"""
+          helper = (
+              "  const negativeTokenPresent = (value, token) => {\n"
+              "    const normalized = lower(token);\n"
+              "    if (!normalized) return false;\n"
+              "    if (/^[a-z0-9]+$/i.test(normalized)) {\n"
+              "      return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);\n"
+              "    }\n"
+              "    return lower(value).includes(normalized);\n"
+              "  };\n\n"
+          )
           old_predicate = "&& negatives.every(token => !haystack.includes(token));"
           new_predicate = "&& negatives.every(token => !negativeTokenPresent(value, token));"
           if 'const negativeTokenPresent' not in text:
