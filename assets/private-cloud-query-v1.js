@@ -6,6 +6,10 @@
   const CLIENT_VERSION = '1.3.0';
   const DEFAULT_PAGE_SIZE = 250;
   const MAX_PAGE_SIZE = 500;
+  const ADS_SOURCE_PREFLIGHT_HEADER = 'X-Ads-Source-Headers-B64';
+  const ADS_SOURCE_PREFLIGHT_MAX_HEADERS = 256;
+  const ADS_SOURCE_PREFLIGHT_MAX_HEADER_LENGTH = 256;
+  const ADS_SOURCE_PREFLIGHT_MAX_ENCODED_LENGTH = 12288;
   const QUERY_NATIVE_ADAPTER_VERSION = '1.2.0';
   const QUERY_NATIVE_GATE_VERSION = '1.0.0';
   const QUERY_NATIVE_TREND_VERSION = '1.1.0';
@@ -149,6 +153,37 @@
     return collectPages(getTransactions, options);
   }
 
+  async function preflightAdsSource(headers, options = {}) {
+    const normalizedHeaders = normalizePreflightHeaders(headers);
+    const encodedHeaders = encodeHeadersBase64Url(normalizedHeaders);
+    if (encodedHeaders.length > ADS_SOURCE_PREFLIGHT_MAX_ENCODED_LENGTH) {
+      throw clientError(413, '广告报表表头过大，无法进行安全预检');
+    }
+    const nonce = Date.now();
+    const { payload } = await request(
+      `/api/v1/query/ads/source-preflight?clientPreflight=${nonce}`,
+      {
+        ...options,
+        useCache: false,
+        headers: {
+          ...(options.headers || {}),
+          [ADS_SOURCE_PREFLIGHT_HEADER]: encodedHeaders,
+        },
+      },
+    );
+    if (!payload || payload.schemaVersion !== 'ads-source-preflight-v1') {
+      throw clientError(502, '广告源预检契约无效');
+    }
+    if (payload.activation?.writesFacts !== false
+      || payload.activation?.changesCurrentSlot !== false
+      || payload.activation?.authorizesExecution !== false) {
+      throw clientError(502, '广告源预检越过只读安全边界');
+    }
+    state.lastError = null;
+    dispatch('lr:ads-source-preflight', payload);
+    return payload;
+  }
+
   async function paged(path, options = {}, textKeys = []) {
     const scope = normalizeScope(options.scope || currentScope());
     const params = new URLSearchParams({
@@ -223,6 +258,40 @@
     if (!text) return;
     if (!isCanonicalDate(text)) throw clientError(400, `${key} 必须使用有效的 YYYY-MM-DD 日期`);
     params.set(key, text);
+  }
+
+  function normalizePreflightHeaders(value) {
+    if (!Array.isArray(value) || !value.length) throw clientError(400, '广告报表表头不能为空');
+    if (value.length > ADS_SOURCE_PREFLIGHT_MAX_HEADERS) {
+      throw clientError(400, `广告报表表头不能超过 ${ADS_SOURCE_PREFLIGHT_MAX_HEADERS} 列`);
+    }
+    const identities = new Set();
+    return value.map((header, index) => {
+      if (typeof header !== 'string') throw clientError(400, `第 ${index + 1} 列表头必须是文本`);
+      const normalized = header.normalize('NFKC').trim();
+      if (!normalized) throw clientError(400, `第 ${index + 1} 列表头不能为空`);
+      if (normalized.length > ADS_SOURCE_PREFLIGHT_MAX_HEADER_LENGTH) {
+        throw clientError(400, `第 ${index + 1} 列表头过长`);
+      }
+      if (/\p{Cc}/u.test(normalized)) throw clientError(400, `第 ${index + 1} 列表头包含控制字符`);
+      const identity = normalized.toLowerCase().replace(/\s+/g, ' ');
+      if (identities.has(identity)) throw clientError(400, '广告报表包含 Unicode 等价重复表头');
+      identities.add(identity);
+      return normalized;
+    });
+  }
+
+  function encodeHeadersBase64Url(headers) {
+    const bytes = new TextEncoder().encode(JSON.stringify(headers));
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary)
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
   }
 
   function isCanonicalDate(value) {
@@ -312,6 +381,7 @@
     transactions: getTransactions,
     allAds: getAllAds,
     allTransactions: getAllTransactions,
+    preflightAdsSource,
     refresh,
     ensureQueryNativeModules,
     clearMemoryCache: () => responseCache.clear(),
@@ -348,6 +418,7 @@
       'overview',
       'ads',
       'transactions',
+      'ads-source-preflight',
       'governance-execution-gate',
       'query-native-module-assets',
     ],
