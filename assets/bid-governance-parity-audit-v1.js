@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const AUDIT_VERSION = '1.0.3';
+  const AUDIT_VERSION = '1.0.4';
   const MAX_ROWS = 300000;
   const MAX_MISMATCH_ROWS = 30;
   const FILTER_IDS = [
@@ -123,9 +123,22 @@
     return rows.map(row => ({ ...row }));
   }
 
+  function legacyControlRows() {
+    const bridge = typeof AdsDashboardApp !== 'undefined'
+      ? AdsDashboardApp?.debug?.getBidGovernanceControlRowsForParity
+      : null;
+    if (typeof bridge !== 'function') {
+      throw auditError(503, '旧 Bid Governance Control Parity bridge 不可用，无法验证真实 Targeting / Bid');
+    }
+    const rows = bridge();
+    if (!Array.isArray(rows)) throw auditError(502, '旧 Bid Governance Control Parity bridge 返回了无效数据');
+    return rows.map(row => ({ ...row }));
+  }
+
   function bidOf(row, trustedOnly = false) {
     if (trustedOnly && row?.bidValueTrusted !== true) return null;
-    return nullableNumber(row?.currentBid ?? row?.bid ?? row?.targetBid);
+    const value = nullableNumber(row?.currentBid ?? row?.bid ?? row?.targetBid);
+    return value !== null && value > 0 ? value : null;
   }
 
   function groupKey(row, index = 0) {
@@ -192,8 +205,7 @@
     const groupOverlap = union.size ? intersection.length / union.size : 1;
     const legacyOnly = [...legacyKeys].filter(key => !queryKeys.has(key));
     const queryOnly = [...queryKeys].filter(key => !legacyKeys.has(key));
-    const bidComparable = legacy.totals.bidKnownRows > 0 && query.totals.bidKnownRows > 0;
-    const mismatches = []; let bidCompared = 0; let bidMismatch = 0; let bidMissingEither = 0;
+    const mismatches = [];
 
     intersection.forEach(key => {
       const left = legacy.groups.get(key); const right = query.groups.get(key);
@@ -202,23 +214,13 @@
       const orders = metricDelta(left.orders, right.orders, METRIC_RULES.orders);
       const clicks = metricDelta(left.clicks, right.clicks, METRIC_RULES.clicks);
       const impressions = metricDelta(left.impressions, right.impressions, METRIC_RULES.impressions);
-      let bidState = bidComparable ? 'none' : 'not-comparable'; let bidDelta = null;
-      if (bidComparable) {
-        if (left.latestBid === null || right.latestBid === null) {
-          if (left.latestBid !== right.latestBid) { bidState = 'missing'; bidMissingEither += 1; }
-        } else {
-          bidCompared += 1; bidDelta = right.latestBid - left.latestBid;
-          if (Math.abs(bidDelta) > 0.000001) { bidState = 'mismatch'; bidMismatch += 1; } else bidState = 'match';
-        }
-      }
-      if ([spend, sales, orders, clicks, impressions].some(item => !item.pass) || (bidComparable && ['mismatch', 'missing'].includes(bidState))) {
+      if ([spend, sales, orders, clicks, impressions].some(item => !item.pass)) {
         mismatches.push({
           key, targetingId: left.targetingId || right.targetingId, campaign: left.campaign || right.campaign,
           adGroup: left.adGroup || right.adGroup, targeting: left.targeting || right.targeting, matchType: left.matchType || right.matchType,
           legacySpend: left.spend, querySpend: right.spend, spendDelta: spend.absolute,
           legacySales: left.sales, querySales: right.sales, salesDelta: sales.absolute,
           legacyOrders: left.orders, queryOrders: right.orders, ordersDelta: orders.absolute,
-          legacyBid: left.latestBid, queryBid: right.latestBid, bidDelta, bidState,
         });
       }
     });
@@ -226,27 +228,133 @@
       const row = legacy.groups.get(key);
       mismatches.push({ key, side: 'legacy-only', targetingId: row.targetingId, campaign: row.campaign, adGroup: row.adGroup, targeting: row.targeting,
         matchType: row.matchType, legacySpend: row.spend, querySpend: 0, spendDelta: -row.spend, legacySales: row.sales, querySales: 0,
-        salesDelta: -row.sales, legacyOrders: row.orders, queryOrders: 0, ordersDelta: -row.orders, legacyBid: row.latestBid, queryBid: null, bidDelta: null, bidState: bidComparable ? 'missing' : 'not-comparable' });
+        salesDelta: -row.sales, legacyOrders: row.orders, queryOrders: 0, ordersDelta: -row.orders });
     });
     queryOnly.forEach(key => {
       const row = query.groups.get(key);
       mismatches.push({ key, side: 'query-only', targetingId: row.targetingId, campaign: row.campaign, adGroup: row.adGroup, targeting: row.targeting,
         matchType: row.matchType, legacySpend: 0, querySpend: row.spend, spendDelta: row.spend, legacySales: 0, querySales: row.sales,
-        salesDelta: row.sales, legacyOrders: 0, queryOrders: row.orders, ordersDelta: row.orders, legacyBid: null, queryBid: row.latestBid, bidDelta: null, bidState: bidComparable ? 'missing' : 'not-comparable' });
+        salesDelta: row.sales, legacyOrders: 0, queryOrders: row.orders, ordersDelta: row.orders });
     });
     mismatches.sort((a, b) => Math.abs(b.spendDelta || 0) - Math.abs(a.spendDelta || 0) || Math.abs(b.salesDelta || 0) - Math.abs(a.salesDelta || 0));
 
     const totalsPass = rowCount.pass && Object.values(metrics).every(item => item.pass);
     const identityPass = groupOverlap >= 0.995 && legacyOnly.length === 0 && queryOnly.length === 0;
-    const bidPass = bidComparable && bidMismatch === 0 && bidMissingEither === 0;
     const metricParityPass = totalsPass && identityPass;
-    const fullParityPass = metricParityPass && bidPass;
-    const near = !metricParityPass && Object.values(metrics).every(item => item.relative <= 0.01 || Math.abs(item.absolute) <= 1) && groupOverlap >= 0.98;
-    const verdict = fullParityPass ? 'pass' : (metricParityPass && !bidComparable) || near ? 'warn' : 'fail';
     return {
-      verdict, metricParityPass, fullParityPass, migrationCandidate: false, executionAuthorized: false,
-      totalsPass, identityPass, bidComparable, bidPass, bidParityPass: bidPass, rowCount, metrics, groupOverlap, matchedGroups: intersection.length,
-      legacyOnlyCount: legacyOnly.length, queryOnlyCount: queryOnly.length, bidCompared, bidMismatch, bidMissingEither,
+      verdict: metricParityPass ? 'pass' : 'fail', metricParityPass, migrationCandidate: false, executionAuthorized: false,
+      totalsPass, identityPass, rowCount, metrics, groupOverlap, matchedGroups: intersection.length,
+      legacyOnlyCount: legacyOnly.length, queryOnlyCount: queryOnly.length,
+      legacy: legacy.totals, query: query.totals, mismatches: mismatches.slice(0, MAX_MISMATCH_ROWS),
+    };
+  }
+
+  function controlKey(row, index = 0) {
+    const composite = [lower(row?.campaign), lower(row?.adGroup), lower(row?.targeting), lower(row?.matchType)].join('|');
+    if (composite.replace(/\|/g, '')) return `route:${composite}`;
+    const targetingId = text(row?.targetingId);
+    return targetingId ? `id:${targetingId}` : `control:${index}`;
+  }
+
+  function summarizeBidControls(rows, { trustedBidOnly = false } = {}) {
+    const input = Array.isArray(rows) ? rows : [];
+    const groups = new Map();
+    let targetingIdRows = 0; let bidRows = 0;
+    input.forEach((row, index) => {
+      const key = controlKey(row, index);
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key, campaign: text(row?.campaign), adGroup: text(row?.adGroup), targeting: text(row?.targeting), matchType: text(row?.matchType),
+          targetingIds: new Set(), latestDate: '', latestBids: new Set(), rowCount: 0,
+        });
+      }
+      const group = groups.get(key); group.rowCount += 1;
+      const targetingId = text(row?.targetingId); if (targetingId) { targetingIdRows += 1; group.targetingIds.add(targetingId); }
+      const bid = bidOf(row, trustedBidOnly); if (bid === null) return;
+      bidRows += 1;
+      const date = text(row?.date);
+      const normalizedBid = Math.round(bid * 1000000) / 1000000;
+      if (!group.latestDate || date > group.latestDate) {
+        group.latestDate = date; group.latestBids = new Set([normalizedBid]);
+      } else if (date === group.latestDate) {
+        group.latestBids.add(normalizedBid);
+      }
+    });
+    const normalizedGroups = new Map();
+    let bidReadyGroups = 0; let bidMissingGroups = 0; let bidAmbiguousGroups = 0; let targetingIdMissingGroups = 0; let targetingIdAmbiguousGroups = 0;
+    for (const [key, group] of groups.entries()) {
+      const ids = [...group.targetingIds]; const bids = [...group.latestBids];
+      const bidAmbiguous = bids.length > 1; const bidMissing = bids.length === 0;
+      const targetingIdAmbiguous = ids.length > 1; const targetingIdMissing = ids.length === 0;
+      if (bidAmbiguous) bidAmbiguousGroups += 1; else if (bidMissing) bidMissingGroups += 1; else bidReadyGroups += 1;
+      if (targetingIdAmbiguous) targetingIdAmbiguousGroups += 1; else if (targetingIdMissing) targetingIdMissingGroups += 1;
+      normalizedGroups.set(key, {
+        ...group, targetingIds: ids, targetingId: ids.length === 1 ? ids[0] : '', latestBids: bids,
+        latestBid: bids.length === 1 ? bids[0] : null, bidAmbiguous, bidMissing, targetingIdAmbiguous, targetingIdMissing,
+      });
+    }
+    return {
+      groups: normalizedGroups,
+      totals: {
+        rowCount: input.length, groupCount: normalizedGroups.size, targetingIdRows, bidRows,
+        targetingIdCoverage: input.length ? targetingIdRows / input.length : 0,
+        bidCoverage: input.length ? bidRows / input.length : 0,
+        bidReadyGroups, bidMissingGroups, bidAmbiguousGroups, targetingIdMissingGroups, targetingIdAmbiguousGroups,
+      },
+    };
+  }
+
+  function compareBidControls(legacyInput, queryInput) {
+    const legacy = summarizeBidControls(legacyInput, { trustedBidOnly: false });
+    const query = summarizeBidControls(queryInput, { trustedBidOnly: true });
+    const legacyKeys = new Set(legacy.groups.keys()); const queryKeys = new Set(query.groups.keys());
+    const intersection = [...legacyKeys].filter(key => queryKeys.has(key));
+    const union = new Set([...legacyKeys, ...queryKeys]);
+    const groupOverlap = union.size ? intersection.length / union.size : 1;
+    const legacyOnly = [...legacyKeys].filter(key => !queryKeys.has(key));
+    const queryOnly = [...queryKeys].filter(key => !legacyKeys.has(key));
+    let bidCompared = 0; let bidMismatch = 0; let bidMissingEither = 0; let bidAmbiguousEither = 0;
+    let targetingIdMismatch = 0; let targetingIdMissingEither = 0; let targetingIdAmbiguousEither = 0;
+    const mismatches = [];
+
+    intersection.forEach(key => {
+      const left = legacy.groups.get(key); const right = query.groups.get(key);
+      let state = 'match'; let bidDelta = null;
+      if (left.bidAmbiguous || right.bidAmbiguous) { state = 'bid-ambiguous'; bidAmbiguousEither += 1; }
+      else if (left.bidMissing || right.bidMissing) { state = 'bid-missing'; bidMissingEither += 1; }
+      else {
+        bidCompared += 1; bidDelta = right.latestBid - left.latestBid;
+        if (Math.abs(bidDelta) > 0.000001) { state = 'bid-mismatch'; bidMismatch += 1; }
+      }
+      if (left.targetingIdAmbiguous || right.targetingIdAmbiguous) { state = state === 'match' ? 'targeting-id-ambiguous' : state; targetingIdAmbiguousEither += 1; }
+      else if (left.targetingIdMissing || right.targetingIdMissing) { state = state === 'match' ? 'targeting-id-missing' : state; targetingIdMissingEither += 1; }
+      else if (left.targetingId !== right.targetingId) { state = state === 'match' ? 'targeting-id-mismatch' : state; targetingIdMismatch += 1; }
+      if (state !== 'match') {
+        mismatches.push({
+          key, state, campaign: left.campaign || right.campaign, adGroup: left.adGroup || right.adGroup,
+          targeting: left.targeting || right.targeting, matchType: left.matchType || right.matchType,
+          legacyTargetingId: left.targetingId, queryTargetingId: right.targetingId,
+          legacyBid: left.latestBid, queryBid: right.latestBid, bidDelta,
+        });
+      }
+    });
+    legacyOnly.forEach(key => {
+      const row = legacy.groups.get(key); mismatches.push({ key, state: 'legacy-only', campaign: row.campaign, adGroup: row.adGroup, targeting: row.targeting, matchType: row.matchType, legacyTargetingId: row.targetingId, queryTargetingId: '', legacyBid: row.latestBid, queryBid: null, bidDelta: null });
+    });
+    queryOnly.forEach(key => {
+      const row = query.groups.get(key); mismatches.push({ key, state: 'query-only', campaign: row.campaign, adGroup: row.adGroup, targeting: row.targeting, matchType: row.matchType, legacyTargetingId: '', queryTargetingId: row.targetingId, legacyBid: null, queryBid: row.latestBid, bidDelta: null });
+    });
+
+    const identityComparable = legacy.groups.size > 0 && query.groups.size > 0 && groupOverlap >= 0.995 && legacyOnly.length === 0 && queryOnly.length === 0;
+    const comparable = identityComparable
+      && bidMissingEither === 0 && bidAmbiguousEither === 0
+      && targetingIdMissingEither === 0 && targetingIdAmbiguousEither === 0;
+    const pass = comparable && bidMismatch === 0 && targetingIdMismatch === 0;
+    return {
+      comparable, pass, identityComparable, groupOverlap, matchedGroups: intersection.length,
+      legacyOnlyCount: legacyOnly.length, queryOnlyCount: queryOnly.length,
+      bidCompared, bidMismatch, bidMissingEither, bidAmbiguousEither,
+      targetingIdMismatch, targetingIdMissingEither, targetingIdAmbiguousEither,
       legacy: legacy.totals, query: query.totals, mismatches: mismatches.slice(0, MAX_MISMATCH_ROWS),
     };
   }
@@ -263,6 +371,7 @@
     setState({ status: 'loading' }); render();
     try {
       const legacy = legacyRows();
+      const legacyControls = legacyControlRows();
       const payload = await window.QueryNativeModuleData.ads({ ...request, adProduct: '', source: 'query', maxRows: MAX_ROWS, force });
       if (payload?.source !== 'query-tidb') throw auditError(502, `Query 来源异常：${text(payload?.source) || 'missing'}`);
       if (payload?.truncated === true || payload?.nextOffset) throw auditError(409, 'Query 结果达到分页上限，禁止用截断数据做 Parity 结论');
@@ -274,20 +383,33 @@
         ? allQueryRows.filter(row => text(row?.adProduct).toUpperCase() === 'SP')
         : allQueryRows;
       const comparison = compareRows(legacy, queryRows);
+      const bidControl = compareBidControls(legacyControls, queryRows);
       const requiredReadiness = [
         'targetingIdentityReady', 'bidSourceColumnReady', 'bidValueNullabilityTrusted',
         'adProductReady', 'advertisedProductIdentityReady', 'attributionMaturityReady',
       ];
       const migrationBlockers = requiredReadiness.filter(key => readiness[key] !== true);
-      if (!comparison.bidComparable) migrationBlockers.push('legacyBidComparable');
+      if (!bidControl.comparable) migrationBlockers.push('legacyBidComparable');
+      else if (!bidControl.pass) migrationBlockers.push('legacyBidParity');
       comparison.adProductScopeProven = adProductScopeProven;
       comparison.queryScopeMode = adProductScopeProven ? 'source-proven-sp' : 'unproven-ad-product-diagnostic';
       comparison.bidGovernanceReady = readiness.bidGovernanceReady === true;
+      comparison.bidControl = bidControl;
+      comparison.bidControlComparable = bidControl.comparable;
+      comparison.bidControlParityPass = bidControl.pass;
+      comparison.bidComparable = bidControl.comparable;
+      comparison.bidParityPass = bidControl.pass;
+      comparison.bidPass = bidControl.pass;
+      comparison.bidCompared = bidControl.bidCompared;
+      comparison.bidMismatch = bidControl.bidMismatch;
+      comparison.bidMissingEither = bidControl.bidMissingEither;
       comparison.scopeBlockers = [...migrationBlockers];
       comparison.migrationBlockers = [...migrationBlockers];
+      comparison.verdict = !comparison.metricParityPass || (bidControl.comparable && !bidControl.pass)
+        ? 'fail' : migrationBlockers.length ? 'warn' : 'pass';
       comparison.migrationCandidate = Boolean(
-        comparison.metricParityPass && comparison.bidParityPass
-        && comparison.bidComparable && comparison.bidGovernanceReady && migrationBlockers.length === 0
+        comparison.metricParityPass && bidControl.comparable && bidControl.pass
+        && comparison.bidGovernanceReady && migrationBlockers.length === 0
       );
       setState({ status: 'ready', legacy: summarizeRows(legacy).totals, query: summarizeRows(queryRows, { trustedBidOnly: true }).totals,
         comparison, governance: payload.governance, lastError: '', refreshedAt: Date.now() });
@@ -303,14 +425,14 @@
       version: AUDIT_VERSION, status: state.status, request: state.request ? { ...state.request } : null,
       eligibility: state.eligibility ? { ...state.eligibility, reasons: [...(state.eligibility.reasons || [])], loadedMonths: [...(state.eligibility.loadedMonths || [])], requiredMonths: [...(state.eligibility.requiredMonths || [])], missingMonths: [...(state.eligibility.missingMonths || [])] } : null,
       legacy: state.legacy ? { ...state.legacy } : null, query: state.query ? { ...state.query } : null,
-      comparison: state.comparison ? { ...state.comparison, metrics: Object.fromEntries(Object.entries(state.comparison.metrics || {}).map(([key, value]) => [key, { ...value }])), mismatches: (state.comparison.mismatches || []).map(row => ({ ...row })) } : null,
+      comparison: state.comparison ? { ...state.comparison, metrics: Object.fromEntries(Object.entries(state.comparison.metrics || {}).map(([key, value]) => [key, { ...value }])), mismatches: (state.comparison.mismatches || []).map(row => ({ ...row })), bidControl: state.comparison.bidControl ? { ...state.comparison.bidControl, legacy: { ...(state.comparison.bidControl.legacy || {}) }, query: { ...(state.comparison.bidControl.query || {}) }, mismatches: (state.comparison.bidControl.mismatches || []).map(row => ({ ...row })) } : null } : null,
       governance: state.governance, lastError: state.lastError, refreshedAt: state.refreshedAt, executionAuthorized: false,
     };
   }
   function setState(patch) { Object.assign(state, patch); }
   function verdictLabel(verdict) {
-    if (verdict === 'pass') return 'Metric Parity Pass';
-    if (verdict === 'warn') return 'Metric / Identity Parity · Bid / 治理待审计';
+    if (verdict === 'pass') return 'Performance + Bid Control Parity Pass';
+    if (verdict === 'warn') return 'Performance Parity · Bid Control / 治理待审计';
     return 'Parity Gap · 禁止迁移';
   }
 
@@ -354,13 +476,21 @@
     if (state.status === 'error') { banner.dataset.kind = 'bad'; banner.textContent = `对账失败：${state.lastError || 'unknown error'}`; kpis.innerHTML = ''; grid.innerHTML = ''; return; }
     if (state.status === 'blocked' || !eligibility.ready) { banner.dataset.kind = 'warn'; banner.textContent = `只读门禁：${(eligibility.reasons || []).join('；') || '需要覆盖当前范围的 Raw 明细'}`; kpis.innerHTML = ''; grid.innerHTML = ''; return; }
     if (state.status !== 'ready' || !state.comparison) { banner.dataset.kind = 'good'; banner.textContent = `Raw 对账前提已满足：${eligibility.loadedMonths.join(', ') || '—'}。点击“运行双源对账”。`; kpis.innerHTML = ''; grid.innerHTML = ''; return; }
-    const c = state.comparison; banner.dataset.kind = c.verdict === 'pass' ? 'good' : c.verdict === 'warn' ? 'warn' : 'bad';
-    banner.textContent = `${verdictLabel(c.verdict)} · ${c.adProductScopeProven ? 'SP scope source-proven' : 'Ad Product scope unproven · diagnostic only'} · Bid=${c.bidComparable ? (c.bidParityPass ? 'comparable/pass' : 'comparable/gap') : 'not comparable'} · blockers=${(c.migrationBlockers || []).join(', ') || 'none'} · migrationCandidate=${Boolean(c.migrationCandidate)} · executionAuthorized=false`;
-    kpis.innerHTML = [ ['Rows L / Q', `${fmtInt(c.legacy.rowCount)} / ${fmtInt(c.query.rowCount)}`], ['Spend Δ', fmtMoney(c.metrics.spend.absolute)], ['Sales Δ', fmtMoney(c.metrics.sales.absolute)], ['Orders Δ', fmtSigned(c.metrics.orders.absolute, 0)], ['Group overlap', fmtPct(c.groupOverlap)], ['Bid parity', c.bidComparable ? `${fmtInt(c.bidMismatch)} mismatch · ${fmtInt(c.bidMissingEither)} missing` : 'Not comparable'] ].map(([label, value]) => `<div class="bgpaKpi"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
+    const c = state.comparison; const control = c.bidControl || {};
+    banner.dataset.kind = c.verdict === 'pass' ? 'good' : c.verdict === 'warn' ? 'warn' : 'bad';
+    banner.textContent = `${verdictLabel(c.verdict)} · ${c.adProductScopeProven ? 'SP scope source-proven' : 'Ad Product scope unproven · diagnostic only'} · BidControl=${c.bidControlComparable ? (c.bidControlParityPass ? 'comparable/pass' : 'comparable/gap') : 'not comparable'} · blockers=${(c.migrationBlockers || []).join(', ') || 'none'} · migrationCandidate=${Boolean(c.migrationCandidate)} · executionAuthorized=false`;
+    kpis.innerHTML = [
+      ['Rows L / Q', `${fmtInt(c.legacy.rowCount)} / ${fmtInt(c.query.rowCount)}`],
+      ['Spend Δ', fmtMoney(c.metrics.spend.absolute)], ['Sales Δ', fmtMoney(c.metrics.sales.absolute)],
+      ['Performance overlap', fmtPct(c.groupOverlap)],
+      ['Controls L / Q', `${fmtInt(control.legacy?.groupCount)} / ${fmtInt(control.query?.groupCount)}`],
+      ['Bid Control', c.bidControlComparable ? `${fmtInt(control.bidMismatch)} mismatch · ${fmtInt(control.targetingIdMismatch)} ID mismatch` : 'Not comparable'],
+    ].map(([label, value]) => `<div class="bgpaKpi"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
     const metricRows = [ ['Rows', c.rowCount, fmtInt], ['Impressions', c.metrics.impressions, fmtInt], ['Clicks', c.metrics.clicks, fmtInt], ['Spend', c.metrics.spend, fmtMoney], ['Sales', c.metrics.sales, fmtMoney], ['Orders', c.metrics.orders, fmtInt] ];
-    const metricTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Metric</th><th>Legacy</th><th>Query</th><th>Δ</th><th>Rel</th><th>State</th></tr></thead><tbody>${metricRows.map(([name,item,formatter]) => `<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(formatter(item.legacy))}</td><td class="num">${escapeHtml(formatter(item.query))}</td><td class="num">${escapeHtml(name === 'Spend' || name === 'Sales' ? fmtMoney(item.absolute) : fmtSigned(item.absolute, 0))}</td><td class="num">${escapeHtml(fmtPct(item.relative))}</td><td><span class="bgpaTag ${item.pass ? 'good' : 'bad'}">${item.pass ? 'PASS' : 'GAP'}</span></td></tr>`).join('')}</tbody></table></div>`;
-    const mismatchTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Object</th><th>Side</th><th>Spend L/Q</th><th>Sales L/Q</th><th>Orders L/Q</th><th>Bid L/Q</th></tr></thead><tbody>${(c.mismatches || []).length ? c.mismatches.map(row => `<tr><td title="${escapeHtml([row.campaign,row.adGroup,row.targeting].filter(Boolean).join(' / '))}">${escapeHtml(row.targetingId || row.targeting || row.key)}</td><td>${escapeHtml(row.side || row.bidState || 'metric')}</td><td class="num">${escapeHtml(`${fmtMoney(row.legacySpend)} / ${fmtMoney(row.querySpend)}`)}</td><td class="num">${escapeHtml(`${fmtMoney(row.legacySales)} / ${fmtMoney(row.querySales)}`)}</td><td class="num">${escapeHtml(`${fmtInt(row.legacyOrders)} / ${fmtInt(row.queryOrders)}`)}</td><td class="num">${escapeHtml(`${row.legacyBid ?? '—'} / ${row.queryBid ?? '—'}`)}</td></tr>`).join('') : '<tr><td colspan="6">当前阈值下没有对象级差异。</td></tr>'}</tbody></table></div>`;
-    grid.innerHTML = metricTable + mismatchTable;
+    const metricTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Performance Metric</th><th>Legacy</th><th>Query</th><th>Δ</th><th>Rel</th><th>State</th></tr></thead><tbody>${metricRows.map(([name,item,formatter]) => `<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(formatter(item.legacy))}</td><td class="num">${escapeHtml(formatter(item.query))}</td><td class="num">${escapeHtml(name === 'Spend' || name === 'Sales' ? fmtMoney(item.absolute) : fmtSigned(item.absolute, 0))}</td><td class="num">${escapeHtml(fmtPct(item.relative))}</td><td><span class="bgpaTag ${item.pass ? 'good' : 'bad'}">${item.pass ? 'PASS' : 'GAP'}</span></td></tr>`).join('')}</tbody></table></div>`;
+    const controlTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Bid Control Object</th><th>State</th><th>Targeting ID L / Q</th><th>Latest Bid L / Q</th></tr></thead><tbody>${(control.mismatches || []).length ? control.mismatches.map(row => `<tr><td title="${escapeHtml([row.campaign,row.adGroup,row.targeting,row.matchType].filter(Boolean).join(' / '))}">${escapeHtml(row.targeting || row.key)}</td><td>${escapeHtml(row.state || 'gap')}</td><td>${escapeHtml(`${row.legacyTargetingId || '—'} / ${row.queryTargetingId || '—'}`)}</td><td class="num">${escapeHtml(`${row.legacyBid ?? '—'} / ${row.queryBid ?? '—'}`)}</td></tr>`).join('') : '<tr><td colspan="4">Bid Control Parity 当前没有控制对象差异。</td></tr>'}</tbody></table></div>`;
+    const mismatchTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Performance Object</th><th>Side</th><th>Spend L/Q</th><th>Sales L/Q</th><th>Orders L/Q</th></tr></thead><tbody>${(c.mismatches || []).length ? c.mismatches.map(row => `<tr><td title="${escapeHtml([row.campaign,row.adGroup,row.targeting].filter(Boolean).join(' / '))}">${escapeHtml(row.targetingId || row.targeting || row.key)}</td><td>${escapeHtml(row.side || 'metric')}</td><td class="num">${escapeHtml(`${fmtMoney(row.legacySpend)} / ${fmtMoney(row.querySpend)}`)}</td><td class="num">${escapeHtml(`${fmtMoney(row.legacySales)} / ${fmtMoney(row.querySales)}`)}</td><td class="num">${escapeHtml(`${fmtInt(row.legacyOrders)} / ${fmtInt(row.queryOrders)}`)}</td></tr>`).join('') : '<tr><td colspan="5">Performance Parity 当前没有对象级差异。</td></tr>'}</tbody></table></div>`;
+    grid.innerHTML = metricTable + controlTable + mismatchTable;
   }
 
   function markStale(reason = '筛选条件已变化') {
@@ -378,7 +508,7 @@
   function dispatch(name, detail) { window.dispatchEvent?.(new CustomEvent(name, { detail })); }
   function auditError(status, message) { const error = new Error(message); error.status = status; return error; }
 
-  window.BidGovernanceParityAudit = Object.freeze({ version: AUDIT_VERSION, run, compareRows, summarizeRows, rawEligibility, state: snapshot });
+  window.BidGovernanceParityAudit = Object.freeze({ version: AUDIT_VERSION, run, compareRows, compareBidControls, summarizeRows, summarizeBidControls, rawEligibility, state: snapshot });
   const init = () => { ensureUi(); bindScopeWatchers(); dispatch('lr:bid-governance-parity-audit-ready', { version: AUDIT_VERSION, executionAuthorized: false }); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true }); else init();
 })();
