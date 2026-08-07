@@ -4,8 +4,9 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../assets/bid-governance-parity-audit-v1.js', import.meta.url), 'utf8');
 
-assert.match(source, /const AUDIT_VERSION = '1\.0\.0'/);
-assert.match(source, /getBidGovScopedRows\('searchTerm'\)/);
+assert.match(source, /const AUDIT_VERSION = '1\.0\.1'/);
+assert.match(source, /AdsDashboardApp\?\.debug\?\.getBidGovernanceScopedRowsForParity/);
+assert.doesNotMatch(source, /\bgetBidGovScopedRows\(/);
 assert.match(source, /source: 'query'/);
 assert.match(source, /adProduct: 'SP'/);
 assert.match(source, /executionAuthorized: false/);
@@ -101,11 +102,11 @@ const legacyRows = [
 const queryRows = legacyRows.map(row => ({ ...row, bidValueTrusted: true, adProduct: 'SP' }));
 globalThisQueryRows = queryRows;
 context.__legacyRows = legacyRows;
-vm.runInContext('const getBidGovScopedRows = grain => grain === "searchTerm" ? __legacyRows : [];', context);
+vm.runInContext('const AdsDashboardApp = { debug: { getBidGovernanceScopedRowsForParity: () => __legacyRows.map(row => ({ ...row })) } };', context);
 vm.runInContext(source, context, { filename: 'bid-governance-parity-audit-v1.js' });
 
 const audit = window.BidGovernanceParityAudit;
-assert.equal(audit.version, '1.0.0');
+assert.equal(audit.version, '1.0.1');
 
 const exact = audit.compareRows(legacyRows, queryRows);
 assert.equal(exact.verdict, 'pass');
