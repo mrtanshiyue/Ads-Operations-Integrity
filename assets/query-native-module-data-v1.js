@@ -250,6 +250,15 @@
     return Boolean(row.targeting || row.searchTerm);
   };
 
+  const negativeTokenPresent = (value, token) => {
+    const normalized = lower(token);
+    if (!normalized) return false;
+    if (/^[a-z0-9]+$/i.test(normalized)) {
+      return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);
+    }
+    return lower(value).includes(normalized);
+  };
+
   const advancedSearchMatches = (value, query, exact = false) => {
     const haystack = lower(value);
     const needle = text(query);
@@ -265,7 +274,7 @@
     const positives = tokens.filter(token => !token.startsWith('-')).map(lower);
     const negatives = tokens.filter(token => token.startsWith('-') && token.length > 1).map(token => lower(token.slice(1)));
     return positives.every(token => haystack.includes(token))
-      && negatives.every(token => !haystack.includes(token));
+      && negatives.every(token => !negativeTokenPresent(value, token));
   };
 
   const adIncluded = (row, request) => {
