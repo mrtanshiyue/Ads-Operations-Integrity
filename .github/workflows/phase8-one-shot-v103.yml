@@ -19,7 +19,9 @@ jobs:
           ref: phase8/parity-canonical-identity-v103
           fetch-depth: 0
       - name: Apply v1.0.3 patch
-        run: python scripts/phase8_patch_v103.py
+        run: |
+          python scripts/phase8_patch_v103.py
+          python scripts/phase8_patch_v103_testfix.py
       - name: Validate v1.0.3 contracts
         run: |
           node --check assets/bid-governance-parity-audit-v1.js
