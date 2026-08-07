@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const AUDIT_VERSION = '1.0.0';
+  const AUDIT_VERSION = '1.0.1';
   const MAX_ROWS = 300000;
   const MAX_MISMATCH_ROWS = 30;
   const FILTER_IDS = [
@@ -112,12 +112,15 @@
   }
 
   function legacyRows() {
-    if (typeof getBidGovScopedRows !== 'function') {
-      throw auditError(503, '旧 Bid Governance scoped-row 函数不可用，无法进行真实 Legacy 对账');
+    const bridge = typeof AdsDashboardApp !== 'undefined'
+      ? AdsDashboardApp?.debug?.getBidGovernanceScopedRowsForParity
+      : null;
+    if (typeof bridge !== 'function') {
+      throw auditError(503, '旧 Bid Governance 只读 Parity bridge 不可用，无法进行真实 Legacy 对账');
     }
-    const rows = getBidGovScopedRows('searchTerm');
-    if (!Array.isArray(rows)) throw auditError(502, '旧 Bid Governance 返回了无效数据');
-    return rows;
+    const rows = bridge();
+    if (!Array.isArray(rows)) throw auditError(502, '旧 Bid Governance Parity bridge 返回了无效数据');
+    return rows.map(row => ({ ...row }));
   }
 
   function bidOf(row, trustedOnly = false) {
@@ -307,7 +310,7 @@
     ensureStyles(); let root = byId('bidGovernanceParityAudit');
     if (!root) {
       root = document.createElement('section'); root.id = 'bidGovernanceParityAudit';
-      root.innerHTML = `<div class="bgpaHead"><div><div class="bgpaTitle">Phase 8 · Bid Governance 双源对账</div><div class="bgpaSub">Legacy Raw getBidGovScopedRows(searchTerm) ↔ TiDB Query。只审计，不自动加载 Raw，不生成调价动作，不改变执行门禁。</div></div><button class="btn bgpaBtn" id="btnBidGovernanceParityAudit" type="button">运行双源对账</button></div><div class="bgpaBanner" id="bidGovernanceParityBanner">需要先由用户显式加载覆盖当前范围的 Raw 明细。</div><div class="bgpaKpis" id="bidGovernanceParityKpis"></div><div class="bgpaGrid" id="bidGovernanceParityGrid"></div><div class="bgpaFoot">Parity Pass 只代表“可进入下一阶段迁移审查”，不代表 Bid Governance / Campaign Studio / Bulk 执行解锁。</div>`;
+      root.innerHTML = `<div class="bgpaHead"><div><div class="bgpaTitle">Phase 8 · Bid Governance 双源对账</div><div class="bgpaSub">Legacy Raw scoped-row parity bridge ↔ TiDB Query。只审计，不自动加载 Raw，不生成调价动作，不改变执行门禁。</div></div><button class="btn bgpaBtn" id="btnBidGovernanceParityAudit" type="button">运行双源对账</button></div><div class="bgpaBanner" id="bidGovernanceParityBanner">需要先由用户显式加载覆盖当前范围的 Raw 明细。</div><div class="bgpaKpis" id="bidGovernanceParityKpis"></div><div class="bgpaGrid" id="bidGovernanceParityGrid"></div><div class="bgpaFoot">Parity Pass 只代表“可进入下一阶段迁移审查”，不代表 Bid Governance / Campaign Studio / Bulk 执行解锁。</div>`;
       const bidPreview = byId('queryNativeBidIntelligence');
       if (bidPreview?.parentElement === host) host.insertBefore(root, bidPreview.nextElementSibling || wrap); else host.insertBefore(root, wrap);
     }

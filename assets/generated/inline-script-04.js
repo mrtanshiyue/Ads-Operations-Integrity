@@ -9919,6 +9919,7 @@ return {
     forceUnifiedRecalculation: (reason="debug_recalculation") => {UnifiedDecisionEngine.invalidate(reason);AdsStore.lastFilterHash="";applyFilters(true);return true;},
     getTransactionDiagnostics:()=>{const ctx=AdsStore.currentContext||UnifiedDecisionEngine.context(),r=getTransactionReconciliation(ctx);return{rows:AdsStore.transactions.length,periodMatched:r.periodMatched,statusMode:r.statusMode,skuEconomics:r.sku.size,account:r.account,adSpend:r.adSpend,advertisingCharge:r.advertisingCharge,delta:r.delta,coverage:getViewMetricsCached()?.transactionEconomicsCoverage||0,directCoverage:getViewMetricsCached()?.transactionDirectCoverage||0};},
     getTransactionRowsForFinance:()=>AdsStore.transactions,
+    getBidGovernanceScopedRowsForParity:()=>getBidGovScopedRows("searchTerm").map(row=>({...row})),
     getProductCostDiagnostics:()=>({rows:AdsStore.productCosts.length,meta:AdsStore.costDataMeta,version:AdsStore.dataVersions.cost||0,skuIndex:AdsStore.costIndexBySku.size,asinIndex:AdsStore.costIndexByAsin.size}),
     setProductCostsForTest:(payload)=>importProductCosts(payload),
     resolveProductCostForTest:(sku,asin="")=>resolveProductCostRecord(sku,asin,AdsStore.currentContext||UnifiedDecisionEngine.context()),
