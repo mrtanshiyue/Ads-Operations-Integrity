@@ -123,3 +123,4 @@ for (const forbidden of [
 }
 
 console.log('Progressive Query-first loader and shop UI invariants passed');
+await import('./test-query-native-governance-gate.mjs');
