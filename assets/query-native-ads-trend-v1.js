@@ -1,8 +1,7 @@
 (() => {
   'use strict';
 
-  const CONTROLLER_VERSION = '1.0.0';
-  const DEFAULT_ATTRIBUTION_DAYS = 7;
+  const CONTROLLER_VERSION = '1.1.0';
   const DAY_MS = 86400000;
   let chart = null;
   let generation = 0;
@@ -75,7 +74,7 @@
 
   const queryUnsupportedReason = filters => {
     if (filters.sourceFile) return '当前 Query 分析表尚未保留来源文件维度，请清空“来源文件”筛选或使用显式 Raw 兼容模式。';
-    if (filters.adProduct && filters.adProduct !== 'SP') return '当前 Warehouse 广告 Query 仅能可靠识别 Sponsored Products；其他广告类型仍需 Raw 明细。';
+    if (filters.adProduct) return '当前 Warehouse 广告源报表没有可验证的广告产品类型维度，请清空“广告类型”筛选或使用显式 Raw 兼容模式。';
     return '';
   };
 
@@ -118,13 +117,22 @@
     return date.toISOString().slice(0, 10);
   };
 
-  const isMature = (dateValue, attributionDays, bufferDays) => {
+  const attributionDays = value => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    const days = Math.trunc(parsed);
+    return days >= 1 && days <= 30 ? days : null;
+  };
+
+  const maturityState = (dateValue, attributionWindowDays, bufferDays) => {
     const date = parseDate(dateValue);
-    if (!date) return false;
+    const days = attributionDays(attributionWindowDays);
+    if (!date || days === null) return 'unknown';
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
     const age = Math.floor((today.getTime() - date.getTime()) / DAY_MS);
-    return age >= Math.max(1, number(attributionDays) || DEFAULT_ATTRIBUTION_DAYS) + bufferDays;
+    return age >= days + bufferDays ? 'mature' : 'pending';
   };
 
   const emptyPeriod = label => ({
@@ -133,6 +141,8 @@
     clicks: 0,
     spend: 0,
     pendingSpend: 0,
+    attributionUnknownSpend: 0,
+    attributionMaturityTrusted: true,
     sales: 0,
     orders: 0,
     units: 0,
@@ -176,25 +186,33 @@
     };
   };
 
-  const aggregateAds = (rows, grain, config) => {
+  const aggregateAds = (rows, grain, config, governance = null) => {
     const map = new Map();
+    const attributionReady = Boolean(governance?.readiness?.attributionMaturityReady);
     for (const row of rows || []) {
       const key = periodKey(row.date, grain);
       const period = ensurePeriod(map, key);
       period.impressions += number(row.impressions ?? row.impr);
       period.clicks += number(row.clicks);
-      const mature = isMature(
+      const maturity = maturityState(
         row.date,
-        row.attributionWindowDays || DEFAULT_ATTRIBUTION_DAYS,
+        attributionReady ? row.attributionWindowDays : null,
         config.attributionBufferDays,
       );
-      if (mature) {
+      if (maturity === 'mature') {
         period.spend += number(row.spend);
         period.sales += number(row.sales);
         period.orders += number(row.orders);
         period.units += number(row.units);
-      } else {
+      } else if (maturity === 'pending') {
         period.pendingSpend += number(row.spend);
+      } else {
+        period.attributionMaturityTrusted = false;
+        period.attributionUnknownSpend += number(row.spend);
+        period.spend += number(row.spend);
+        period.sales += number(row.sales);
+        period.orders += number(row.orders);
+        period.units += number(row.units);
       }
     }
     return [...map.values()]
@@ -210,15 +228,12 @@
       const period = ensurePeriod(map, key);
       period.impressions += number(row.impressions);
       period.clicks += number(row.clicks);
-      const mature = isMature(date, DEFAULT_ATTRIBUTION_DAYS, config.attributionBufferDays);
-      if (mature) {
-        period.spend += number(row.adSpend);
-        period.sales += number(row.adSales);
-        period.orders += number(row.adOrders);
-        period.units += number(row.adUnits);
-      } else {
-        period.pendingSpend += number(row.adSpend);
-      }
+      period.attributionMaturityTrusted = false;
+      period.attributionUnknownSpend += number(row.adSpend);
+      period.spend += number(row.adSpend);
+      period.sales += number(row.adSales);
+      period.orders += number(row.adOrders);
+      period.units += number(row.adUnits);
       if (row.netProductSales !== null && row.netProductSales !== undefined) {
         period.transactionSales += number(row.netProductSales);
         period.transactionAvailable = true;
@@ -228,6 +243,12 @@
       .sort((left, right) => left.label.localeCompare(right.label))
       .map(period => estimateEconomics(period, config));
   };
+
+  const seriesAttributionTrusted = series => Boolean(
+    Array.isArray(series)
+    && series.length
+    && series.every(row => row.attributionMaturityTrusted === true),
+  );
 
   const ensureControls = () => {
     let controls = byId('queryNativeTrendControls');
@@ -299,7 +320,7 @@
     };
   };
 
-  const buildDatasets = (series, mode, theme) => {
+  const buildDatasets = (series, mode, theme, attributionMaturityTrusted) => {
     if (mode === 'conversion') {
       return [
         { type: 'line', label: 'CTR %', data: series.map(row => row.ctr * 100), borderColor: theme.accent, tension: 0.28, pointRadius: 1.5, yAxisID: 'y' },
@@ -311,10 +332,34 @@
     if (mode === 'business') {
       const datasets = [
         { type: 'bar', label: 'Ad Sales', data: series.map(row => row.sales), backgroundColor: `${theme.accent}88`, borderRadius: 3, yAxisID: 'y' },
-        { type: 'bar', label: 'Mature Spend', data: series.map(row => row.spend), backgroundColor: `${theme.bad}66`, borderRadius: 3, yAxisID: 'y' },
-        { type: 'bar', label: 'Pending Spend', data: series.map(row => row.pendingSpend), backgroundColor: `${theme.muted}44`, borderRadius: 3, yAxisID: 'y' },
-        { type: 'line', label: 'Base Contribution Estimate', data: series.map(row => row.contributionProfit), borderColor: theme.good, tension: 0.28, pointRadius: 1.5, yAxisID: 'y' },
+        {
+          type: 'bar',
+          label: attributionMaturityTrusted ? 'Mature Spend' : 'Reported Spend',
+          data: series.map(row => row.spend),
+          backgroundColor: `${theme.bad}66`,
+          borderRadius: 3,
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: attributionMaturityTrusted ? 'Mature Contribution Estimate' : 'Reported Contribution Estimate',
+          data: series.map(row => row.contributionProfit),
+          borderColor: theme.good,
+          tension: 0.28,
+          pointRadius: 1.5,
+          yAxisID: 'y',
+        },
       ];
+      if (attributionMaturityTrusted && series.some(row => row.pendingSpend > 0)) {
+        datasets.splice(2, 0, {
+          type: 'bar',
+          label: 'Pending Spend',
+          data: series.map(row => row.pendingSpend),
+          backgroundColor: `${theme.muted}44`,
+          borderRadius: 3,
+          yAxisID: 'y',
+        });
+      }
       if (series.some(row => row.transactionAvailable)) {
         datasets.push({
           type: 'line',
@@ -384,7 +429,8 @@
     if (!canvas || !window.Chart) return;
     const mode = currentMode();
     const theme = chartTheme();
-    const datasets = buildDatasets(series, mode, theme);
+    const attributionMaturityTrusted = Boolean(metadata.attributionMaturityTrusted);
+    const datasets = buildDatasets(series, mode, theme, attributionMaturityTrusted);
     const titles = {
       efficiency: 'Query-native 效率趋势',
       conversion: 'Query-native 转化趋势',
@@ -392,9 +438,12 @@
     };
     const scopeLabel = metadata.accountLevel ? '账户范围' : '当前广告筛选范围';
     const sourceLabel = metadata.source === 'raw-compat' ? 'Raw 兼容' : 'TiDB Query';
+    const attributionWarning = attributionMaturityTrusted
+      ? '归因成熟度使用源数据可验证窗口与当前缓冲天数计算。'
+      : '源报表未提供可验证归因窗口；当前展示已回传指标，不标记成熟/未成熟，不能据此授权自动竞价。';
     const warning = mode === 'business'
-      ? '基础贡献为当前手工成本参数估算；不会静默混入 Raw 业务、交易或商品成本库。'
-      : '归因成熟度按 SP 7 天窗口与当前缓冲天数计算。';
+      ? `基础贡献为当前手工成本参数估算；不会静默混入 Raw 业务、交易或商品成本库。${attributionWarning}`
+      : attributionWarning;
     setTrendCopy(
       titles[mode],
       `${sourceLabel} · ${scopeLabel} · ${metadata.grain.toUpperCase()} · ${warning}`,
@@ -418,6 +467,7 @@
       throw error;
     }
     const accountLevel = !hasDetailFilters(filters);
+    const config = economicsConfig();
     if (accountLevel) {
       const payload = await adapter.overview({
         scope: filters.scope,
@@ -426,10 +476,14 @@
         grain: 'day',
         force,
       });
+      const series = aggregateOverview(payload.series, filters.grain, config);
       return {
         source: payload.source || 'query-tidb',
         accountLevel: true,
-        series: aggregateOverview(payload.series, filters.grain, economicsConfig()),
+        series,
+        governance: null,
+        attributionMaturityTrusted: false,
+        bidGovernanceReady: false,
       };
     }
     const payload = await adapter.ads({
@@ -438,10 +492,15 @@
       force,
       maxRows: 300000,
     });
+    const series = aggregateAds(payload.rows, filters.grain, config, payload.governance);
     return {
       source: payload.source || 'query-tidb',
       accountLevel: false,
-      series: aggregateAds(payload.rows, filters.grain, economicsConfig()),
+      series,
+      governance: payload.governance || null,
+      attributionMaturityTrusted: Boolean(payload.governance?.readiness?.attributionMaturityReady)
+        && seriesAttributionTrusted(series),
+      bidGovernanceReady: Boolean(payload.governance?.readiness?.bidGovernanceReady),
       truncated: Boolean(payload.truncated),
     };
   };
@@ -455,10 +514,14 @@
       force,
       maxRows: 300000,
     });
+    const series = aggregateAds(payload.rows, filters.grain, economicsConfig(), payload.governance);
     return {
       source: payload.source || 'raw-compat',
       accountLevel: !hasDetailFilters(filters),
-      series: aggregateAds(payload.rows, filters.grain, economicsConfig()),
+      series,
+      governance: payload.governance || null,
+      attributionMaturityTrusted: false,
+      bidGovernanceReady: false,
       truncated: false,
     };
   };
@@ -494,6 +557,8 @@
           count: result.series.length,
           accountLevel: result.accountLevel,
           grain: filters.grain,
+          attributionMaturityTrusted: Boolean(result.attributionMaturityTrusted),
+          bidGovernanceReady: Boolean(result.bidGovernanceReady),
         },
       }));
       return lastResult;
