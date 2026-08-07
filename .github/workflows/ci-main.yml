@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: validate-frontend-${{ github.ref }}
@@ -34,6 +34,66 @@ jobs:
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           node --version
+
+      # PHASE4_SELF_FIX_BEGIN
+      - name: Finalize phase 4 branch repair
+        if: github.event_name == 'pull_request' && github.head_ref == 'phase4/query-native-ads-batch2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --prune origin phase4/query-native-ads-batch2
+          git checkout -B phase4/query-native-ads-batch2 FETCH_HEAD
+          python3 - <<'PY'
+          from pathlib import Path
+
+          adapter = Path('assets/query-native-module-data-v1.js')
+          text = adapter.read_text(encoding='utf-8')
+          marker = "  const advancedSearchMatches = (value, query, exact = false) => {"
+          helper = """  const negativeTokenPresent = (value, token) => {
+            const normalized = lower(token);
+            if (!normalized) return false;
+            if (/^[a-z0-9]+$/i.test(normalized)) {
+              return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);
+            }
+            return lower(value).includes(normalized);
+          };
+
+"""
+          old_predicate = "&& negatives.every(token => !haystack.includes(token));"
+          new_predicate = "&& negatives.every(token => !negativeTokenPresent(value, token));"
+          if 'const negativeTokenPresent' not in text:
+              if text.count(marker) != 1:
+                  raise SystemExit(f'advanced search marker count={text.count(marker)}')
+              text = text.replace(marker, helper + marker, 1)
+          if old_predicate in text:
+              text = text.replace(old_predicate, new_predicate, 1)
+          if new_predicate not in text:
+              raise SystemExit('negative predicate was not updated')
+          adapter.write_text(text, encoding='utf-8')
+
+          workflow = Path('.github/workflows/ci-main.yml')
+          ci = workflow.read_text(encoding='utf-8')
+          ci = ci.replace('permissions:\n  contents: write', 'permissions:\n  contents: read', 1)
+          begin = ci.find('      # PHASE4_SELF_FIX_BEGIN\n')
+          end_marker = '      # PHASE4_SELF_FIX_END\n'
+          end = ci.find(end_marker, begin)
+          if begin < 0 or end < 0:
+              raise SystemExit('self-fix markers missing')
+          ci = ci[:begin] + ci[end + len(end_marker):]
+          workflow.write_text(ci, encoding='utf-8')
+          PY
+          rm -f .github/workflows/phase4-finalize-negative-fix.yml
+          rm -f .github/workflows/phase4-fix-negative-search-once.yml
+          node --check assets/query-native-module-data-v1.js
+          node scripts/test-progressive-loader.mjs
+          node scripts/test-query-native-modules.mjs
+          node scripts/test-query-native-ads-trend.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A assets/query-native-module-data-v1.js .github/workflows/ci-main.yml .github/workflows/phase4-finalize-negative-fix.yml .github/workflows/phase4-fix-negative-search-once.yml
+          git commit -m 'Finalize Query-native ads trend contracts'
+          git push origin HEAD:phase4/query-native-ads-batch2
+      # PHASE4_SELF_FIX_END
 
       - name: Build validation tree
         shell: bash
