@@ -157,6 +157,7 @@ jobs:
           grep -Fq "__warehouseRetry" assets/private-cloud-warehouse-v4.js
           grep -Fq "retryMaxMs: 15000" assets/private-cloud-warehouse-v4.js
           grep -Fq "const CLIENT_VERSION = '1.3.0'" assets/private-cloud-query-v1.js
+          grep -Fq "const QUERY_NATIVE_ADAPTER_VERSION = '1.2.0'" assets/private-cloud-query-v1.js
           grep -Fq "/api/v1/query/bootstrap" assets/private-cloud-query-v1.js
           grep -Fq "If-None-Match" assets/private-cloud-query-v1.js
           grep -Fq "window.PrivateCloudAds?.queryRequest" assets/private-cloud-query-v1.js
@@ -166,9 +167,11 @@ jobs:
           grep -Fq "query-native-module-data-v1.js?v=" assets/private-cloud-query-v1.js
           grep -Fq "query-native-ads-trend-v1.js?v=" assets/private-cloud-query-v1.js
           grep -Fq "query-native-ads-trend-host-v1.js?v=" assets/private-cloud-query-v1.js
-          grep -Fq "const ADAPTER_VERSION = '1.1.0'" assets/query-native-module-data-v1.js
+          grep -Fq "const ADAPTER_VERSION = '1.2.0'" assets/query-native-module-data-v1.js
           grep -Fq "client.allTransactions" assets/query-native-module-data-v1.js
-          grep -Fq "client.allAds" assets/query-native-module-data-v1.js
+          grep -Fq "client.ads" assets/query-native-module-data-v1.js
+          grep -Fq "ADS_GOVERNANCE_VERSION = 'ads-query-governance-v2'" assets/query-native-module-data-v1.js
+          grep -Fq "nullable-bid-semantics" assets/query-native-module-data-v1.js
           grep -Fq "client.overview" assets/query-native-module-data-v1.js
           grep -Fq "explicit-raw-compatibility" assets/query-native-module-data-v1.js
           grep -Fq "const CONTROLLER_VERSION = '1.0.0'" assets/query-native-ads-trend-v1.js

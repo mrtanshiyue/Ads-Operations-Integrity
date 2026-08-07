@@ -121,9 +121,12 @@ jobs:
           grep -Fq "https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev" assets/private-cloud-warehouse-v4.js
           grep -Fq "const LOADER_VERSION = '4.3.0'" assets/private-cloud-warehouse-v4.js
           grep -Fq "const CLIENT_VERSION = '1.3.0'" assets/private-cloud-query-v1.js
+          grep -Fq "const QUERY_NATIVE_ADAPTER_VERSION = '1.2.0'" assets/private-cloud-query-v1.js
           grep -Fq "ensureQueryNativeModules" assets/private-cloud-query-v1.js
           grep -Fq "query-native-ads-trend-host-v1.js?v=" assets/private-cloud-query-v1.js
-          grep -Fq "const ADAPTER_VERSION = '1.1.0'" assets/query-native-module-data-v1.js
+          grep -Fq "const ADAPTER_VERSION = '1.2.0'" assets/query-native-module-data-v1.js
+          grep -Fq "ADS_GOVERNANCE_VERSION = 'ads-query-governance-v2'" assets/query-native-module-data-v1.js
+          grep -Fq "nullable-bid-semantics" assets/query-native-module-data-v1.js
           grep -Fq "const CONTROLLER_VERSION = '1.0.0'" assets/query-native-ads-trend-v1.js
           grep -Fq "const HOST_VERSION = '1.0.0'" assets/query-native-ads-trend-host-v1.js
           grep -Fq "loadingStrategy: 'query-first-progressive-v1'" assets/private-cloud-warehouse-v4.js

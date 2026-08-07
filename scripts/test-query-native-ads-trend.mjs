@@ -8,9 +8,11 @@ const adapter = readFileSync(new URL('../assets/query-native-module-data-v1.js',
 const controller = readFileSync(new URL('../assets/query-native-ads-trend-v1.js', import.meta.url), 'utf8');
 const host = readFileSync(new URL('../assets/query-native-ads-trend-host-v1.js', import.meta.url), 'utf8');
 
-assert.match(adapter, /const ADAPTER_VERSION = '1\.1\.0'/);
+assert.match(adapter, /const ADAPTER_VERSION = '1\.2\.0'/);
 assert.match(adapter, /async function queryAds\(request\)/);
-assert.match(adapter, /client\.allAds\(\{/);
+assert.match(adapter, /client\.ads\(\{/);
+assert.doesNotMatch(adapter, /client\.allAds\(\{/);
+assert.match(adapter, /ADS_GOVERNANCE_VERSION = 'ads-query-governance-v2'/);
 assert.match(adapter, /async function overview\(options = \{\}\)/);
 assert.match(adapter, /client\.overview\(request\)/);
 assert.match(adapter, /getAdsRowsForQueryCompatibility/);
@@ -35,6 +37,7 @@ assert.match(host, /trendChart = hostGuard/);
 assert.match(host, /__queryNativeTrendHostGuard/);
 
 assert.match(queryClient, /const CLIENT_VERSION = '1\.3\.0'/);
+assert.match(queryClient, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.2\.0'/);
 assert.match(queryClient, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
 assert.match(queryClient, /query-native-ads-trend-v1\.js\?v=\$\{QUERY_NATIVE_TREND_VERSION\}/);
 assert.match(queryClient, /query-native-ads-trend-host-v1\.js\?v=\$\{QUERY_NATIVE_HOST_VERSION\}/);
@@ -59,30 +62,74 @@ class TestCustomEvent {
   }
 }
 
+const governance = {
+  schemaVersion: 'ads-query-governance-v2',
+  scope: 'YTDBNS',
+  stores: ['YTDBNS'],
+  fromMonth: '2026-06',
+  toMonth: '2026-06',
+  fileCount: 1,
+  dimensions: {
+    adProduct: { state: 'source-unavailable', value: null },
+    advertisedAsin: { state: 'source-unavailable', value: null },
+    advertisedSku: { state: 'source-unavailable', value: null },
+    purchasedAsin: { state: 'source-unavailable', value: null },
+    purchasedSku: { state: 'source-unavailable', value: null },
+    targetingId: { state: 'source-present', value: null },
+    targetBid: { state: 'source-present', value: null },
+    targetingType: { state: 'source-present', value: null },
+    matchType: { state: 'source-present', value: null },
+    reportGranularity: { state: 'inferred', value: 'day' },
+    attributionWindowDays: { state: 'source-unavailable', value: null },
+    sourceFile: { state: 'catalog-derived', value: null },
+  },
+  readiness: {
+    targetingIdentityReady: true,
+    bidSourceColumnReady: true,
+    bidValueNullabilityTrusted: true,
+    adProductReady: false,
+    advertisedProductIdentityReady: false,
+    attributionMaturityReady: false,
+    bidGovernanceReady: false,
+    campaignStudioReady: false,
+  },
+  legacyCompatibility: {
+    storedAdProductDefault: 'SP',
+    suppressUnprovenAdProduct: true,
+    bidNullability: 'source-null-preserved',
+  },
+};
+
 const queryRows = [
   {
     id: 'ad-1', storeId: 'YTDBNS', date: '2026-06-01',
     portfolio: 'Core', campaign: 'Campaign A', adGroup: 'Group 1',
     searchTerm: 'reading glasses women', targeting: 'reading glasses',
-    targetingType: 'manual', matchType: 'EXACT', bid: 0.72,
+    targetingId: 't1', targetingType: 'manual', matchType: 'EXACT', bid: 0.72,
+    bidValueTrusted: true, governanceReady: false,
+    adProduct: null, advertisedAsin: null, advertisedSku: null, attributionWindowDays: null,
     impressions: 1000, clicks: 50, spend: 20, orders: 5, sales: 100, units: 5,
-    metrics: { adProduct: 'SP', advertisedAsin: 'B000000001', attributionWindowDays: 7 },
+    metrics: { targetBid: 0.72 },
   },
   {
     id: 'ad-1', storeId: 'YTDBNS', date: '2026-06-01',
     portfolio: 'Core', campaign: 'Campaign A', adGroup: 'Group 1',
     searchTerm: 'reading glasses women', targeting: 'reading glasses',
-    targetingType: 'manual', matchType: 'EXACT', bid: 0.72,
+    targetingId: 't1', targetingType: 'manual', matchType: 'EXACT', bid: 0.72,
+    bidValueTrusted: true, governanceReady: false,
+    adProduct: null, advertisedAsin: null, advertisedSku: null, attributionWindowDays: null,
     impressions: 1000, clicks: 50, spend: 20, orders: 5, sales: 100, units: 5,
-    metrics: { adProduct: 'SP', advertisedAsin: 'B000000001', attributionWindowDays: 7 },
+    metrics: { targetBid: 0.72 },
   },
   {
     id: 'ad-2', storeId: 'YTDBNS', date: '2026-06-02',
     portfolio: 'Other', campaign: 'Campaign B', adGroup: 'Group 2',
     searchTerm: 'reading glasses men', targeting: 'reading glasses',
-    targetingType: 'manual', matchType: 'BROAD', bid: 0.40,
+    targetingId: 't2', targetingType: 'manual', matchType: 'BROAD', bid: null,
+    bidValueTrusted: true, governanceReady: false,
+    adProduct: null, advertisedAsin: null, advertisedSku: null, attributionWindowDays: null,
     impressions: 500, clicks: 20, spend: 12, orders: 1, sales: 25, units: 1,
-    metrics: { adProduct: 'SP' },
+    metrics: { targetBid: null },
   },
 ];
 
@@ -93,9 +140,9 @@ const window = {
   removeEventListener() {},
   dispatchEvent(event) { emitted.push(event); },
   PrivateCloudQuery: {
-    async allAds(options) {
+    async ads(options) {
       queryCalls.push(options);
-      return { rows: queryRows, nextOffset: null };
+      return { rows: queryRows, nextOffset: null, governance };
     },
     async allTransactions() {
       return { rows: [], nextOffset: null };
@@ -154,7 +201,6 @@ const adsResult = await window.QueryNativeModuleData.ads({
   campaign: 'Campaign A',
   matchType: 'EXACT',
   adType: 'manual',
-  adProduct: 'SP',
   search: 'reading -men',
   force: true,
 });
@@ -164,9 +210,12 @@ assert.equal(adsResult.source, 'query-tidb');
 assert.equal(adsResult.rows.length, 1, 'Query ads rows must be deduplicated and client-filtered');
 assert.equal(adsResult.rows[0].impr, 1000);
 assert.equal(adsResult.rows[0].currentBid, 0.72);
-assert.equal(adsResult.rows[0].advertisedAsin, 'B000000001');
-assert.equal(adsResult.rows[0].attributionWindowDays, 7);
-assert.equal(adsResult.rows[0].adProduct, 'SP');
+assert.equal(adsResult.rows[0].advertisedAsin, null);
+assert.equal(adsResult.rows[0].attributionWindowDays, null);
+assert.equal(adsResult.rows[0].adProduct, null);
+assert.equal(adsResult.rows[0].bidValueTrusted, true);
+assert.equal(adsResult.governance.readiness.bidValueNullabilityTrusted, true);
+assert.equal(adsResult.governance.readiness.bidGovernanceReady, false);
 
 const overviewResult = await window.QueryNativeModuleData.overview({
   scope: 'YTDBNS',
@@ -190,8 +239,9 @@ const rawResult = await window.QueryNativeModuleData.ads({
 assert.equal(rawResult.source, 'raw-compat');
 assert.equal(rawResult.rows.length, 1);
 assert.equal(rawResult.rows[0].impressions, 200);
+assert.equal(rawResult.governance.readiness.bidGovernanceReady, false);
 
-window.PrivateCloudQuery.allAds = async () => {
+window.PrivateCloudQuery.ads = async () => {
   throw new Error('ads query unavailable');
 };
 window.QueryNativeModuleData.clearMemoryCache();
