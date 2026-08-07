@@ -1,10 +1,28 @@
 (() => {
   'use strict';
 
-  const CLIENT_VERSION = '1.2.0';
+  const SCRIPT_URL = document.currentScript?.src
+    || new URL('assets/private-cloud-query-v1.js', window.location.href).href;
+  const CLIENT_VERSION = '1.3.0';
   const DEFAULT_PAGE_SIZE = 250;
   const MAX_PAGE_SIZE = 500;
+  const QUERY_NATIVE_ADAPTER_VERSION = '1.1.0';
+  const QUERY_NATIVE_TREND_VERSION = '1.0.0';
+  const QUERY_NATIVE_HOST_VERSION = '1.0.0';
+  const QUERY_NATIVE_ADAPTER_URL = new URL(
+    `./query-native-module-data-v1.js?v=${QUERY_NATIVE_ADAPTER_VERSION}`,
+    SCRIPT_URL,
+  ).href;
+  const QUERY_NATIVE_TREND_URL = new URL(
+    `./query-native-ads-trend-v1.js?v=${QUERY_NATIVE_TREND_VERSION}`,
+    SCRIPT_URL,
+  ).href;
+  const QUERY_NATIVE_HOST_URL = new URL(
+    `./query-native-ads-trend-host-v1.js?v=${QUERY_NATIVE_HOST_VERSION}`,
+    SCRIPT_URL,
+  ).href;
   const responseCache = new Map();
+  const scriptLoads = new Map();
   const state = {
     bootstrap: null,
     status: null,
@@ -14,6 +32,7 @@
     source: 'unknown',
     dataFingerprint: '',
     lastCacheState: 'none',
+    moduleAssetsReady: false,
   };
 
   const normalizeScope = value => {
@@ -230,6 +249,50 @@
     window.dispatchEvent(new CustomEvent(name, { detail }));
   }
 
+  function loadVersionedScript(url, datasetKey) {
+    if (scriptLoads.has(url)) return scriptLoads.get(url);
+    const existing = [...document.scripts].find(script => script.src === url);
+    if (existing?.dataset?.loaded === '1') return Promise.resolve(existing);
+    const promise = new Promise((resolve, reject) => {
+      const script = existing || document.createElement('script');
+      const finish = () => {
+        script.dataset.loaded = '1';
+        resolve(script);
+      };
+      const fail = () => reject(clientError(503, `Query-native 资产加载失败：${url}`));
+      script.addEventListener('load', finish, { once: true });
+      script.addEventListener('error', fail, { once: true });
+      if (!existing) {
+        script.src = url;
+        script.async = false;
+        script.dataset[datasetKey] = '1';
+        document.head.appendChild(script);
+      }
+    });
+    scriptLoads.set(url, promise);
+    return promise;
+  }
+
+  async function ensureQueryNativeModules() {
+    if (window.QueryNativeModuleData?.version !== QUERY_NATIVE_ADAPTER_VERSION) {
+      await loadVersionedScript(QUERY_NATIVE_ADAPTER_URL, 'queryNativeAdapter');
+    }
+    if (window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION) {
+      await loadVersionedScript(QUERY_NATIVE_TREND_URL, 'queryNativeAdsTrend');
+    }
+    if (window.QueryNativeAdsTrendHost?.version !== QUERY_NATIVE_HOST_VERSION) {
+      await loadVersionedScript(QUERY_NATIVE_HOST_URL, 'queryNativeAdsTrendHost');
+    }
+    state.moduleAssetsReady = true;
+    dispatch('lr:query-native-assets-ready', {
+      clientVersion: CLIENT_VERSION,
+      adapterVersion: window.QueryNativeModuleData?.version || '',
+      trendVersion: window.QueryNativeAdsTrend?.version || '',
+      hostVersion: window.QueryNativeAdsTrendHost?.version || '',
+    });
+    return true;
+  }
+
   window.PrivateCloudQuery = Object.freeze({
     version: CLIENT_VERSION,
     apiBase: () => window.PrivateCloudAds?.apiBase || '',
@@ -241,6 +304,7 @@
     allAds: getAllAds,
     allTransactions: getAllTransactions,
     refresh,
+    ensureQueryNativeModules,
     clearMemoryCache: () => responseCache.clear(),
     state: () => ({
       ...state,
@@ -268,6 +332,23 @@
   dispatch('lr:query-client-ready', {
     version: CLIENT_VERSION,
     apiBase: window.PrivateCloudAds?.apiBase || '',
-    capabilities: ['bootstrap', 'etag-memory-cache', 'status', 'overview', 'ads', 'transactions'],
+    capabilities: [
+      'bootstrap',
+      'etag-memory-cache',
+      'status',
+      'overview',
+      'ads',
+      'transactions',
+      'query-native-module-assets',
+    ],
+  });
+
+  ensureQueryNativeModules().catch(error => {
+    state.lastError = String(error?.message || error);
+    console.warn('Query-native module assets failed to load:', error);
+    dispatch('lr:query-native-assets-error', {
+      message: state.lastError,
+      status: Number(error?.status || 0),
+    });
   });
 })();
