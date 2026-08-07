@@ -1,9 +1,36 @@
 (() => {
   'use strict';
 
-  const GATE_VERSION = '1.0.0';
+  const GATE_VERSION = '1.1.0';
   const GOVERNANCE_VERSION = 'ads-query-governance-v2';
   const STALE_MS = 30000;
+  const PREFLIGHT_CARD_ID = 'adsSourcePreflightCard';
+  const PREFLIGHT_FILE_MAX_BYTES = 25 * 1024 * 1024;
+  const PREFLIGHT_MAX_SCAN_ROWS = 30;
+  const PREFLIGHT_EXTENSIONS = /\.(csv|tsv|xlsx|xls|xlsb)$/i;
+  const DIMENSION_LABELS = Object.freeze({
+    reportDate: '日期',
+    campaignId: 'Campaign ID',
+    adGroupId: 'Ad Group ID',
+    searchTerm: '搜索词',
+    impressions: 'Impressions',
+    clicks: 'Clicks',
+    spend: 'Spend',
+    orders: 'Orders',
+    sales: 'Sales',
+    targetingId: 'Targeting ID',
+    targetBid: 'Bid',
+    targetingType: 'Targeting Type',
+    matchType: 'Match Type',
+    adProduct: '广告产品类型',
+    advertisedAsin: 'Advertised ASIN',
+    advertisedSku: 'Advertised SKU',
+    purchasedAsin: 'Purchased ASIN',
+    purchasedSku: 'Purchased SKU',
+    attributionWindowDays: '归因窗口',
+    reportGranularity: '报表粒度',
+    sourceFile: '源文件',
+  });
   const ACTIONS = Object.freeze({
     btnAIBulk: 'bid',
     btnExportNeg: 'bid',
@@ -29,6 +56,9 @@
     lastError: '',
     lastCheckedAt: 0,
     bypassElement: null,
+    preflightStatus: 'idle',
+    preflightResult: null,
+    preflightError: '',
   };
 
   const byId = id => document.getElementById(id);
@@ -104,6 +134,9 @@
     bidReasons: reasonsForKind('bid'),
     campaignReasons: reasonsForKind('campaign'),
     governance: state.governance,
+    preflightStatus: state.preflightStatus,
+    preflightResult: state.preflightResult,
+    preflightError: state.preflightError,
   });
 
   const refresh = async ({ force = false } = {}) => {
@@ -244,6 +277,165 @@
     });
   };
 
+  const ensurePreflightCard = () => {
+    const panel = byId('privateCloudImportPanel');
+    if (!panel || byId(PREFLIGHT_CARD_ID)) return Boolean(byId(PREFLIGHT_CARD_ID));
+    const card = document.createElement('div');
+    card.id = PREFLIGHT_CARD_ID;
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', '广告报表兼容性预检');
+    card.style.cssText = [
+      'display:grid',
+      'gap:9px',
+      'width:100%',
+      'min-width:0',
+      'padding:12px',
+      'border:1px solid rgba(100,116,139,.22)',
+      'border-radius:12px',
+      'background:rgba(248,250,252,.84)',
+      'box-sizing:border-box',
+    ].join(';');
+    card.innerHTML = `
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+        <div style="min-width:0;">
+          <div style="font-weight:700;font-size:13px;color:#0f172a;">广告报表兼容性预检</div>
+          <div style="margin-top:2px;font-size:11px;line-height:1.45;color:#64748b;">仅在浏览器本地读取表头；报表内容不会上传，也不会写入 Warehouse。</div>
+        </div>
+        <span style="flex:none;font-size:10px;font-weight:700;color:#475569;border:1px solid rgba(100,116,139,.22);border-radius:999px;padding:3px 7px;background:#fff;">READ ONLY</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <button id="btnAdsSourcePreflight" type="button" style="border:0;border-radius:9px;padding:8px 11px;background:#0f172a;color:#fff;font:600 12px/1 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer;">选择广告报表预检</button>
+        <input id="adsSourcePreflightFile" type="file" accept=".csv,.tsv,.xlsx,.xls,.xlsb" hidden>
+        <span id="adsSourcePreflightStatus" style="font-size:11px;color:#64748b;">候选资格 ≠ 执行授权</span>
+      </div>
+      <pre id="adsSourcePreflightResult" hidden style="margin:0;padding:9px 10px;border-radius:9px;background:#fff;border:1px solid rgba(100,116,139,.18);white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.55 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#334155;"></pre>`;
+    const statusRow = [...panel.children].find(child => child.matches?.('.cloudStatusRow')) || null;
+    panel.insertBefore(card, statusRow);
+    const button = byId('btnAdsSourcePreflight');
+    const input = byId('adsSourcePreflightFile');
+    button?.addEventListener('click', () => input?.click());
+    input?.addEventListener('change', () => {
+      const file = input.files?.[0] || null;
+      input.value = '';
+      if (file) runSourcePreflightFile(file).catch(error => renderPreflightError(error));
+    });
+    return true;
+  };
+
+  const runSourcePreflightFile = async file => {
+    const status = byId('adsSourcePreflightStatus');
+    const result = byId('adsSourcePreflightResult');
+    state.preflightStatus = 'reading';
+    state.preflightResult = null;
+    state.preflightError = '';
+    if (status) status.textContent = '正在本地读取表头…';
+    if (result) result.hidden = true;
+    const headers = await readCandidateHeaders(file);
+    const client = window.PrivateCloudQuery;
+    if (typeof client?.preflightAdsSource !== 'function') throw gateError('Query Client 预检能力尚未就绪');
+    state.preflightStatus = 'checking';
+    if (status) status.textContent = `已识别 ${headers.length} 列，正在校验治理契约…`;
+    const payload = await client.preflightAdsSource(headers, { timeoutMs: 60000 });
+    if (payload.activation?.authorizesExecution !== false) throw gateError('预检返回了非法执行授权');
+    state.preflightStatus = 'ready';
+    state.preflightResult = payload;
+    state.preflightError = '';
+    renderPreflightResult(file, payload);
+    dispatch('lr:ads-source-preflight-ui-result', {
+      schemaVersion: payload.schemaVersion || '',
+      analysisReady: Boolean(payload.analysisReady),
+      readiness: { ...(payload.readiness || {}) },
+      missingForBidGovernance: [...(payload.missingForBidGovernance || [])],
+      missingForCampaignStudio: [...(payload.missingForCampaignStudio || [])],
+      executionAuthorized: false,
+    });
+    return payload;
+  };
+
+  const readCandidateHeaders = async file => {
+    if (!file || typeof file.arrayBuffer !== 'function') throw gateError('请选择有效的本地报表文件');
+    if (!PREFLIGHT_EXTENSIONS.test(text(file.name))) throw gateError('仅支持 CSV/TSV/XLSX/XLS/XLSB 广告报表');
+    if (Number(file.size || 0) > PREFLIGHT_FILE_MAX_BYTES) throw gateError('预检文件超过 25 MB，请先导出更小的候选报表');
+    const xlsx = window.XLSX;
+    if (typeof xlsx?.read !== 'function' || typeof xlsx?.utils?.sheet_to_json !== 'function') {
+      throw gateError('本地 Excel 解析器尚未就绪');
+    }
+    const bytes = await file.arrayBuffer();
+    const workbook = xlsx.read(bytes, {
+      type: 'array',
+      dense: true,
+      sheetRows: PREFLIGHT_MAX_SCAN_ROWS,
+      cellDates: false,
+    });
+    const sheetName = workbook.SheetNames?.[0];
+    const sheet = sheetName ? workbook.Sheets?.[sheetName] : null;
+    if (!sheet) throw gateError('报表没有可读取的工作表');
+    const rows = xlsx.utils.sheet_to_json(sheet, {
+      header: 1,
+      raw: false,
+      defval: '',
+      blankrows: false,
+    });
+    return selectLikelyHeaderRow(rows);
+  };
+
+  const selectLikelyHeaderRow = rows => {
+    let selected = [];
+    let selectedCount = 0;
+    (Array.isArray(rows) ? rows.slice(0, PREFLIGHT_MAX_SCAN_ROWS) : []).forEach(row => {
+      if (!Array.isArray(row)) return;
+      const headers = row.map(value => text(value).normalize('NFKC')).filter(Boolean);
+      if (headers.length > selectedCount) {
+        selected = headers;
+        selectedCount = headers.length;
+      }
+    });
+    if (selectedCount < 4) throw gateError('前 30 行未识别到有效广告报表表头');
+    return selected;
+  };
+
+  const renderPreflightResult = (file, payload) => {
+    const status = byId('adsSourcePreflightStatus');
+    const result = byId('adsSourcePreflightResult');
+    const readiness = payload?.readiness || {};
+    const bidMissing = friendlyDimensions(payload?.missingForBidGovernance);
+    const campaignMissing = friendlyDimensions(payload?.missingForCampaignStudio);
+    if (status) status.textContent = '预检完成 · 仅候选评估，不改变生产执行权限';
+    if (!result) return;
+    result.textContent = [
+      `本地文件：${text(file?.name) || '未命名文件'}`,
+      `识别表头：${Number(payload?.headerCount || 0)} 列`,
+      `Query 分析候选：${yesNo(readiness.queryAnalysisCandidate)}`,
+      `Bid Governance 候选：${yesNo(readiness.bidGovernanceCandidate)}`,
+      `Campaign Studio 候选：${yesNo(readiness.campaignStudioCandidate)}`,
+      `Bid 缺失维度：${bidMissing || '无'}`,
+      `Campaign 缺失维度：${campaignMissing || '无'}`,
+      '执行授权：否（Preflight 永不授权执行）',
+      '数据写入：否 · Current Slot 变更：否 · 完整报表上传：否',
+    ].join('\n');
+    result.hidden = false;
+  };
+
+  const renderPreflightError = error => {
+    state.preflightStatus = 'error';
+    state.preflightResult = null;
+    state.preflightError = text(error?.message || error);
+    const status = byId('adsSourcePreflightStatus');
+    const result = byId('adsSourcePreflightResult');
+    if (status) status.textContent = `预检失败：${state.preflightError || '未知错误'}`;
+    if (result) {
+      result.textContent = '未写入 Warehouse；未改变 Current Slot；未开放任何执行权限。';
+      result.hidden = false;
+    }
+  };
+
+  const friendlyDimensions = values => (Array.isArray(values) ? values : [])
+    .map(value => DIMENSION_LABELS[value] || text(value))
+    .filter(Boolean)
+    .join('、');
+
+  const yesNo = value => value ? '是' : '否';
+
   const adoptGovernance = governance => {
     try {
       state.governance = validateGovernance(governance);
@@ -294,15 +486,21 @@
     window.addEventListener('lr:module-data-ready', event => {
       if (event.detail?.module === 'ads' && event.detail?.governance) adoptGovernance(event.detail.governance);
     });
+    window.addEventListener('lr:query-client-ready', () => ensurePreflightCard());
     window.addEventListener('lr:shop-change', () => clear('店铺作用域已变化，等待重新校验'));
     window.addEventListener('lr:cloud-overview-ready', () => clear('数据指纹可能变化，等待重新校验'));
     ['dateStart', 'dateEnd'].forEach(id => byId(id)?.addEventListener('change', () => clear('日期范围已变化，等待重新校验')));
-    const observer = new MutationObserver(() => updateActionUi());
+    const observer = new MutationObserver(() => {
+      updateActionUi();
+      ensurePreflightCard();
+    });
     observer.observe(document.documentElement, { childList: true, subtree: true });
     updateActionUi();
+    ensurePreflightCard();
     dispatch('lr:governance-gate-ready', {
       version: GATE_VERSION,
       governedActions: Object.keys(ACTIONS),
+      sourcePreflightUi: true,
     });
   };
 
@@ -313,6 +511,8 @@
     reasons: kind => [...reasonsForKind(kind === 'campaign' ? 'campaign' : 'bid')],
     state: statusSnapshot,
     governedActions: () => ({ ...ACTIONS }),
+    mountSourcePreflight: ensurePreflightCard,
+    selectLikelyHeaderRow,
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
