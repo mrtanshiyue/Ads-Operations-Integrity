@@ -14,6 +14,7 @@
   const QUERY_NATIVE_GATE_VERSION = '1.0.0';
   const QUERY_NATIVE_SOURCE_READINESS_VERSION = '1.0.0';
   const QUERY_NATIVE_BID_INTELLIGENCE_VERSION = '1.0.0';
+  const BID_GOVERNANCE_PARITY_AUDIT_VERSION = '1.0.0';
   const QUERY_NATIVE_TREND_VERSION = '1.1.0';
   const QUERY_NATIVE_HOST_VERSION = '1.0.0';
   const QUERY_NATIVE_ADAPTER_URL = new URL(
@@ -30,6 +31,10 @@
   ).href;
   const QUERY_NATIVE_BID_INTELLIGENCE_URL = new URL(
     `./query-native-bid-intelligence-v1.js?v=${QUERY_NATIVE_BID_INTELLIGENCE_VERSION}`,
+    SCRIPT_URL,
+  ).href;
+  const BID_GOVERNANCE_PARITY_AUDIT_URL = new URL(
+    `./bid-governance-parity-audit-v1.js?v=${BID_GOVERNANCE_PARITY_AUDIT_VERSION}`,
     SCRIPT_URL,
   ).href;
   const QUERY_NATIVE_TREND_URL = new URL(
@@ -370,6 +375,9 @@
     if (window.QueryNativeBidIntelligence?.version !== QUERY_NATIVE_BID_INTELLIGENCE_VERSION) {
       await loadVersionedScript(QUERY_NATIVE_BID_INTELLIGENCE_URL, 'queryNativeBidIntelligence');
     }
+    if (window.BidGovernanceParityAudit?.version !== BID_GOVERNANCE_PARITY_AUDIT_VERSION) {
+      await loadVersionedScript(BID_GOVERNANCE_PARITY_AUDIT_URL, 'bidGovernanceParityAudit');
+    }
     if (window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION) {
       await loadVersionedScript(QUERY_NATIVE_TREND_URL, 'queryNativeAdsTrend');
     }
@@ -383,6 +391,7 @@
       gateVersion: window.QueryNativeGovernanceGate?.version || '',
       sourceReadinessVersion: window.AdsSourceReadinessInspector?.version || '',
       bidIntelligenceVersion: window.QueryNativeBidIntelligence?.version || '',
+      bidGovernanceParityAuditVersion: window.BidGovernanceParityAudit?.version || '',
       trendVersion: window.QueryNativeAdsTrend?.version || '',
       hostVersion: window.QueryNativeAdsTrendHost?.version || '',
     });
@@ -439,6 +448,7 @@
       'ads-source-preflight',
       'ads-source-readiness-inspector',
       'bid-intelligence-preview',
+      'bid-governance-parity-audit',
       'governance-execution-gate',
       'query-native-module-assets',
     ],
