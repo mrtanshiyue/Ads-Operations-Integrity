@@ -1,15 +1,17 @@
 (() => {
   'use strict';
 
-  const ADAPTER_VERSION = '1.1.0';
+  const ADAPTER_VERSION = '1.2.0';
   const QUERY_CLIENT_TIMEOUT_MS = 15000;
   const DEFAULT_MAX_ROWS = 300000;
+  const ADS_GOVERNANCE_VERSION = 'ads-query-governance-v2';
   const detailCache = new Map();
   const state = {
     lastSource: 'none',
     lastModule: 'none',
     lastRequest: null,
     lastError: null,
+    lastGovernance: null,
     cacheEntries: 0,
   };
 
@@ -153,8 +155,12 @@
     return request;
   };
 
-  const normalizeAdProduct = value => String(value || '').trim().toUpperCase();
-  const text = value => String(value || '').trim();
+  const normalizeAdProduct = value => {
+    const normalized = String(value ?? '').trim().toUpperCase();
+    return normalized || null;
+  };
+  const text = value => String(value ?? '').trim();
+  const nullableTextUpper = value => text(value).toUpperCase() || null;
   const lower = value => text(value).toLowerCase();
   const sameText = (left, right) => lower(left) === lower(right);
 
@@ -185,9 +191,9 @@
     normalized.targetingType = text(metricValue(source, 'targetingType'));
     normalized.targetingState = text(metricValue(source, 'targetingState'));
     normalized.matchType = text(metricValue(source, 'matchType'));
-    normalized.currentBid = number(metricValue(source, 'currentBid', metricValue(source, 'bid')));
-    normalized.targetBid = number(metricValue(source, 'targetBid', normalized.currentBid));
-    normalized.bid = normalized.currentBid || normalized.targetBid;
+    normalized.currentBid = nullableNumber(metricValue(source, 'currentBid', metricValue(source, 'bid')));
+    normalized.targetBid = nullableNumber(metricValue(source, 'targetBid', normalized.currentBid));
+    normalized.bid = normalized.currentBid ?? normalized.targetBid;
     normalized.impressions = number(metricValue(source, 'impressions', metricValue(source, 'impr')));
     normalized.impr = normalized.impressions;
     normalized.clicks = number(metricValue(source, 'clicks'));
@@ -197,23 +203,27 @@
     normalized.units = number(metricValue(source, 'units'));
     normalized.newToBrandOrders = number(metricValue(source, 'newToBrandOrders'));
     normalized.newToBrandSales = number(metricValue(source, 'newToBrandSales'));
-    normalized.adProduct = normalizeAdProduct(metricValue(source, 'adProduct', 'SP')) || 'SP';
-    normalized.advertisedAsin = text(metricValue(source, 'advertisedAsin')).toUpperCase();
-    normalized.advertisedSku = text(metricValue(source, 'advertisedSku')).toUpperCase();
-    normalized.purchasedAsin = text(metricValue(source, 'purchasedAsin')).toUpperCase();
-    normalized.purchasedSku = text(metricValue(source, 'purchasedSku')).toUpperCase();
+    normalized.adProduct = normalizeAdProduct(metricValue(source, 'adProduct'));
+    normalized.advertisedAsin = nullableTextUpper(metricValue(source, 'advertisedAsin'));
+    normalized.advertisedSku = nullableTextUpper(metricValue(source, 'advertisedSku'));
+    normalized.purchasedAsin = nullableTextUpper(metricValue(source, 'purchasedAsin'));
+    normalized.purchasedSku = nullableTextUpper(metricValue(source, 'purchasedSku'));
     normalized.sourceFile = text(metricValue(source, 'sourceFile'));
     normalized.reportGranularity = text(metricValue(
       source,
       'reportGranularity',
-      normalized.searchTerm ? 'searchTerm' : 'targeting',
-    ));
-    normalized.attributionWindowDays = boundedInteger(
-      metricValue(source, 'attributionWindowDays', 7),
-      7,
+      metricValue(source, 'granularity'),
+    )) || null;
+    normalized.attributionWindowDays = nullableBoundedInteger(
+      metricValue(source, 'attributionWindowDays'),
       1,
       30,
     );
+    normalized.bidValueTrusted = Boolean(source.bidValueTrusted);
+    normalized.governanceReady = Boolean(source.governanceReady);
+    normalized.sourceCoverage = source.sourceCoverage && typeof source.sourceCoverage === 'object'
+      ? source.sourceCoverage
+      : null;
     normalized.ctr = normalized.impressions > 0 ? normalized.clicks / normalized.impressions : 0;
     normalized.cpc = normalized.clicks > 0 ? normalized.spend / normalized.clicks : 0;
     normalized.cvr = normalized.clicks > 0 ? normalized.orders / normalized.clicks : 0;
@@ -390,19 +400,79 @@
   }
 
   async function queryAds(request) {
-    const client = await waitForQueryClient('allAds');
-    const payload = await client.allAds({
-      scope: request.scope,
-      from: request.from,
-      to: request.to,
-      campaign: request.campaign,
-      maxRows: request.maxRows,
-      limit: 500,
-    });
-    const rows = dedupeAds(payload?.rows).filter(row => adIncluded(row, request));
+    const client = await waitForQueryClient('ads');
+    const collected = await collectGovernedAdPages(client, request);
+    const rows = dedupeAds(collected.rows).filter(row => adIncluded(row, request));
     return resultPayload('ads', rows, request, 'query-tidb', {
-      nextOffset: payload?.nextOffset ?? null,
-      truncated: payload?.nextOffset !== null && payload?.nextOffset !== undefined,
+      nextOffset: collected.nextOffset,
+      truncated: collected.truncated,
+      governance: collected.governance,
+    });
+  }
+
+  async function collectGovernedAdPages(client, request) {
+    const rows = [];
+    const pageSize = 500;
+    let offset = 0;
+    let nextOffset = null;
+    let governance = null;
+    let signature = '';
+    while (rows.length < request.maxRows) {
+      const page = await client.ads({
+        scope: request.scope,
+        from: request.from,
+        to: request.to,
+        campaign: request.campaign,
+        limit: pageSize,
+        offset,
+      });
+      const pageRows = Array.isArray(page?.rows) ? page.rows : [];
+      const pageGovernance = validateAdsGovernance(page?.governance);
+      const pageSignature = governanceSignature(pageGovernance);
+      if (!governance) {
+        governance = pageGovernance;
+        signature = pageSignature;
+      } else if (pageSignature !== signature) {
+        throw moduleError(502, '广告 Query 分页治理契约发生变化，已停止合并结果');
+      }
+      rows.push(...pageRows.slice(0, Math.max(0, request.maxRows - rows.length)));
+      nextOffset = page?.nextOffset ?? null;
+      if (nextOffset === null || nextOffset === undefined || !pageRows.length) break;
+      offset = Number(nextOffset);
+      if (!Number.isSafeInteger(offset) || offset < 0) throw moduleError(502, '广告 Query 分页游标无效');
+    }
+    return {
+      rows,
+      governance: governance || validateAdsGovernance(null),
+      nextOffset: rows.length >= request.maxRows ? nextOffset : null,
+      truncated: rows.length >= request.maxRows && nextOffset !== null && nextOffset !== undefined,
+    };
+  }
+
+  function validateAdsGovernance(governance) {
+    if (!governance || typeof governance !== 'object') {
+      throw moduleError(502, '广告 Query 缺少治理契约，已按 fail-closed 停止读取');
+    }
+    if (governance.schemaVersion !== ADS_GOVERNANCE_VERSION) {
+      throw moduleError(502, `广告 Query 治理版本不兼容：${text(governance.schemaVersion) || 'missing'}`);
+    }
+    if (!governance.readiness || typeof governance.readiness !== 'object') {
+      throw moduleError(502, '广告 Query 治理 readiness 缺失');
+    }
+    return governance;
+  }
+
+  function governanceSignature(governance) {
+    return JSON.stringify({
+      schemaVersion: governance?.schemaVersion || '',
+      scope: governance?.scope || '',
+      stores: governance?.stores || [],
+      fromMonth: governance?.fromMonth || null,
+      toMonth: governance?.toMonth || null,
+      fileCount: governance?.fileCount || 0,
+      dimensions: governance?.dimensions || {},
+      readiness: governance?.readiness || {},
+      legacyCompatibility: governance?.legacyCompatibility || {},
     });
   }
 
@@ -410,7 +480,30 @@
     const getter = window.AdsDashboardApp?.debug?.getAdsRowsForQueryCompatibility;
     if (typeof getter !== 'function') throw moduleError(404, '当前页面没有可用的 Raw 兼容广告数据');
     const rows = dedupeAds(getter()).filter(row => adIncluded(row, request));
-    return resultPayload('ads', rows, request, 'raw-compat', { nextOffset: null, truncated: false });
+    return resultPayload('ads', rows, request, 'raw-compat', {
+      nextOffset: null,
+      truncated: false,
+      governance: rawCompatibilityGovernance(),
+    });
+  }
+
+  function rawCompatibilityGovernance() {
+    return {
+      schemaVersion: 'raw-compat-untrusted-v1',
+      readiness: {
+        targetingIdentityReady: false,
+        bidSourceColumnReady: false,
+        bidValueNullabilityTrusted: false,
+        adProductReady: false,
+        advertisedProductIdentityReady: false,
+        attributionMaturityReady: false,
+        bidGovernanceReady: false,
+        campaignStudioReady: false,
+      },
+      legacyCompatibility: {
+        bidNullability: 'raw-compatibility-untrusted',
+      },
+    };
   }
 
   function resultPayload(module, rows, request, source, extra = {}) {
@@ -430,6 +523,7 @@
       payload.statusMode = request.statusMode;
       payload.marketplace = request.marketplace || null;
     }
+    if (module === 'ads') state.lastGovernance = payload.governance || null;
     state.lastSource = source;
     state.lastModule = module;
     state.lastRequest = { ...request };
@@ -441,6 +535,7 @@
       scope: request.scope,
       from: request.from || null,
       to: request.to || null,
+      governance: module === 'ads' ? payload.governance || null : undefined,
     });
     return payload;
   }
@@ -542,6 +637,21 @@
     return Math.max(minimum, Math.min(maximum, Math.trunc(parsed)));
   }
 
+  function nullableBoundedInteger(value, minimum, maximum) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    const integer = Math.trunc(parsed);
+    if (integer < minimum || integer > maximum) return null;
+    return integer;
+  }
+
+  function nullableNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function number(value) {
     const parsed = Number(value || 0);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -576,6 +686,8 @@
     version: ADAPTER_VERSION,
     capabilities: [
       'ads',
+      'ads-governance-provenance',
+      'nullable-bid-semantics',
       'overview',
       'transactions',
       'period-transactions',
