@@ -191,6 +191,7 @@ for (const forbidden of [
 }
 
 console.log('Progressive Query-first loader and shop UI invariants passed');
+await import('./test-trend-chart-lifecycle.mjs');
 await import('./test-legacy-bid-control-source.mjs');
 await import('./test-query-native-governance-gate.mjs');
 await import('./test-ads-source-readiness-inspector.mjs');
