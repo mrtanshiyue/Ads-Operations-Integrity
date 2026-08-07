@@ -6,6 +6,7 @@ const loader = readFileSync(new URL('../assets/private-cloud-warehouse-v4.js', i
 const query = readFileSync(new URL('../assets/private-cloud-query-v1.js', import.meta.url), 'utf8');
 const sourceReadiness = readFileSync(new URL('../assets/query-native-ads-source-readiness-v1.js', import.meta.url), 'utf8');
 const bidIntelligence = readFileSync(new URL('../assets/query-native-bid-intelligence-v1.js', import.meta.url), 'utf8');
+const parityAudit = readFileSync(new URL('../assets/bid-governance-parity-audit-v1.js', import.meta.url), 'utf8');
 const shopUi = readFileSync(new URL('../assets/generated/inline-script-11.js', import.meta.url), 'utf8');
 
 const section = (source, startNeedle, endNeedle) => {
@@ -25,12 +26,14 @@ assert.match(query, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.2\.0'/);
 assert.match(query, /const QUERY_NATIVE_GATE_VERSION = '1\.0\.0'/);
 assert.match(query, /const QUERY_NATIVE_SOURCE_READINESS_VERSION = '1\.0\.0'/);
 assert.match(query, /const QUERY_NATIVE_BID_INTELLIGENCE_VERSION = '1\.0\.0'/);
+assert.match(query, /const BID_GOVERNANCE_PARITY_AUDIT_VERSION = '1\.0\.0'/);
 assert.match(query, /const QUERY_NATIVE_TREND_VERSION = '1\.1\.0'/);
 assert.match(query, /const QUERY_NATIVE_HOST_VERSION = '1\.0\.0'/);
 assert.match(query, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
 assert.match(query, /query-native-governance-gate-v1\.js\?v=\$\{QUERY_NATIVE_GATE_VERSION\}/);
 assert.match(query, /query-native-ads-source-readiness-v1\.js\?v=\$\{QUERY_NATIVE_SOURCE_READINESS_VERSION\}/);
 assert.match(query, /query-native-bid-intelligence-v1\.js\?v=\$\{QUERY_NATIVE_BID_INTELLIGENCE_VERSION\}/);
+assert.match(query, /bid-governance-parity-audit-v1\.js\?v=\$\{BID_GOVERNANCE_PARITY_AUDIT_VERSION\}/);
 assert.match(query, /query-native-ads-trend-v1\.js\?v=\$\{QUERY_NATIVE_TREND_VERSION\}/);
 assert.match(query, /query-native-ads-trend-host-v1\.js\?v=\$\{QUERY_NATIVE_HOST_VERSION\}/);
 assert.match(query, /async function ensureQueryNativeModules\(\)/);
@@ -42,10 +45,12 @@ assert.ok(
     && query.indexOf('window.AdsSourceReadinessInspector?.version !== QUERY_NATIVE_SOURCE_READINESS_VERSION')
       < query.indexOf('window.QueryNativeBidIntelligence?.version !== QUERY_NATIVE_BID_INTELLIGENCE_VERSION')
     && query.indexOf('window.QueryNativeBidIntelligence?.version !== QUERY_NATIVE_BID_INTELLIGENCE_VERSION')
+      < query.indexOf('window.BidGovernanceParityAudit?.version !== BID_GOVERNANCE_PARITY_AUDIT_VERSION')
+    && query.indexOf('window.BidGovernanceParityAudit?.version !== BID_GOVERNANCE_PARITY_AUDIT_VERSION')
       < query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
     && query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
       < query.indexOf('window.QueryNativeAdsTrendHost?.version !== QUERY_NATIVE_HOST_VERSION'),
-  'Query-native module assets must load in adapter → governance gate → source readiness → bid intelligence → controller → host order',
+  'Query-native module assets must load in adapter → governance gate → source readiness → bid intelligence → parity audit → controller → host order',
 );
 assert.match(sourceReadiness, /const INSPECTOR_VERSION = '1\.0\.0'/);
 assert.match(sourceReadiness, /client\.preflightAdsSource\(normalized\)/);
@@ -59,8 +64,18 @@ assert.match(bidIntelligence, /executionAuthorized: false/);
 assert.match(bidIntelligence, /不生成 Suggested Bid/);
 assert.doesNotMatch(bidIntelligence, /\bAdsStore(?:\.|\[|\?)/, 'Bid intelligence preview must not access the legacy AdsStore object');
 assert.doesNotMatch(bidIntelligence, /suggestedBid|assertActionAllowed|report_slots/);
+assert.match(parityAudit, /const AUDIT_VERSION = '1\.0\.0'/);
+assert.match(parityAudit, /getBidGovScopedRows\('searchTerm'\)/);
+assert.match(parityAudit, /window\.QueryNativeModuleData\.ads/);
+assert.match(parityAudit, /source: 'query'/);
+assert.match(parityAudit, /executionAuthorized: false/);
+assert.match(parityAudit, /migrationCandidate: pass/);
+assert.match(parityAudit, /rawBootstrapFingerprint/);
+assert.match(parityAudit, /dataFingerprint/);
+assert.doesNotMatch(parityAudit, /PrivateCloudAds\?*\.?(?:loadRaw|loadFullHistory|loadCurrentMonth|loadRecentMonths)|QueryNativeGovernanceGate\.(?:adopt|refresh|assertActionAllowed)|suggestedBid|report_slots/);
 assert.match(query, /'ads-source-readiness-inspector'/);
 assert.match(query, /'bid-intelligence-preview'/);
+assert.match(query, /'bid-governance-parity-audit'/);
 assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
@@ -165,3 +180,4 @@ console.log('Progressive Query-first loader and shop UI invariants passed');
 await import('./test-query-native-governance-gate.mjs');
 await import('./test-ads-source-readiness-inspector.mjs');
 await import('./test-query-native-bid-intelligence.mjs');
+await import('./test-bid-governance-parity-audit.mjs');
