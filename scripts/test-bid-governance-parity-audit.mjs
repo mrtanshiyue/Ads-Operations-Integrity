@@ -4,13 +4,14 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../assets/bid-governance-parity-audit-v1.js', import.meta.url), 'utf8');
 
-assert.match(source, /const AUDIT_VERSION = '1\.0\.1'/);
+assert.match(source, /const AUDIT_VERSION = '1\.0\.2'/);
 assert.match(source, /AdsDashboardApp\?\.debug\?\.getBidGovernanceScopedRowsForParity/);
 assert.doesNotMatch(source, /\bgetBidGovScopedRows\(/);
 assert.match(source, /source: 'query'/);
-assert.match(source, /adProduct: 'SP'/);
+assert.match(source, /adProduct: ''/);
 assert.match(source, /executionAuthorized: false/);
-assert.match(source, /migrationCandidate: pass/);
+assert.match(source, /metricParityPass: pass/);
+assert.match(source, /migrationCandidate = Boolean\(comparison\.metricParityPass && adProductScopeProven\)/);
 assert.match(source, /rawBootstrapFingerprint/);
 assert.match(source, /dataFingerprint/);
 assert.match(source, /dataFingerprint 缺失/);
@@ -58,6 +59,7 @@ const cloudState = {
   bootstrap: { coverage: { months: ['2026-06'] } },
 };
 let globalThisQueryRows = [];
+let adProductReady = false;
 const window = {
   ACTIVE_SHOP: 'YTDBNS',
   ShopScope: { get: () => 'YTDBNS' },
@@ -73,7 +75,7 @@ const window = {
         rows: globalThisQueryRows,
         truncated: queryTruncated,
         nextOffset: queryTruncated ? 500 : null,
-        governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true } },
+        governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true, adProductReady } },
       };
     },
   },
@@ -106,11 +108,12 @@ vm.runInContext('const AdsDashboardApp = { debug: { getBidGovernanceScopedRowsFo
 vm.runInContext(source, context, { filename: 'bid-governance-parity-audit-v1.js' });
 
 const audit = window.BidGovernanceParityAudit;
-assert.equal(audit.version, '1.0.1');
+assert.equal(audit.version, '1.0.2');
 
 const exact = audit.compareRows(legacyRows, queryRows);
 assert.equal(exact.verdict, 'pass');
-assert.equal(exact.migrationCandidate, true);
+assert.equal(exact.metricParityPass, true);
+assert.equal(exact.migrationCandidate, false);
 assert.equal(exact.executionAuthorized, false);
 assert.equal(exact.groupOverlap, 1);
 assert.equal(exact.bidMismatch, 0);
@@ -180,12 +183,25 @@ queryTruncated = false;
 const runResult = await audit.run({ force: true });
 assert.equal(runResult.status, 'ready');
 assert.equal(runResult.comparison.verdict, 'pass');
+assert.equal(runResult.comparison.metricParityPass, true);
+assert.equal(runResult.comparison.adProductScopeProven, false);
+assert.deepEqual([...runResult.comparison.scopeBlockers], ['adProductReady']);
+assert.equal(runResult.comparison.migrationCandidate, false);
 assert.equal(runResult.executionAuthorized, false);
 assert.equal(queryRequest.source, 'query');
-assert.equal(queryRequest.adProduct, 'SP');
+assert.equal(queryRequest.adProduct, '');
 assert.equal(queryRequest.scope, 'YTDBNS');
 assert.equal(rawLoadCalled, false);
 assert.ok(events.some(event => event.type === 'lr:bid-governance-parity-ready'));
+
+adProductReady = true;
+const provenRun = await audit.run({ force: true });
+assert.equal(provenRun.comparison.verdict, 'pass');
+assert.equal(provenRun.comparison.adProductScopeProven, true);
+assert.deepEqual([...provenRun.comparison.scopeBlockers], []);
+assert.equal(provenRun.comparison.migrationCandidate, true);
+assert.equal(provenRun.executionAuthorized, false);
+assert.equal(queryRequest.adProduct, '');
 
 queryTruncated = true;
 await assert.rejects(() => audit.run({ force: true }), error => {
