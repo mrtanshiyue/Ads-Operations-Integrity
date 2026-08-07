@@ -1,0 +1,97 @@
+name: Phase 8 One-shot Parity v1.0.2 Test Sync
+
+on:
+  push:
+    branches: [phase8/parity-unproven-adproduct-diagnostic]
+    paths: [.github/workflows/phase8-one-shot-parity-tests-v102.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase8/parity-unproven-adproduct-diagnostic
+          fetch-depth: 0
+      - name: Synchronize permanent parity tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('scripts/test-progressive-loader.mjs')
+          s = p.read_text()
+          old = "assert.match(parityAudit, /migrationCandidate: pass/);"
+          new = "\n".join([
+              "assert.match(parityAudit, /metricParityPass: pass/);",
+              "assert.match(parityAudit, /scopeBlockers = adProductScopeProven \? \[\] : \['adProductReady'\]/);",
+              "assert.match(parityAudit, /migrationCandidate = Boolean\(comparison\.metricParityPass && adProductScopeProven\)/);",
+              "assert.doesNotMatch(parityAudit, /adProduct: 'SP'/);",
+          ])
+          assert s.count(old) == 1, f'progressive old assertion count={s.count(old)}'
+          p.write_text(s.replace(old, new))
+
+          p = Path('scripts/test-bid-governance-parity-audit.mjs')
+          s = p.read_text()
+          replacements = [
+              ("assert.match(source, /const AUDIT_VERSION = '1\\.0\\.1'/);", "assert.match(source, /const AUDIT_VERSION = '1\\.0\\.2'/);"),
+              ("assert.match(source, /adProduct: 'SP'/);", "assert.match(source, /adProduct: ''/);"),
+              ("assert.match(source, /migrationCandidate: pass/);", "assert.match(source, /metricParityPass: pass/);\nassert.match(source, /migrationCandidate = Boolean\\(comparison\\.metricParityPass && adProductScopeProven\\)/);"),
+              ("let globalThisQueryRows = [];", "let globalThisQueryRows = [];\nlet adProductReady = false;"),
+              ("governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true } },", "governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true, adProductReady } },"),
+              ("assert.equal(audit.version, '1.0.1');", "assert.equal(audit.version, '1.0.2');"),
+              ("assert.equal(queryRequest.adProduct, 'SP');", "assert.equal(queryRequest.adProduct, '');"),
+          ]
+          for old, new in replacements:
+              assert s.count(old) == 1, f'dedicated replacement count={s.count(old)} for {old}'
+              s = s.replace(old, new)
+
+          old = "assert.equal(runResult.comparison.verdict, 'pass');\nassert.equal(runResult.executionAuthorized, false);"
+          new = "\n".join([
+              "assert.equal(runResult.comparison.verdict, 'pass');",
+              "assert.equal(runResult.comparison.metricParityPass, true);",
+              "assert.equal(runResult.comparison.adProductScopeProven, false);",
+              "assert.deepEqual([...runResult.comparison.scopeBlockers], ['adProductReady']);",
+              "assert.equal(runResult.comparison.migrationCandidate, false);",
+              "assert.equal(runResult.executionAuthorized, false);",
+          ])
+          assert s.count(old) == 1, f'unproven run assertion count={s.count(old)}'
+          s = s.replace(old, new)
+
+          marker = "assert.ok(events.some(event => event.type === 'lr:bid-governance-parity-ready'));\n\nqueryTruncated = true;"
+          insert = "\n".join([
+              "assert.ok(events.some(event => event.type === 'lr:bid-governance-parity-ready'));",
+              "",
+              "adProductReady = true;",
+              "const provenRun = await audit.run({ force: true });",
+              "assert.equal(provenRun.comparison.verdict, 'pass');",
+              "assert.equal(provenRun.comparison.adProductScopeProven, true);",
+              "assert.deepEqual([...provenRun.comparison.scopeBlockers], []);",
+              "assert.equal(provenRun.comparison.migrationCandidate, true);",
+              "assert.equal(provenRun.executionAuthorized, false);",
+              "assert.equal(queryRequest.adProduct, '');",
+              "",
+              "queryTruncated = true;",
+          ])
+          assert s.count(marker) == 1, f'proven marker count={s.count(marker)}'
+          p.write_text(s.replace(marker, insert))
+          PY
+          node --check scripts/test-progressive-loader.mjs
+          node --check scripts/test-bid-governance-parity-audit.mjs
+          node scripts/test-progressive-loader.mjs
+          node scripts/test-bid-governance-parity-audit.mjs
+          git diff --check
+      - name: Commit permanent test synchronization
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add scripts/test-progressive-loader.mjs scripts/test-bid-governance-parity-audit.mjs
+          git diff --cached --quiet && { echo 'No changes staged'; exit 1; }
+          git commit -m "Phase 8: enforce governance-aware parity test semantics"
+          git push origin HEAD:phase8/parity-unproven-adproduct-diagnostic
