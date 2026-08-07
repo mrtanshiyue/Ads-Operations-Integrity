@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const AUDIT_VERSION = '1.0.1';
+  const AUDIT_VERSION = '1.0.2';
   const MAX_ROWS = 300000;
   const MAX_MISMATCH_ROWS = 30;
   const FILTER_IDS = [
@@ -239,7 +239,7 @@
     const pass = totalsPass && identityPass && bidPass;
     const near = !pass && Object.values(metrics).every(item => item.relative <= 0.01 || Math.abs(item.absolute) <= 1) && groupOverlap >= 0.98;
     return {
-      verdict: pass ? 'pass' : near ? 'warn' : 'fail', migrationCandidate: pass, executionAuthorized: false,
+      verdict: pass ? 'pass' : near ? 'warn' : 'fail', metricParityPass: pass, migrationCandidate: false, executionAuthorized: false,
       totalsPass, identityPass, bidPass, rowCount, metrics, groupOverlap, matchedGroups: intersection.length,
       legacyOnlyCount: legacyOnly.length, queryOnlyCount: queryOnly.length, bidCompared, bidMismatch, bidMissingEither,
       legacy: legacy.totals, query: query.totals, mismatches: mismatches.slice(0, MAX_MISMATCH_ROWS),
@@ -258,12 +258,21 @@
     setState({ status: 'loading' }); render();
     try {
       const legacy = legacyRows();
-      const payload = await window.QueryNativeModuleData.ads({ ...request, adProduct: 'SP', source: 'query', maxRows: MAX_ROWS, force });
+      const payload = await window.QueryNativeModuleData.ads({ ...request, adProduct: '', source: 'query', maxRows: MAX_ROWS, force });
       if (payload?.source !== 'query-tidb') throw auditError(502, `Query 来源异常：${text(payload?.source) || 'missing'}`);
       if (payload?.truncated === true || payload?.nextOffset) throw auditError(409, 'Query 结果达到分页上限，禁止用截断数据做 Parity 结论');
       if (payload?.governance?.schemaVersion !== 'ads-query-governance-v2') throw auditError(502, 'Query governance v2 缺失');
-      const queryRows = Array.isArray(payload.rows) ? payload.rows : [];
+      const readiness = payload.governance?.readiness || {};
+      const adProductScopeProven = readiness.adProductReady === true;
+      const allQueryRows = Array.isArray(payload.rows) ? payload.rows : [];
+      const queryRows = adProductScopeProven
+        ? allQueryRows.filter(row => text(row?.adProduct).toUpperCase() === 'SP')
+        : allQueryRows;
       const comparison = compareRows(legacy, queryRows);
+      comparison.adProductScopeProven = adProductScopeProven;
+      comparison.queryScopeMode = adProductScopeProven ? 'source-proven-sp' : 'unproven-ad-product-diagnostic';
+      comparison.scopeBlockers = adProductScopeProven ? [] : ['adProductReady'];
+      comparison.migrationCandidate = Boolean(comparison.metricParityPass && adProductScopeProven);
       setState({ status: 'ready', legacy: summarizeRows(legacy).totals, query: summarizeRows(queryRows, { trustedBidOnly: true }).totals,
         comparison, governance: payload.governance, lastError: '', refreshedAt: Date.now() });
       render(); dispatch('lr:bid-governance-parity-ready', snapshot()); return snapshot();
@@ -284,7 +293,7 @@
   }
   function setState(patch) { Object.assign(state, patch); }
   function verdictLabel(verdict) {
-    if (verdict === 'pass') return 'Parity Pass · 仅迁移候选';
+    if (verdict === 'pass') return 'Metric Parity Pass';
     if (verdict === 'warn') return 'Near Parity · 继续审计';
     return 'Parity Gap · 禁止迁移';
   }
@@ -330,7 +339,7 @@
     if (state.status === 'blocked' || !eligibility.ready) { banner.dataset.kind = 'warn'; banner.textContent = `只读门禁：${(eligibility.reasons || []).join('；') || '需要覆盖当前范围的 Raw 明细'}`; kpis.innerHTML = ''; grid.innerHTML = ''; return; }
     if (state.status !== 'ready' || !state.comparison) { banner.dataset.kind = 'good'; banner.textContent = `Raw 对账前提已满足：${eligibility.loadedMonths.join(', ') || '—'}。点击“运行双源对账”。`; kpis.innerHTML = ''; grid.innerHTML = ''; return; }
     const c = state.comparison; banner.dataset.kind = c.verdict === 'pass' ? 'good' : c.verdict === 'warn' ? 'warn' : 'bad';
-    banner.textContent = `${verdictLabel(c.verdict)} · executionAuthorized=false · Query governance=${text(state.governance?.schemaVersion) || 'missing'}`;
+    banner.textContent = `${verdictLabel(c.verdict)} · ${c.adProductScopeProven ? 'SP scope source-proven' : 'Ad Product scope unproven · diagnostic only'} · migrationCandidate=${Boolean(c.migrationCandidate)} · executionAuthorized=false · Query governance=${text(state.governance?.schemaVersion) || 'missing'}`;
     kpis.innerHTML = [ ['Rows L / Q', `${fmtInt(c.legacy.rowCount)} / ${fmtInt(c.query.rowCount)}`], ['Spend Δ', fmtMoney(c.metrics.spend.absolute)], ['Sales Δ', fmtMoney(c.metrics.sales.absolute)], ['Orders Δ', fmtSigned(c.metrics.orders.absolute, 0)], ['Group overlap', fmtPct(c.groupOverlap)], ['Bid mismatch', `${fmtInt(c.bidMismatch)} + ${fmtInt(c.bidMissingEither)} missing`] ].map(([label, value]) => `<div class="bgpaKpi"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join('');
     const metricRows = [ ['Rows', c.rowCount, fmtInt], ['Impressions', c.metrics.impressions, fmtInt], ['Clicks', c.metrics.clicks, fmtInt], ['Spend', c.metrics.spend, fmtMoney], ['Sales', c.metrics.sales, fmtMoney], ['Orders', c.metrics.orders, fmtInt] ];
     const metricTable = `<div class="bgpaTableWrap"><table class="bgpaTable"><thead><tr><th>Metric</th><th>Legacy</th><th>Query</th><th>Δ</th><th>Rel</th><th>State</th></tr></thead><tbody>${metricRows.map(([name,item,formatter]) => `<tr><td>${escapeHtml(name)}</td><td class="num">${escapeHtml(formatter(item.legacy))}</td><td class="num">${escapeHtml(formatter(item.query))}</td><td class="num">${escapeHtml(name === 'Spend' || name === 'Sales' ? fmtMoney(item.absolute) : fmtSigned(item.absolute, 0))}</td><td class="num">${escapeHtml(fmtPct(item.relative))}</td><td><span class="bgpaTag ${item.pass ? 'good' : 'bad'}">${item.pass ? 'PASS' : 'GAP'}</span></td></tr>`).join('')}</tbody></table></div>`;
