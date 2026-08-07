@@ -7,6 +7,7 @@ on:
     paths:
       - scripts/phase11_patch_bid_control_parity.py
       - scripts/phase11_fix_patch_helper.py
+      - scripts/phase11_cleanup_generated_diff.py
       - .github/workflows/phase11-one-shot-bid-control-v104.yml
 
 permissions:
@@ -27,6 +28,7 @@ jobs:
         run: |
           python scripts/phase11_fix_patch_helper.py
           python scripts/phase11_patch_bid_control_parity.py
+          python scripts/phase11_cleanup_generated_diff.py
       - name: Validate Phase 11 contracts
         run: |
           set -euo pipefail
