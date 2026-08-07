@@ -6,6 +6,7 @@ on:
       - phase11/bid-control-parity-v104
     paths:
       - scripts/phase11_patch_bid_control_parity.py
+      - scripts/phase11_fix_patch_helper.py
       - .github/workflows/phase11-one-shot-bid-control-v104.yml
 
 permissions:
@@ -23,7 +24,9 @@ jobs:
         with:
           node-version: '22'
       - name: Apply Phase 11 patch
-        run: python scripts/phase11_patch_bid_control_parity.py
+        run: |
+          python scripts/phase11_fix_patch_helper.py
+          python scripts/phase11_patch_bid_control_parity.py
       - name: Validate Phase 11 contracts
         run: |
           set -euo pipefail
