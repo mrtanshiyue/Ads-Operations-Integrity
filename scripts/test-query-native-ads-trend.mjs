@@ -21,7 +21,17 @@ assert.doesNotMatch(adapter, /\/manifest\?/);
 assert.doesNotMatch(adapter, /\/api\/v1\/raw\//);
 assert.doesNotMatch(adapter, /__LR_IMPORT_MULTIPLE_FILES__/);
 
-assert.match(controller, /const CONTROLLER_VERSION = '1\.0\.0'/);
+assert.match(controller, /const CONTROLLER_VERSION = '1\.1\.0'/);
+assert.doesNotMatch(controller, /DEFAULT_ATTRIBUTION_DAYS/);
+assert.doesNotMatch(controller, /row\.attributionWindowDays \|\|/);
+assert.doesNotMatch(controller, /SP 7 天/);
+assert.match(controller, /const maturityState =/);
+assert.match(controller, /governance\?\.readiness\?\.attributionMaturityReady/);
+assert.match(controller, /attributionMaturityTrusted/);
+assert.match(controller, /Reported Spend/);
+assert.match(controller, /源报表未提供可验证归因窗口/);
+assert.match(controller, /不能据此授权自动竞价/);
+assert.match(controller, /没有可验证的广告产品类型维度/);
 assert.match(controller, /adapter\.overview\(\{/);
 assert.match(controller, /adapter\.ads\(\{/);
 assert.match(controller, /ownsTrend: \(\) => true/);
@@ -38,6 +48,7 @@ assert.match(host, /__queryNativeTrendHostGuard/);
 
 assert.match(queryClient, /const CLIENT_VERSION = '1\.3\.0'/);
 assert.match(queryClient, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.2\.0'/);
+assert.match(queryClient, /const QUERY_NATIVE_TREND_VERSION = '1\.1\.0'/);
 assert.match(queryClient, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
 assert.match(queryClient, /query-native-ads-trend-v1\.js\?v=\$\{QUERY_NATIVE_TREND_VERSION\}/);
 assert.match(queryClient, /query-native-ads-trend-host-v1\.js\?v=\$\{QUERY_NATIVE_HOST_VERSION\}/);
