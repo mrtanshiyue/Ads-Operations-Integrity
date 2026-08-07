@@ -37,57 +37,26 @@ jobs:
 
           path = Path('assets/query-native-module-data-v1.js')
           text = path.read_text(encoding='utf-8')
-          old = """  const advancedSearchMatches = (value, query, exact = false) => {
-            const haystack = lower(value);
-            const needle = text(query);
-            if (!needle) return true;
-            if (exact) return haystack === needle.toLowerCase();
-            if (/^regex:/i.test(needle)) {
-              const pattern = needle.slice(6).trim();
-              if (!pattern) return true;
-              try { return new RegExp(pattern, 'i').test(value); }
-              catch (_) { throw moduleError(400, '搜索词正则表达式无效'); }
-            }
-            const tokens = needle.split(/\\s+/).filter(Boolean);
-            const positives = tokens.filter(token => !token.startsWith('-')).map(lower);
-            const negatives = tokens.filter(token => token.startsWith('-') && token.length > 1).map(token => lower(token.slice(1)));
-            return positives.every(token => haystack.includes(token))
-              && negatives.every(token => !haystack.includes(token));
-          };
-          """
-          new = """  const escapeRegExp = value => String(value || '').replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
-
-          const negativeTokenPresent = (value, token) => {
-            const source = String(value || '');
+          marker = "  const advancedSearchMatches = (value, query, exact = false) => {"
+          helper = """  const negativeTokenPresent = (value, token) => {
             const normalized = lower(token);
             if (!normalized) return false;
             if (/^[a-z0-9]+$/i.test(normalized)) {
-              return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(normalized)}(?:$|[^a-z0-9])`, 'i').test(source);
+              return lower(value).split(/[^a-z0-9]+/i).filter(Boolean).includes(normalized);
             }
-            return lower(source).includes(normalized);
+            return lower(value).includes(normalized);
           };
 
-          const advancedSearchMatches = (value, query, exact = false) => {
-            const haystack = lower(value);
-            const needle = text(query);
-            if (!needle) return true;
-            if (exact) return haystack === needle.toLowerCase();
-            if (/^regex:/i.test(needle)) {
-              const pattern = needle.slice(6).trim();
-              if (!pattern) return true;
-              try { return new RegExp(pattern, 'i').test(value); }
-              catch (_) { throw moduleError(400, '搜索词正则表达式无效'); }
-            }
-            const tokens = needle.split(/\\s+/).filter(Boolean);
-            const positives = tokens.filter(token => !token.startsWith('-')).map(lower);
-            const negatives = tokens.filter(token => token.startsWith('-') && token.length > 1).map(token => lower(token.slice(1)));
-            return positives.every(token => haystack.includes(token))
-              && negatives.every(token => !negativeTokenPresent(value, token));
-          };
-          """
-          if text.count(old) != 1:
-              raise SystemExit(f'Expected exactly one advanced search block, found {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+"""
+          predicate = "&& negatives.every(token => !haystack.includes(token));"
+          replacement = "&& negatives.every(token => !negativeTokenPresent(value, token));"
+          if text.count(marker) != 1:
+              raise SystemExit(f'Expected one advanced search marker, found {text.count(marker)}')
+          if text.count(predicate) != 1:
+              raise SystemExit(f'Expected one negative predicate, found {text.count(predicate)}')
+          text = text.replace(marker, helper + marker, 1)
+          text = text.replace(predicate, replacement, 1)
+          path.write_text(text, encoding='utf-8')
           PY
           node --check assets/query-native-module-data-v1.js
           node scripts/test-progressive-loader.mjs
