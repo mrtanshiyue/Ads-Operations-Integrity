@@ -8,9 +8,10 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 - 生产 API：`https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev`
 - Frontend 正式 Loader：`4.3.0`
 - Query Client：`1.3.0`
-- Query-native Module Adapter：`1.1.0`
-- Ads Trend Controller：`1.0.0`
+- Query-native Module Adapter：`1.2.0`
+- Ads Trend Controller：`1.1.0`
 - Ads Trend Host Guard：`1.0.0`
+- Bid Governance Parity Audit：`1.0.3`
 - Worker API：`4.2.2`
 
 > **README 是交接与运行手册，不是实时监控面板。** 新对话开始工作前仍必须重新检查两个仓库当前 `main`、开放 PR、最近 CI、最新部署、Worker `/api/v1/health`、Query Status 与 Pages 状态。README 中的 SHA/Run 是“最后已验证生产基线”，不是替代实时检查的静态真值。
@@ -58,41 +59,102 @@ Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 
 | 项目 | 当前已验证状态 |
 |---|---|
-| 最后改变前端生产行为的提交 | `2d4bb9ca8d7c3bad76933749025ba51804f90178` |
-| 对应 PR | `#23 Phase 4: make advertising trend Query-native` |
-| main CI | Run `31137657882` ✅ |
-| GitHub Pages | Run `31137657880` ✅ |
-| gh-pages `source_sha` | `2d4bb9ca8d7c3bad76933749025ba51804f90178` |
-| Frontend `main` | 新对话必须实时读取；README-only 提交可能晚于上述行为基线 |
-| `main` 保护 | 已启用，要求 `Static site and security invariants` |
+| 当前生产行为提交 | `df81e84f4c9a1683fe021ab8477fabe3b23c5605` |
+| 对应 PR | `#34 Phase 8: canonicalize parity identity and Bid comparability` |
+| main CI | Run `31170611396` ✅ |
+| GitHub Pages | Run `31170611374` ✅ |
+| gh-pages `source_sha` | `df81e84f4c9a1683fe021ab8477fabe3b23c5605` |
+| Loader | `4.3.0` |
+| Query Client | `1.3.0` |
+| Query-native Adapter | `1.2.0` |
+| Ads Trend Controller | `1.1.0` |
+| Bid Governance Parity Audit | `1.0.3` |
+| `main` 保护 | **已启用**，要求 `Static site and security invariants` |
 
-Phase 4 第一批交易财务 Query-native 的生产提交：
+Phase 4 第一批交易财务 Query-native 的生产提交仍为：
 
 ```text
 dd02299794197e8530cb1036f891cc665dec8c0b
 ```
 
-Phase 4 第二批广告趋势 Query-native 的生产提交：
+Phase 4 第二批广告趋势 Query-native 的生产提交仍为：
 
 ```text
 2d4bb9ca8d7c3bad76933749025ba51804f90178
 ```
 
+Phase 8 在此基础上增加真实 Legacy / Query Parity 诊断，并在 `df81e84f...` 完成 canonical identity 与 Bid comparability 语义修正。
+
 ## Warehouse / Worker
 
 | 项目 | 当前已验证状态 |
 |---|---|
-| Private Warehouse 当前 README 快照基线 | `7504ea240d6e88194b14419a69db2d98ab863126` |
-| 最后改变 Warehouse/Worker 生产行为的代码基线 | `3f008f756007949a8833aba1b6e7674c565b727a` |
-| 最后一次完整 Warehouse 生产验收 | Run `31090843724` ✅ |
+| Warehouse 可见性 | **Private，必须保持 Private** |
+| 当前 Warehouse `main` | docs-only 基线已前进；新对话必须实时读取 |
+| 最后改变 Warehouse/Worker 生产行为的代码基线 | `7364babfd3f108f668da95b74eab4d514e29e3a8` — Phase 10 / PR #61 |
+| Phase 9 Source-Provenance 基线 | `ec8f73d7fd13c50abe7ef64ec1032980b66a7eda` — PR #60 |
+| 最后一次完整 Warehouse 生产验收 | Run `31177671671` ✅ |
 | Worker | `amazon-warehouse-cloud-v4` |
 | Worker API | `4.2.2` |
 | Worker entry | `cloud-worker/src/query_first_plane.js` |
-| 主存储 / Query Plane | TiDB Cloud |
+| 主存储 / Query Plane | TiDB Cloud / `tidb-primary` |
 | 私有归档 / recovery | Private GitHub Warehouse |
+| 已应用 migration | through `0015_refresh_ads_current_view_purchased_identity.sql`；生产验收后 `0 pending` |
+| current 文件 / facts | `32` / `215800` |
+| facts 分布 | advertising `160833` / finance `54967` |
 
-Warehouse 的 README-only 提交不会重新部署 Worker；因此判断后端真实行为时应以最近成功生产 Run 对应的代码提交和 `/api/v1/health` 为准。
+Warehouse README-only 提交不会重新部署 Worker；判断后端真实行为必须以最后成功生产 Run 对应的行为 SHA、Worker smoke、TiDB reconciliation 和历史完整性审计为准。
 
+## Phase 8–10 跨云生产验收
+
+Phase 8 生产月份 `2026-06` 的真实 Chromium 双源结果：
+
+```text
+legacyRows=8753
+queryRows=8753
+metricParityPass=true
+identityPass=true
+groupOverlap=1.000000
+legacyOnly=0
+queryOnly=0
+bidComparable=false
+bidParityPass=false
+bidGovernanceReady=false
+migrationCandidate=false
+executionAuthorized=false
+```
+
+当前迁移 blocker 仍明确为：
+
+```text
+adProductReady
+advertisedProductIdentityReady
+attributionMaturityReady
+legacyBidComparable
+```
+
+这些 blocker 不能通过前端默认值或推断清除。尤其禁止把缺失 Ad Product 当成 `SP`、伪造 advertised ASIN/SKU 或 attribution window、以及给 Legacy Search-Term parity 行补假 Bid。
+
+### Phase 9 Warehouse Source-Provenance
+
+Warehouse 已在生产完成 source-provenance alignment：future richer Amazon advertising source 的真实 `adProduct` / attribution evidence 会沿 normalizer → facts → Query governance 保存；空值、partial、mixed、unknown 继续 fail-closed。现有历史源字段缺失时保持 `source-unavailable`，不会被 legacy 默认值误证明。
+
+### Phase 10 Purchased Product Attribution
+
+Warehouse 已在生产以 additive migration 扩展：
+
+- `fact_ads_performance.purchased_sku / purchased_asin` nullable；
+- `/api/v1/query/ads` 可返回并筛选 purchased SKU / ASIN；
+- current view 仍只由 `report_slots.current_file_id` 决定；
+- governance contract 为 `ads-governance-source-contract-v1.3`，value evidence 为 `ads-governance-value-coverage-v2`；
+- purchased identity 允许合法稀疏的非购买行，但源列全空不能证明 ready；
+- 新增 `purchasedProductIdentityReady` / `productAttributionReady`，不改变现有 Bid / Campaign execution readiness。
+
+Phase 10 生产 migration 后旧 `32` 个 current 文件全部 `already-ready` 跳过，facts 仍为 `215800`；V4、Phase 7、Phase 8 Chromium 全部成功，Phase 8 上述四个 blocker 原样保留。
+
+### 下一批原则
+
+Frontend 暂不因为 Phase 9/10 自动迁移 Advanced Bid Governance / Campaign Studio。下一批仍需 Warehouse-first：真实 richer source 只在有源证据时提升 readiness；`legacyBidComparable` 需要独立 Targeting / Bid Control Parity。只有 source readiness + Bid comparability + production parity 全部通过后，Frontend 才允许进入下一次 Query-native 迁移。
 ---
 
 # 3. GitHub、Cloudflare、TiDB Cloud、GitHub Pages、IndexedDB 的关系
