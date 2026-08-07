@@ -44,6 +44,7 @@ jobs:
               ("let globalThisQueryRows = [];", "let globalThisQueryRows = [];\nlet adProductReady = false;"),
               ("governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true } },", "governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true, adProductReady } },"),
               ("assert.equal(audit.version, '1.0.1');", "assert.equal(audit.version, '1.0.2');"),
+              ("assert.equal(exact.migrationCandidate, true);", "assert.equal(exact.metricParityPass, true);\nassert.equal(exact.migrationCandidate, false);"),
               ("assert.equal(queryRequest.adProduct, 'SP');", "assert.equal(queryRequest.adProduct, '');"),
           ]
           for old, new in replacements:
