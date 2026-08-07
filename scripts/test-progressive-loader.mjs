@@ -55,6 +55,21 @@ assert.match(query, /If-None-Match/);
 assert.match(query, /governance-execution-gate/);
 assert.match(query, /query-native-module-assets/);
 
+assert.match(query, /const ADS_SOURCE_PREFLIGHT_HEADER = 'X-Ads-Source-Headers-B64'/);
+assert.match(query, /async function preflightAdsSource\(headers, options = \{\}\)/);
+assert.match(query, /\/api\/v1\/query\/ads\/source-preflight\?clientPreflight=\$\{nonce\}/);
+assert.match(query, /useCache: false/);
+assert.match(query, /payload\.schemaVersion !== 'ads-source-preflight-v1'/);
+assert.match(query, /payload\.activation\?\.writesFacts !== false/);
+assert.match(query, /payload\.activation\?\.changesCurrentSlot !== false/);
+assert.match(query, /payload\.activation\?\.authorizesExecution !== false/);
+assert.match(query, /preflightAdsSource,/);
+assert.match(query, /'ads-source-preflight'/);
+assert.match(query, /new TextEncoder\(\)\.encode\(JSON\.stringify\(headers\)\)/);
+assert.match(query, /\.replace\(\/\\\+\/g, '-'\)/);
+assert.match(query, /\.replace\(\/\\\/\/g, '_'\)/);
+assert.doesNotMatch(query, /source-preflight\?[^'`\n]*headers=/i);
+
 assert.match(shopUi, /'queryFirstRawActions'/);
 assert.match(shopUi, /'queryFirstOverviewCard'/);
 assert.match(shopUi, /const progressiveNodes = collectProgressiveNodes\(\)/);
