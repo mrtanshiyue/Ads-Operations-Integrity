@@ -2,834 +2,817 @@
 
 Amazon 广告运营、经营分析、交易财务与执行治理工作台。
 
-本仓库是系统的**公共前端与 GitHub Pages 生产仓库**。页面代码可以公开审查，但业务报表、交易数据、数据库连接和访问凭据不存放在这里。受治理数据由私有仓库 `mrtanshiyue/Amazon-Data-Warehouse`、TiDB Cloud 和经过认证的 Cloudflare Worker 提供。
+本仓库是系统的**公共前端与 GitHub Pages 生产仓库**。页面代码可以公开审查，但业务报表、交易明细、数据库连接和访问凭据不存放在这里。受治理数据由私有仓库 `mrtanshiyue/Amazon-Data-Warehouse`、Cloudflare Worker 和 TiDB Cloud 共同提供。
 
 - 在线应用：<https://mrtanshiyue.github.io/Ads-Operations-Integrity/>
-- 生产数据 API：`https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev`
-- 生产分支：`main`
-- Loader：`4.3.0`
-- Query Client：`1.2.0`
+- 生产 API：`https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev`
+- Frontend 正式 Loader：`4.3.0`
+- Query Client：`1.3.0`
+- Query-native Module Adapter：`1.1.0`
+- Ads Trend Controller：`1.0.0`
+- Ads Trend Host Guard：`1.0.0`
 - Worker API：`4.2.2`
-- Cloudflare Worker 发布：以最新成功 Warehouse Run 与 Worker `/api/v1/health` 为准
-- 最后一次完整生产验收：Warehouse Run `31090843724`
-- 最后一个应用代码基线：`94254f7b7c364d17f25807337ba3424262e92b39`
-- Warehouse 生产代码/验收基线：`3f008f756007949a8833aba1b6e7674c565b727a`
-- 最新成功 GitHub Pages：Run `31087845759`
 
-> README 是项目交接文档，不是实时监控面板。文件数、行数、版本和健康状态应以当前 `main`、Worker `/api/v1/health`、Manifest、Query Status 和最新成功的生产 Run 为准。
+> **README 是交接与运行手册，不是实时监控面板。** 新对话开始工作前仍必须重新检查两个仓库当前 `main`、开放 PR、最近 CI、最新部署、Worker `/api/v1/health`、Query Status 与 Pages 状态。README 中的 SHA/Run 是“最后已验证生产基线”，不是替代实时检查的静态真值。
 
 ---
 
-## 第三阶段生产结果：Frontend 渐进式加载
+# 1. 新对话接手入口
 
-```text
-Frontend main / Pages source: 94254f7b7c364d17f25807337ba3424262e92b39
-Frontend PR: #17
-Frontend PR CI: 31087776985
-Frontend main CI: 31087845755
-Pages: 31087845759
-Warehouse acceptance main: 3f008f756007949a8833aba1b6e7674c565b727a
-Warehouse production Run: 31090843724
-```
-
-真实 Chromium 验收：
-
-- Loader `4.3.0`，Query Client `1.2.0`。
-- 首屏 Bootstrap 约 `5.8s`，3 个查询请求，Manifest `0`，Raw `0`。
-- 数据指纹：`f2902e1920069ad54d7afbe20922a0fd8729e80491a6f66910be6d426a80800d`。
-- 显式完整历史覆盖 `2025-01` 至 `2026-06` 共 18 个月。
-- 完整历史 `32` 文件、`215,800` 行、`18` 个脱敏联合报告，约 `110.6s` 完成。
-- Bootstrap、Manifest 与 Raw 数据指纹完全一致。
-- 页面错误 `0`；有 1 次网络资源长度错误被有限重试恢复，最终内容完整性全部通过。
-
-默认按钮不再下载全部 CSV。Raw 只在用户明确选择月份范围或完整历史时触发；店铺切换优先刷新服务端概览。
-
-## 新对话接手入口
-
-新的开发对话在修改项目前，应按以下顺序建立上下文：
+新的开发对话应先完成以下动作，再开始改代码：
 
 1. 阅读本 README。
 2. 阅读私有仓库 `Amazon-Data-Warehouse/README.md`。
-3. 获取两个仓库当前 `main`、开放 PR、最近 CI 和最近生产部署 Run。
-4. 区分“当前生产代码提交”和其后的 README-only 文档提交。
-5. 确认当前 Worker、Loader、Query Client 三方版本是否匹配。
-6. 涉及数据、Worker、API 或浏览器协议时，先改 Warehouse，生产验收通过后再改前端。
-7. 所有生产变更使用独立分支和 Pull Request；不得绕过 CI。
-8. 未经所有者明确确认，不自动开始下一批大改造。
+3. 检查两个仓库当前 `main`、开放 PR、最近 Actions Run、最近生产部署。
+4. 区分“当前仓库 main”与“最后一个改变生产行为的代码提交”；README-only 提交可能让 `main` SHA 前进，但不会改变运行逻辑。
+5. 检查 Worker Health、Query Status、Pages `source_sha` 和前端版本是否匹配。
+6. 涉及 TiDB、Worker、API、数据契约或浏览器协议时，必须 **Warehouse 先、Frontend 后**。
+7. 所有改动从独立分支开始，通过 PR 和 CI 后再合并；不要直接修改 `main` 或 `gh-pages`。
+8. 遇到阻塞要修复根因，不通过删除测试、弱化摘要校验或绕过安全门禁换绿色状态。
 
-给新对话的最小任务说明可以直接使用：
+给新对话的推荐启动提示可以直接复制：
 
 ```text
-请先读取 Ads-Operations-Integrity 和 Amazon-Data-Warehouse 两个仓库的 README，
-再检查两个仓库当前 main、开放 PR、最近 CI 和最新生产 Run。
-以 README 中“当前生产状态、发布顺序、安全边界、已接受风险、禁止事项”为约束，
-直接在独立分支实施修改，通过 PR、CI、Pages/Worker 部署和 Chromium 验收后再合并。
-不要恢复旧 V2 Worker、远程 CDN、持久化密码、高并发 Raw 下载或浏览器直连私有 GitHub。
+请先读取 mrtanshiyue/Ads-Operations-Integrity 和 mrtanshiyue/Amazon-Data-Warehouse 两个仓库 README，
+然后检查两个仓库当前 main、开放 PR、最近 CI、最新 Worker/Pages 部署和分支保护状态。
+以 README 中的生产行为基线、数据模型、发布顺序、安全边界、已接受风险和禁止事项为约束继续任务。
+所有修改必须在独立分支实施；涉及数据/API 时 Warehouse 先上线并完成 TiDB 对账、Worker smoke、历史完整性审计，再修改 Frontend。
+不要恢复 V2、不要做破坏性迁移、不要绕过脱敏、摘要、数据指纹或浏览器凭据边界。
 ```
 
 ### 所有者工作方式
 
 - 希望直接实施并交付，不只给建议。
-- 大改造按批次推进；当前批次关闭或明确接受阻塞后，才能进入下一批。
-- 发现阻塞必须如实说明，不以弱化校验或跳过门禁换取“成功”。
-- 架构保持全云端，不引入群晖或本地常驻服务器依赖。
-- Warehouse 必须保持 Private，不得为了分支保护而公开。
+- 大改造按批次推进，一批完成生产验收后再进入下一批。
+- 发现真实阻塞应明确说明并修复根因。
+- 架构保持全云端，不引入本地常驻服务器或 NAS 作为生产依赖。
+- `Amazon-Data-Warehouse` 必须保持 **Private**。
 
 ---
 
-## 当前生产基线
+# 2. 当前权威生产基线
 
-### 版本与仓库
+最后核验日期：`2026-08-07`。
 
-| 项目 | 当前生产基线 |
+## Frontend
+
+| 项目 | 当前已验证状态 |
 |---|---|
-| Public Frontend | `mrtanshiyue/Ads-Operations-Integrity` |
-| Private Warehouse | `mrtanshiyue/Amazon-Data-Warehouse` |
-| GitHub Pages | `https://mrtanshiyue.github.io/Ads-Operations-Integrity/` |
-| Worker | `amazon-warehouse-cloud-v4` / API `4.2.2` |
-| Worker deployment | Warehouse Run `31090843724`; 实时版本以 Worker Health 为准 |
-| Loader | `assets/private-cloud-warehouse-v4.js` / `4.3.0` |
-| Query Client | `assets/private-cloud-query-v1.js` / `1.2.0` |
-| Query primary storage | TiDB Cloud |
-| Archive / recovery source | Private GitHub immutable objects |
-| Browser credential | Current-tab JavaScript closure memory only |
+| 最后改变前端生产行为的提交 | `2d4bb9ca8d7c3bad76933749025ba51804f90178` |
+| 对应 PR | `#23 Phase 4: make advertising trend Query-native` |
+| main CI | Run `31137657882` ✅ |
+| GitHub Pages | Run `31137657880` ✅ |
+| gh-pages `source_sha` | `2d4bb9ca8d7c3bad76933749025ba51804f90178` |
+| Frontend `main` | 新对话必须实时读取；README-only 提交可能晚于上述行为基线 |
+| `main` 保护 | 已启用，要求 `Static site and security invariants` |
 
-### 第三阶段 Query-first 渐进式验收快照
+Phase 4 第一批交易财务 Query-native 的生产提交：
 
-| 项目 | 验收结果 |
-|---|---:|
-| 当前文件 | 32 |
-| 总目录行数 | 215,800 |
-| 广告事实行 | 160,833 |
-| 财务事实行 | 54,967 |
-| 脱敏交易文件 | 18 |
-| TiDB 内容字节 | 80,236,592 |
-| TiDB 内容覆盖 | 32 / 32 |
-| 分析覆盖 | 32 / 32 |
-| 失败文件 | 0 |
-| 月度 Overview 期间 | 18 |
-| 浏览器导入阶段 | `complete` |
-| 页面错误 | 0 |
-| 控制台记录 | 1 次已恢复的 `ERR_CONTENT_LENGTH_MISMATCH` |
-| Query Status / Overview | 通过 |
-| 首屏 Bootstrap | 约 5.8 秒，3 个查询，0 Manifest / 0 Raw |
-| 显式完整历史 | 约 110.6 秒，18 个月 / 32 文件 / 215,800 行 |
-| 最终 Chromium 总耗时 | 约 125.8 秒 |
+```text
+dd02299794197e8530cb1036f891cc665dec8c0b
+```
 
-最后一次完整生产关闭门禁同时验证：Worker、TiDB 迁移与对账、Raw、Query APIs、32 文件历史完整性审计、GitHub Pages、Loader、Query Client 和真实 Chromium 全量导入。
+Phase 4 第二批广告趋势 Query-native 的生产提交：
 
-GitHub Actions 的生产 Chromium 验收为隔离 Runner 到 workers.dev 的 HTTP/3 与长连接 HTTP/2 不稳定，仅在 CI 启动参数中使用 `--disable-quic` 和 `--disable-http2`，强制验收浏览器使用 HTTP/1.1；真实用户浏览器和生产页面不受影响。最终验收中记录到一次被 Loader 有界重试恢复的 `ERR_CONTENT_LENGTH_MISMATCH`，但 32 个文件的字节、SHA-256、行数、脱敏状态和数据指纹均通过。
+```text
+2d4bb9ca8d7c3bad76933749025ba51804f90178
+```
+
+## Warehouse / Worker
+
+| 项目 | 当前已验证状态 |
+|---|---|
+| Private Warehouse 当前 README 快照基线 | `7504ea240d6e88194b14419a69db2d98ab863126` |
+| 最后改变 Warehouse/Worker 生产行为的代码基线 | `3f008f756007949a8833aba1b6e7674c565b727a` |
+| 最后一次完整 Warehouse 生产验收 | Run `31090843724` ✅ |
+| Worker | `amazon-warehouse-cloud-v4` |
+| Worker API | `4.2.2` |
+| Worker entry | `cloud-worker/src/query_first_plane.js` |
+| 主存储 / Query Plane | TiDB Cloud |
+| 私有归档 / recovery | Private GitHub Warehouse |
+
+Warehouse 的 README-only 提交不会重新部署 Worker；因此判断后端真实行为时应以最近成功生产 Run 对应的代码提交和 `/api/v1/health` 为准。
 
 ---
 
-## 项目目标与业务范围
+# 3. GitHub、Cloudflare、TiDB Cloud、GitHub Pages、IndexedDB 的关系
 
-本项目不是单一广告报表查看器，而是 Amazon 运营数据的“完整性、联动决策和执行治理”工作台。主要目标：
+用户有时会把 TiDB Cloud、IndexedDB 混在一起。这里明确区分：
 
-- 将多个店铺、月份和报表类型统一到可追踪的数据范围中。
-- 防止混合粒度报表、重复导入和过期文件造成双重计算。
-- 联动广告销售、业务销售和交易财务数据。
-- 给出广告结构、竞价、否定、利润和执行优先级分析。
-- 保证交易隐私、内容摘要、版本可追踪和生产可回滚。
+- **TiDB Cloud**：云端生产数据库，是当前数据目录、文件内容和 Query Plane 的主存储。
+- **IndexedDB**：用户浏览器本地缓存，只保存已经过摘要验证的不可变服务文件，绝不是云数据库，也不保存密码。
 
-### 前端主要模块
-
-- 经营大盘与 Executive Overview
-- 经营联动趋势
-- 广告 Campaign / Ad Group / Targeting / Search Term 分析
-- 关键词、搜索词、词根和长尾词分析
-- ACOS、ROAS、CPC、CTR、CVR、订单和销售额分析
-- 成熟归因与 Pending 归因拆分
-- 广告结构完整性、竞价、否定和执行优先级
-- 广告销售、业务销售和交易销售对账
-- 交易财务报表：销售、退款、销售费用、FBA 费用和其他支出
-- SKU 月度盈利、成本、利润和运营费用调整
-- 日期范围、店铺范围、明细筛选和导出
-
-交易财务模块依赖联合交易报表；经营联动趋势应纳入交易/联合报告销售额。页面可以本地导入文件，也可以通过私有云加载受治理生产数据。
-
-### 支持的数据类别
-
-主要报表类型包括：
+## 总体架构
 
 ```text
-advertising-report
-combined-report
-business-report
-ads-search-term
-ads-targeting
-ads-campaign
-ads-advertised-product
-ads-placement
+GitHub Public Repo: Ads-Operations-Integrity
+        │
+        ├─ main ── GitHub Actions CI
+        │
+        └─ Pages workflow ──► gh-pages ──► GitHub Pages
+                                      │
+                                      ▼
+                                User Browser
+                                      │
+                                      │ HTTPS + Bearer credential
+                                      │ credential only in current-tab memory
+                                      ▼
+                       Cloudflare Worker V4.2.2
+                       amazon-warehouse-cloud-v4
+                          │                 │
+                          │ DATABASE_URL    │ GITHUB_TOKEN
+                          ▼                 ▼
+                    TiDB Cloud       Private GitHub Warehouse
+                    production       immutable governed archive
+                    primary store    migrations / Worker / tests
+                          │                 │
+                          └──── integrity / fallback / recovery ────┘
+
+Browser IndexedDB
+└─ cache only verified immutable Raw bytes by SHA-256
+   never stores DATABASE_URL / password / PAT / Worker secrets
 ```
 
-生产范围支持：
+## 各组件职责
 
-```text
-ALL
-YTDBNS
-YY
-JJ
-```
-
-当前版本由 Warehouse Manifest 和 TiDB `report_slots` 决定，不应从文件名或目录数量猜测。
-
----
-
-## 系统架构
-
-```text
-Browser / GitHub Pages
-        │
-        │ HTTPS + Bearer credential held in current-tab memory
-        ▼
-Cloudflare Worker V4.2.2
-        │
-        ├──────────────► TiDB Cloud（生产主存储与查询平面）
-        │                ├─ 当前文件目录与槽位
-        │                ├─ 文件内容与完整性元数据
-        │                ├─ 广告与财务 staging / facts
-        │                ├─ current-version views
-        │                └─ import / access audit
-        │
-        └──────────────► Amazon-Data-Warehouse（Private）
-                         ├─ immutable source-sanitized objects
-                         ├─ immutable serving objects
-                         ├─ migrations / Worker / tests
-                         └─ Git history / recovery branches
-```
-
-### 两个仓库的职责边界
-
-| 仓库 | 可见性 | 负责内容 |
+| 组件 | 真实职责 | 不负责什么 |
 |---|---|---|
-| `Ads-Operations-Integrity` | Public | 页面、Loader、Query Client、CSP、同源第三方依赖、前端 CI、Pages |
-| `Amazon-Data-Warehouse` | Private | 受治理报表、TiDB、Worker、API、上传、脱敏、迁移、审计、部署和浏览器验收 |
+| `Ads-Operations-Integrity` Public GitHub | 前端代码、Loader、Query Client、Query-native 模块、CSP、Vendor、CI、Pages | 不保存业务明细、数据库连接、Token |
+| GitHub Pages | 发布前端静态站点 | 不存储后端业务数据库 |
+| Browser | UI、筛选、Query 调用、按需 Raw 兼容、本地导出 | 不直接连接 TiDB、不直接访问 Private GitHub |
+| Cloudflare Worker | 认证、CORS、Query/Raw/Manifest/Summary/Upload API、完整性边界 | 不允许浏览器绕过它访问后端 |
+| TiDB Cloud | `report_slots`、目录、文件内容、staging/facts/views、Query Plane、审计 | 不是浏览器本地缓存 |
+| `Amazon-Data-Warehouse` Private GitHub | 脱敏归档、serving objects、Worker 源码、迁移、测试、部署、恢复 | 不能公开 |
+| Browser IndexedDB | 已验证不可变文件缓存 | 不保存密码，不决定“当前文件” |
 
-### 明确禁止进入公共仓库的内容
+### 一个最重要的规则
 
-- Amazon 原始订单或未脱敏交易报表
-- 姓名、邮箱、电话、地址、原始订单号或结算编号
-- GitHub、Cloudflare、TiDB 或应用密码
-- PAT、Cookie、Session、私钥、`.env`、`.dev.vars`
-- 可让浏览器直接访问私有仓库的凭据或代码
+```text
+Browser 不能直接访问 TiDB Cloud
+Browser 不能直接访问 Private GitHub
+Browser 只能访问 Cloudflare Worker
+```
+
+Cloudflare Worker 是浏览器和私有数据平面之间唯一正式网关。
 
 ---
 
-## 前端实现
+# 4. 三条生产数据路径
 
-### 目录结构
+## 4.1 Query-first 默认路径
+
+默认“加载私有云数据”不再下载全部 CSV：
 
 ```text
-Ads-Operations-Integrity/
-├─ index.html
-│  └─ 页面结构、样式、业务模块、筛选与渲染逻辑
-├─ assets/
-│  ├─ private-cloud-warehouse-v4.js  正式 Loader 4.3.0
-│  ├─ private-cloud-query-v1.js      Query Client 1.2.0
-│  ├─ private-cloud-warehouse-v3.js  历史兼容桥接，不是正式 Loader
-│  ├─ generated/                     外置的历史内联脚本
-│  └─ vendor/                        锁定字节的第三方依赖
-├─ scripts/
-│  ├─ harden-static-site.mjs
-│  └─ vendor-lock.json
-├─ docs/
-│  ├─ CLOUD_V4_CANARY.md
-│  └─ CLOUD_V4_PRODUCTION_CUTOVER.md
-└─ .github/workflows/
-   ├─ ci-main.yml
-   └─ pages.yml
+User Browser
+→ Worker /api/v1/health
+→ Worker Summary
+→ Worker /api/v1/query/bootstrap
+→ TiDB Cloud 聚合结果
+→ 首屏显示经营概览和数据覆盖
 ```
 
-`index.html` 仍是体量较大的单页应用。重构时必须保持业务模块、全局事件和历史导入兼容性；不要一次性拆分全部模块后才测试。
+第三阶段真实 Chromium 验收：
 
-### 已固定的运行依赖
+- 首屏约 `5.8s`
+- 3 个查询请求
+- Manifest `0`
+- Raw `0`
+- 不阻塞首页等待 80MB+ 全历史下载
 
-第三方运行依赖不从公共 CDN 动态加载，而是保存在 `assets/vendor/`，并由 `scripts/vendor-lock.json` 锁定 SHA-256：
+## 4.2 Query-native 模块路径
 
-| 依赖 | 固定版本 |
-|---|---:|
-| PapaParse | 5.4.1 |
-| SheetJS | 0.20.3 |
-| Chart.js | 4.4.1 |
-| ExcelJS | 4.4.0 |
-| FileSaver | 2.0.5 |
-| idb-keyval | 6.2.1 |
-| html2pdf | 0.10.1 |
+Phase 4 开始把业务模块从“依赖浏览器 Raw 全量数组”迁移成 Query-native：
 
-变更依赖时必须同时更新 Vendor 文件、锁文件和 CI 断言；不得恢复运行时 CDN fallback。
+```text
+Business Module
+→ Query-native Module Adapter
+→ PrivateCloudQuery
+→ Worker /api/v1/query/*
+→ TiDB Cloud current views / facts
+→ normalized front-end vocabulary
+→ module renderer / export
+```
+
+**Query 失败不会自动回退 Raw。** 自动回退会掩盖 API、字段契约和数据完整性问题，因此 Raw 兼容只能由用户显式选择。
+
+## 4.3 Raw 兼容路径
+
+只有需要完整历史或尚未 Query-native 的深层模块才使用：
+
+```text
+User explicitly chooses month / recent months / full history
+→ filtered Manifest
+→ Worker /api/v1/raw/<store>/<filename>
+→ Worker resolves current report_slots entry
+→ TiDB warehouse_file_content
+→ if needed, controlled archive hydration/fallback from Private GitHub
+→ digest / row count / redaction / storage verification
+→ serial browser load
+→ IndexedDB cache by verified SHA-256
+```
+
+Raw 是**兼容与深分析路径**，不再是默认首页前置条件。
 
 ---
 
-## 私有云 Loader
+# 5. Warehouse 数据模型与前端为什么必须遵守它
 
-### 加载流程
+前端不能根据文件名、目录时间或本地缓存猜测“最新数据”。当前文件身份由 Warehouse/TiDB 决定。
 
-```text
-1. 用户选择 ALL 或单店铺范围
-2. 点击“加载私有云数据”并输入访问密码
-3. Loader 调用 Health、Summary 与 Query-first Bootstrap
-4. 首屏显示经营概览、数据覆盖、最新月份和数据指纹
-5. 首屏不请求 Manifest，也不下载 Raw CSV
-6. 用户按需选择“最新月明细”“近 3 月明细”或“完整历史”
-7. Loader 使用月份过滤 Manifest，仅串行请求所需 TiDB Raw
-8. 校验摘要、ETag、字节、行数、脱敏状态、TiDB 来源与数据指纹
-9. 页面分批解析、去重、索引、聚合和渲染
-10. 完整历史仍保留全部深度分析与导出能力
-```
-
-生产渐进式契约：
+核心关系：
 
 ```text
-loadingStrategy = query-first-progressive-v1
-Loader = 4.3.0
-Query Client = 1.2.0
-Bootstrap = query-first-bootstrap-v1
+report_slots
+   └─ current_file_id
+        ▼
+ingestion_files
+   ├─ store_id
+   ├─ report_month
+   ├─ report_type
+   ├─ source/serving sha256
+   ├─ row_count
+   ├─ sanitized state
+   └─ content/analytics status
+        │
+        ├─► warehouse_file_content  verified file bytes
+        └─► staging / normalized facts / current-version views
 ```
 
-### 凭据模型
+`dataFingerprint` 对当前文件身份进行确定性 SHA-256，语义包括：
 
-密码只存在于 `assets/private-cloud-warehouse-v4.js` 的闭包内存：
+```text
+store
+month
+reportType
+verified content digest
+rowCount
+redaction flag
+```
 
-- 不写入 `sessionStorage`
-- 不写入 `localStorage`
-- 不写入 IndexedDB
+用途：
+
+- 防止旧浏览器缓存被当成最新生产数据。
+- 让 Bootstrap、Manifest、Raw 对同一数据范围可以交叉验证。
+- 为真实 Chromium 验收提供确定性断言。
+
+前端不得把 README 中的文件数、某个文件名中的 `latest/final` 或 IndexedDB 缓存时间当成当前版本。
+
+---
+
+# 6. 已完成优化的演进逻辑
+
+## 第一批：数据完整性与 Manifest 治理
+
+完成：
+
+- 修正联合交易报表白名单与测试。
+- Manifest 与真实受治理对象对齐。
+- 文件数/行数断言动态化。
+- 历史完整性审计。
+- 内容 SHA-256、行数、脱敏状态回填与交叉验证。
+- 32 个生产文件、215,800 行、18 个脱敏联合交易文件完成对账。
+
+目标：先让“当前数据是谁、是否完整”可证明，再谈性能和模块迁移。
+
+## 第二批：安全收敛与旧路径退役
+
+Frontend：
+
+- 运行依赖本地化，禁止公共 CDN fallback。
+- Vendor 字节由 SHA-256 锁定。
+- 可执行内联脚本外置。
+- CSP 收敛到同源脚本。
+- 私有云密码从持久化存储移到当前标签页闭包内存。
+- 清理临时修复、诊断和一次性 workflow。
+
+Warehouse：
+
+- 旧 V2 Worker 与 V2 部署流程退役。
+- V4 成为唯一生产后端。
+- 生产完整性与浏览器验收固定进 CI/部署链路。
+
+目标：先把安全边界固定，避免性能优化把旧风险重新带回来。
+
+## 第三批：TiDB 主存储 + Query Plane + Query-first 渐进加载
+
+Warehouse：
+
+- TiDB 成为当前生产主存储与 Query Plane。
+- `Status / Overview / Ads / Transactions` Query APIs。
+- Query-first `Bootstrap`。
+- filtered Manifest。
+- deterministic `dataFingerprint`。
+- stable nested ETag。
+- Raw 内容长度、SHA-256、行数、脱敏和 TiDB 来源验证。
+
+Frontend：
+
+- Loader `4.3.0`。
+- Query-first 首屏。
+- 最新月、近 3 月、完整历史改为显式动作。
+- Raw 并发固定为 `1`。
+- 有界重试处理 Cloudflare/TiDB 瞬时传输故障。
+
+真实全量验收快照：
+
+```text
+32 files
+215,800 rows
+160,833 advertising fact rows
+54,967 finance fact rows
+18 sanitized combined reports
+80,236,592 TiDB content bytes
+2025-01 .. 2026-06 historical coverage
+~5.8s first Bootstrap
+~110.6s explicit full history
+0 page errors
+1 recovered ERR_CONTENT_LENGTH_MISMATCH
+```
+
+## 第四批：业务模块 Query-native 迁移（正在持续）
+
+### Batch 1：交易财务 Query-native — 已上线
+
+生产提交：
+
+```text
+dd02299794197e8530cb1036f891cc665dec8c0b
+PR #21
+```
+
+完成：
+
+- 新增 `assets/query-native-module-data-v1.js`。
+- 交易财务通过 `PrivateCloudQuery.allTransactions()` 查询 `/api/v1/query/transactions`。
+- 支持分页、日期、店铺、settlement 状态和 marketplace 过滤。
+- `US -> amazon.com`、`CA -> amazon.ca`、`JP -> amazon.co.jp` 等 marketplace alias。
+- 当前期间和等长上一期间异步加载。
+- Excel 导出使用与页面一致的 Query-native 数据集。
+- 保持原有财务公式；`preTaxNet` 使用与 Warehouse 一致的规范化字段计算。
+- Raw 只保留显式 compatibility mode；Query error 不静默 fallback。
+
+### Batch 2：经营大盘广告趋势 Query-native — 已上线
+
+生产提交：
+
+```text
+2d4bb9ca8d7c3bad76933749025ba51804f90178
+PR #23
+main CI 31137657882
+Pages 31137657880
+```
+
+完成：
+
+- Query Client 升级到 `1.3.0`。
+- Module Adapter 升级到 `1.1.0`。
+- 新增 `query-native-ads-trend-v1.js`，独立负责经营总览广告趋势。
+- 新增 `query-native-ads-trend-host-v1.js`，阻止 legacy Raw renderer 抢占 Query-native 图表。
+- account-level 趋势优先使用 `/query/overview`。
+- 明细广告范围使用 `/query/ads`。
+- 支持 store、date、portfolio、campaign、ad group、targeting、match type、auto/manual、search term 过滤。
+- attribution maturity 显式使用 SP 归因窗口 + 配置 buffer。
+- business-mode contribution 只标记为当前人工经济参数的 base estimate，不与 Raw business/transaction/product-cost 数据偷偷混算。
+- 修复负向搜索边界：`reading -men` 不再因为 `women` 包含字符 `men` 而错误排除。
+- CI/Pages 增加交易财务与广告趋势永久契约测试。
+
+---
+
+# 7. 当前模块数据源矩阵
+
+| 模块 | 当前主要数据源 | Raw 是否默认需要 | 状态 |
+|---|---|---:|---|
+| 私有云首屏 / 数据覆盖 | `/query/bootstrap` | 否 | Query-first |
+| Executive / account overview | `/query/overview` | 否 | Query-native |
+| 交易财务报表 | `/query/transactions` | 否 | Query-native |
+| 经营大盘广告趋势 | `/query/overview` + `/query/ads` | 否 | Query-native |
+| 完整历史深度分析 | filtered Manifest + Raw | 是，用户显式触发 | Compatibility |
+| Advanced Bid Governance | 仍依赖更完整广告维度 | 当前不能安全完全迁移 | 待 Warehouse 契约扩展 |
+| 部分 legacy 业务模块 | 历史浏览器数据数组 | 可能 | 分批迁移中 |
+
+**不要把“Query Client 已存在”误解为“所有页面模块已经 Query-native”。** 当前策略是一个模块一个模块迁移，并为每一批增加永久契约测试。
+
+---
+
+# 8. 为什么下一步不能直接迁移 Advanced Bid Governance
+
+当前 Warehouse `/query/ads` 足以支撑经营趋势和多数聚合筛选，但高级竞价治理需要更强的可证明数据契约，例如：
+
+```text
+ad product
+advertised ASIN / SKU
+purchased ASIN / SKU
+stable targeting identity
+report granularity
+attribution window dimensions
+profit / product-cost join keys
+```
+
+Frontend Adapter 已为这些字段预留规范化位置，但**不能因为前端有字段名就假定 Warehouse 当前生产数据一定完整提供这些维度**。
+
+下一批正确顺序：
+
+```text
+1. Warehouse 扩展并验证广告 Query schema / current views
+2. 回填或证明历史覆盖
+3. TiDB reconciliation
+4. Worker query smoke
+5. historical integrity audit
+6. 部署 Worker
+7. Frontend 再迁移 Bid Governance / Campaign Studio
+8. PR CI + Pages
+9. 真实 Chromium 验收
+```
+
+如果缺少这些维度就直接迁移，可能产生错误利润、成熟归因、ASIN 归属或竞价建议，因此属于生产风险，不允许用默认值掩盖。
+
+---
+
+# 9. 前端核心文件关系
+
+```text
+index.html
+└─ application shell / legacy business modules
+
+assets/private-cloud-warehouse-v4.js
+└─ Loader 4.3.0
+   ├─ current-tab credential memory
+   ├─ Query-first Bootstrap
+   ├─ explicit Raw loading controls
+   ├─ verified IndexedDB cache
+   └─ exposes restricted queryRequest bridge
+
+assets/private-cloud-query-v1.js
+└─ Query Client 1.3.0
+   ├─ /api/v1/query/status
+   ├─ /api/v1/query/bootstrap
+   ├─ /api/v1/query/overview
+   ├─ /api/v1/query/ads
+   ├─ /api/v1/query/transactions
+   └─ version-loads Query-native modules
+
+assets/query-native-module-data-v1.js
+└─ Module Adapter 1.1.0
+   ├─ transaction normalization/filtering
+   ├─ ad normalization/filtering
+   ├─ pagination / dedupe / cache
+   └─ explicit Raw compatibility only
+
+assets/query-native-ads-trend-v1.js
+└─ ads trend controller 1.0.0
+
+assets/query-native-ads-trend-host-v1.js
+└─ host guard 1.0.0
+   └─ prevents legacy Raw trend renderer from overwriting Query-native chart
+```
+
+`index.html` 仍然很大。后续模块化必须渐进进行，不能一次拆完再测试；历史事件、筛选器、导出和本地文件导入兼容性仍需要保留。
+
+---
+
+# 10. Loader、凭据和 IndexedDB 安全模型
+
+## 凭据
+
+密码只存在于 Loader 的当前标签页 JavaScript closure：
+
+- 不写 `sessionStorage`
+- 不写 `localStorage`
+- 不写 IndexedDB
 - 不暴露 `getPassword`
-- Query Client 只能调用受限的 `queryRequest`
-- 点击“清除密码”、刷新或关闭标签页后失效
+- 不放进 DOM、事件详情、日志或错误对象
+- Query Client 只调用 Loader 提供的受限 `queryRequest`
+- 刷新/关闭标签页或“清除密码”后失效
 
-任何新功能都不得把密码复制到全局变量、DOM 属性、事件详情、日志或错误对象。
+## Raw 稳定性
 
-### Raw 读取稳定性参数
-
-生产 Loader 当前固定：
+当前固定：
 
 ```text
 LOADER_VERSION = 4.3.0
-BATCH_SIZE = 6
 FETCH_CONCURRENCY = 1
 Raw maxAttempts = 8
-Raw timeout = 300000 ms
+Raw retry max delay = 15000 ms
 ```
 
-设计原因：Cloudflare + TiDB BLOB 在浏览器同时发出多个大 Raw 请求时曾出现平台级失败，响应在进入 Worker 前缺少 CORS 头。32 文件历史审计的串行模式稳定通过，因此浏览器也采用串行读取。
+原因：Cloudflare + TiDB BLOB 在多个大 Raw 请求并发时出现过平台级失败、截断或 CORS 不完整响应。串行读取 + 有界重试已经通过完整历史验收。
 
-只对 408、425、429、5xx 和网络错误进行有限重试；永久 4xx 立即失败。重试附加唯一查询参数，避免重复命中相同失败链路。
+**不得未经完整生产 Chromium 验收提高 Raw 并发。**
 
-**不得未经完整生产 Chromium 验收提高 `FETCH_CONCURRENCY`。**
-
-### 不可变文件缓存
+## IndexedDB
 
 ```text
-IndexedDB database: amazon-warehouse-v4-cache
-Object store: immutable-files
+Database: amazon-warehouse-v4-cache
+Store: immutable-files
 Key: verified SHA-256
 ```
 
-只缓存 Worker 已确认内容摘要的安全服务文件，不缓存密码。Manifest 摘要变化会产生新的不可变缓存对象。
+只缓存 Worker 已确认摘要的不可变文件字节。它不保存密码，也不决定当前版本；Manifest/dataFingerprint 变化会让新内容使用新摘要对象。
 
 ---
 
-## TiDB Query Client
+# 11. Cloudflare Worker 前端必须知道的契约
 
-`assets/private-cloud-query-v1.js` 是只读浏览器查询层。
-
-```javascript
-await window.PrivateCloudQuery.status({ scope: 'ALL' });
-await window.PrivateCloudQuery.overview({ scope: 'ALL', grain: 'month' });
-await window.PrivateCloudQuery.ads({ scope: 'YTDBNS', limit: 250, offset: 0 });
-await window.PrivateCloudQuery.transactions({
-  scope: 'ALL',
-  from: '2026-01-01',
-  to: '2026-06-30'
-});
-```
-
-公开方法：
+公开配置：
 
 ```text
-status
-overview
-ads
-transactions
-allAds
-allTransactions
-refresh
-state
+Worker name: amazon-warehouse-cloud-v4
+API: 4.2.2
+Entry: cloud-worker/src/query_first_plane.js
+Compatibility date: 2026-07-24
+workers.dev: enabled
+Production URL: https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev
 ```
 
-约束：
+Worker `wrangler.jsonc` 的公开变量包括：
 
-- 只允许 `/api/v1/query/` 路径
-- 默认分页 250 行
-- 单页最大 500 行
-- 日期必须是真实有效的 `YYYY-MM-DD`
-- 明细查询必须有界
-- 凭据由 Loader 闭包附加，Query Client 不读取或保存密码
+```text
+STORES=YTDBNS,YY,JJ
+ALLOWED_ORIGINS=https://mrtanshiyue.github.io,http://localhost:8000,http://127.0.0.1:8000
+GITHUB_OWNER=mrtanshiyue
+GITHUB_REPO=Amazon-Data-Warehouse
+GITHUB_BRANCH=main
+MAX_UPLOAD_BYTES=15728640
+```
 
-Query Client 当前用于状态、概览和受控明细查询。页面仍保留完整 CSV 导入路径，不能假设所有旧模块已完全改成服务端聚合。
+生产 Secret 只存在 Cloudflare：
+
+```text
+DATABASE_URL
+DASHBOARD_PASSWORD
+PII_HASH_SECRET
+GITHUB_TOKEN
+```
+
+这些值**不得**写进公共仓库、README、PR、日志或截图。
+
+前端不能随意增加 CORS 请求头。历史上曾因 Loader 自行添加 `Cache-Control`，导致浏览器预检失败。需要新请求头时必须先修改 Warehouse Worker CORS，再做真实浏览器验收。
 
 ---
 
-## 安全模型
+# 12. TiDB Cloud 前端必须知道的契约
 
-### Content Security Policy
+TiDB Cloud 是生产主存储与 Query Plane，不是浏览器直连数据库。
 
-生产页面的关键规则：
+浏览器只能通过 Worker 获取：
 
 ```text
-script-src 'self'
-script-src-attr 'none'
-object-src 'none'
-connect-src 'self' + production Worker origin
+Health / Summary
+Manifest
+Raw
+/api/v1/query/bootstrap
+/api/v1/query/status
+/api/v1/query/overview
+/api/v1/query/ads
+/api/v1/query/transactions
 ```
 
-历史样式仍需要内联样式兼容，但脚本必须同源。CI 会拒绝：
+前端判断数据可用时应比较：
 
-- 远程 JavaScript URL
-- 可执行内联脚本
-- Vendor 字节漂移
-- 持久化私有云密码
-- 意外工作流和一次性诊断文件
+```text
+Manifest totalFiles / totalRows
+Summary totals
+Query Status fileCount / catalogRows / analyticsReady
+Bootstrap coverage / dataFingerprint
+Page importedFiles / importedRows / importStage
+```
 
-### 分支保护
+当前生产历史快照曾验证：
 
-Frontend `main` 已保护，要求：
+```text
+32 current files
+215,800 rows
+160,833 advertising rows
+54,967 finance rows
+18 sanitized transaction files
+32/32 TiDB content coverage
+32/32 analytics coverage
+```
+
+Business Report 当前生产目录可能不可用；`businessSales = 0` 必须结合 `sourceCoverage.business.available` 判断，不能把“无数据源”错误解释成“真实销售额为 0”。
+
+---
+
+# 13. CI、Pages 与发布顺序
+
+## Frontend CI
+
+`.github/workflows/ci-main.yml` 当前永久检查至少包括：
+
+- JavaScript syntax
+- Query-first progressive loading contract
+- Query-native transaction contract
+- Query-native ads trend contract
+- Vendor SHA-256 lock
+- CSP / same-origin dependency isolation
+- Loader / Query Client / credential invariants
+- Raw serial retry invariants
+- temporary workflow / repair artifact rejection
+- Pages artifact completeness
+
+`main` 分支保护要求：
 
 ```text
 Static site and security invariants
 ```
 
-不得直接编辑 `main` 或 `gh-pages`。README-only 修改也应通过 Pull Request 和 CI。
+## Pages
+
+`.github/workflows/pages.yml` 从 `main` 构建不可变静态制品并发布到 `gh-pages`。
+
+`gh-pages` 是生成结果，**不要直接编辑**。生产验收应核对 `_pages_config_status.txt` 中的 `source_sha`。
+
+## 跨仓库标准发布顺序
+
+只改前端 UI 且不改变后端协议：
+
+```text
+Frontend branch → PR CI → merge → Pages → browser check
+```
+
+涉及数据 / Worker / API / Query schema：
+
+```text
+Warehouse branch
+→ migrations / Worker / tests
+→ Warehouse PR CI
+→ TiDB migrate/reconcile
+→ Worker deploy + smoke
+→ Raw + Query + historical integrity audit
+→ merge/production acceptance
+→ Frontend branch
+→ Loader / Query Client / module changes
+→ Frontend PR CI
+→ merge
+→ Pages
+→ real Chromium acceptance
+```
+
+不要先部署依赖新 API 的前端，再等待后端上线。
 
 ---
 
-## CI、Pages 与跨仓库发布顺序
+# 14. 已解决问题与保留设计原因
 
-### 前端 CI
-
-`.github/workflows/ci-main.yml` 验证：
-
-- JavaScript 语法
-- Vendor SHA-256
-- CSP 与同源依赖
-- Loader / Query Client 版本和安全不变量
-- 内存凭据
-- Raw 串行读取和重试参数
-- Pages 资产完整性
-- 主分支只保留正式工作流
-
-### GitHub Pages
-
-`.github/workflows/pages.yml` 从 `main` 发布。`gh-pages` 是生成结果，不直接修改。
-
-### 跨仓库标准发布顺序
-
-涉及 Worker、TiDB、API、Loader 或 Query Client 时：
-
-```text
-1. 从 Warehouse main 创建候选分支
-2. 修改迁移 / Worker / tests / workflow
-3. Warehouse PR CI 通过
-4. 合并 Warehouse 并完成生产部署、Raw、Query 和完整性审计
-5. 从 Frontend main 创建候选分支
-6. 更新 Loader / Query Client / CSP / UI
-7. Frontend PR CI 通过
-8. 合并并等待 GitHub Pages 发布
-9. 再由 Warehouse Chromium Job 验证真实线上页面
-10. 保存脱敏部署和浏览器产物
-```
-
-不要先发布前端，再等待尚未部署的 Worker 协议。
-
----
-
-## 已完成的三批改造
-
-### 第一批：数据完整性与 Manifest 治理
-
-完成内容：
-
-- 修正联合交易报表白名单和测试。
-- 清理 Manifest 与真实仓库文件不一致问题。
-- 动态化 smoke / browser 文件数和行数断言。
-- 全量历史完整性审计。
-- 完整性元数据回填。
-- 32 文件、215,800 行、18 个脱敏交易文件全部对账。
-
-Warehouse 关键提交：
-
-```text
-0cfc90edcaa420d1607efbd1348c0fcac8d7ce5d
-```
-
-### 第二批：安全收敛与旧系统退役
-
-Frontend：
-
-- 7 个运行依赖本地化并锁定 SHA-256。
-- 11 个内联脚本外置。
-- CSP 收敛到同源脚本。
-- 密码从 `sessionStorage` 改为 Loader 闭包内存。
-- 删除运行时 CDN fallback。
-- 删除诊断、修复和一次性工作流。
-
-Warehouse：
-
-- 删除旧 `worker/` V2 代码和 V2 部署流程。
-- 删除 Worker `amazon-ad-private-api-v2`。
-- 保留 V4 单一生产路径。
-- 清理完成的诊断、修复和重复验证工作流。
-
-关键提交：
-
-```text
-Frontend: dd6941df2debe7fb6a8d3a76dd6d456dd55f761c
-Warehouse: 955de3abd1512eaf3397db1f9dd8bf1525a8d494
-```
-
-Frontend `main` 分支保护已启用。Warehouse 因私有仓库分支保护需要 GitHub Pro，而所有者明确不升级 Pro，因此 Warehouse 分支保护被接受为例外。
-
-### 第三批：Phase 8 TiDB 主存储与 Query Plane
-
-完成内容：
-
-- 迁移 `0010`、`0011`。
-- TiDB 文件内容主存储与规范化分析事实。
-- Status、Overview、Ads、Transactions Query APIs。
-- 前端 Query Client。
-- Raw 内容长度、SHA-256、ETag 和 TiDB 来源验证。
-- Worker 二进制容器兼容。
-- 有限重试和精确版本收敛门禁。
-- 32 文件历史审计与 Chromium 全量导入。
-
-最后生产代码基线：
-
-```text
-Frontend: 94254f7b7c364d17f25807337ba3424262e92b39
-Warehouse: 3f008f756007949a8833aba1b6e7674c565b727a
-Final Run: 31090843724
-```
-
-旧 Phase 8 草案已被正式实现取代。不要复活 Frontend PR #4、Warehouse PR #5 或 #14；新工作从当前 `main` 重建。
-
----
-
-## 已解决的生产问题与设计原因
-
-| 问题 | 根因 | 正式处理 |
+| 历史问题 | 根因 | 当前正式处理 |
 |---|---|---|
-| Raw 返回 502 | 旧 TiDB Serverless 驱动的 BLOB 表示 | 固定 `@tidbcloud/serverless 0.1.0` |
-| Worker 中摘要不一致 | Edge runtime 二进制对象形态不同 | 严格规范化 Uint8Array、ArrayBuffer、Blob、Buffer-compatible 等，再做长度和 SHA-256 验证 |
-| 历史审计偶发 503 | Cloudflare/TiDB 瞬时服务故障 | 仅对瞬时状态有限重试，永久 4xx 不重试 |
-| 浏览器健康检查被 CORS 拦截 | Loader 添加了未在允许头中的 `Cache-Control` | 删除该请求头，保留 URL retry marker |
-| 浏览器大 Raw 并发失败 | 两个 TiDB BLOB 请求同时进入平台 | `FETCH_CONCURRENCY = 1` |
-| 混合版本被误接受 | Cloudflare 发布期间节点版本不一致 | smoke 要求精确 Worker 版本 |
+| 首页加载约 200 秒 | 默认下载并解析全部 Raw | Query-first，首屏约 5.8 秒且 0 Raw |
+| Raw 502 / BLOB 表示差异 | TiDB Serverless/Edge 二进制形态 | 规范化二进制，固定 `@tidbcloud/serverless 0.1.0` |
+| 大 Raw 并发失败 | Cloudflare/TiDB 平台传输不稳定 | `FETCH_CONCURRENCY = 1` |
+| 截断 / Content-Length mismatch | 网络响应体不完整 | incomplete body 视为 retryable，不缓存 0-byte Blob |
+| Query ETag 每次变化 | 嵌套 `generatedAt` 进入哈希 | stable nested ETag 递归排除展示时间戳 |
+| Business smoke 错误要求非零 | 把“接口支持”当成“当前有数据” | `sourceCoverage` 明确数据源可用性 |
+| CORS 健康检查失败 | 前端添加不允许的 `Cache-Control` | 删除该头；新增头必须 Worker 先支持 |
+| `reading -men` 排除了 `women` | negative token 使用子字符串匹配 | alphanumeric negative token 改为词边界匹配 |
+| legacy trend 覆盖新趋势 | 两套 renderer 同时拥有图表 | Query-native host guard 明确 ownership |
 
-历史上 2026-08-05 有多次候选构建、补丁和浏览器 Run 失败，它们是排障过程，不代表当前未解决故障。当前权威状态是最终成功 Run `31090843724`。
-
----
-
-## 已接受风险与补偿控制
-
-### Warehouse `main` 未保护
-
-所有者明确决定不升级 GitHub Pro，并保持 Warehouse Private，因此 Warehouse `main` 当前未启用 GitHub 分支保护。
-
-这意味着具有写权限的身份理论上可以直接 push、force-push 或删除分支。补偿控制：
-
-- 实际变更仍使用 Pull Request。
-- `Validate Warehouse Main` 必须通过。
-- 生产部署执行迁移、回填、对账、Raw、Query、审计和 Chromium 门禁。
-- 使用不可变 GitHub 归档和 TiDB 完整性摘要交叉验证。
-- 保留恢复分支。
-- PAT 遵循最小权限并避免多人共享。
-
-不要把这些补偿控制描述为与原生分支保护完全等价。
-
-### Fine-grained PAT 注意事项
-
-曾创建 `warehouse-branch-protection` Token，具有两个仓库的 `Administration: Read and write`。该权限可用于分支管理，但**不能替代生产 Worker 使用的仓库内容 Token**，除非同时具有 Warehouse `Contents: Read and write`。
-
-不要重新生成、替换或扩大生产 Token 权限，除非任务明确需要并完成 Secret 影响分析。
+历史失败 Run、临时补丁 workflow 和排障提交是排障过程，不代表当前存在同名生产阻塞。
 
 ---
 
-## 不可违反的工程约束
+# 15. 已接受风险与补偿控制
 
-- 不公开 Warehouse。
-- 不恢复 V2 Worker 或 V2 部署流程。
-- 不让浏览器直接访问私有 GitHub Contents API。
-- 不把密码写入任何持久化浏览器存储。
-- 不恢复公共 CDN JavaScript 或动态 fallback。
-- 不绕过 Worker 的认证、CORS、范围和内容完整性校验。
-- 不把未脱敏交易文件写入公共仓库、TiDB 服务内容或浏览器缓存。
+## Warehouse `main` 未受原生分支保护
+
+Warehouse 必须保持 Private。当前账户方案对私有仓库的所需分支保护能力存在限制，因此 Warehouse `main` 未使用与 Frontend 相同的原生保护规则。
+
+补偿控制：
+
+- 实际改动仍走独立 branch + Pull Request。
+- Warehouse CI 必须通过。
+- 生产部署必须执行迁移、对账、Worker smoke、Query/Raw 校验和历史完整性审计。
+- GitHub 私有不可变归档与 TiDB 摘要交叉验证。
+- 保留恢复点。
+
+不要把这些补偿控制描述成与 GitHub 原生 branch protection 完全等价。
+
+---
+
+# 16. 不可违反的工程约束
+
+- 不公开 `Amazon-Data-Warehouse`。
+- 不恢复 V2 Worker、V2 部署流程或旧生产 API。
+- 不让浏览器直接访问 Private GitHub Contents API。
+- 不让浏览器直接连接 TiDB Cloud。
+- 不把密码写入 sessionStorage/localStorage/IndexedDB。
+- 不恢复公共 CDN JavaScript 或 runtime CDN fallback。
+- 不绕过 Worker 认证、CORS、范围和完整性校验。
+- 不把未脱敏交易数据写入公共仓库或浏览器不可控缓存。
 - 不直接修改 `gh-pages`。
-- 不未经生产 Chromium 验收提高 Raw 并发。
-- 不用 README 静态数字代替实时 Manifest / Query Status。
-- 不在大数组上使用 `Math.max(...largeArray)` 或 `target.push(...largeArray)`；使用循环或分块。
-- 不在导入中间批次重复执行完整聚合和全页面渲染。
-- 不把完成的一次性诊断工作流提交到 `main`。
+- 不未经 Chromium 验收提高 Raw 并发。
+- 不删除 SHA-256、字节、行数、脱敏、dataFingerprint 或历史审计门禁来追求通过。
+- 不把 README 静态数字当作实时生产状态。
+- 不把 Query error 静默转换成 Raw fallback。
+- 不在缺少 Warehouse 维度时用前端默认值伪造 Bid Governance 数据契约。
+- 不让一次性 patch/repair workflow 留在 `main`。
+- 不做破坏性 TiDB migration；优先 additive schema + backfill + compatibility window。
 
 ---
 
-## 安全修改流程
+# 17. 下一批推荐入口
 
-### 只改前端 UI
+当前最合理的下一批是：**先扩 Warehouse 广告 Query 契约，再迁移 Advanced Bid Governance / Campaign Studio。**
+
+优先验证：
+
+1. `/query/ads` 是否能可靠返回 ad product、advertised/purchased ASIN/SKU、report granularity、attribution window 和稳定 targeting identity。
+2. 这些字段在 32 个历史文件中的覆盖率与缺失语义。
+3. 是否需要 additive migration/current view，而不是在 Frontend 伪造默认值。
+4. Profit / product cost 的 join key 和来源是否可证明。
+5. 成熟归因与 Pending 的时间窗口能否由 Warehouse schema 明确表达。
+6. 完成后再逐模块迁移，不一次性重写 44k+ 行核心页面。
+
+每迁移一个模块，都应像交易财务和广告趋势一样：
 
 ```text
-1. 从 Frontend main 创建分支
-2. 修改 index.html 或同源 assets
-3. node --check 相关脚本
-4. 运行/等待 Frontend CI
-5. PR 合并
-6. 等待 Pages
-7. 浏览器检查页面和 Console
+独立 owner
+Query-native adapter
+explicit Raw compatibility only
+permanent contract test
+CI gate
+Pages gate
+real Chromium acceptance
 ```
 
-### 修改 Loader / Query Client
-
-除前端步骤外，还必须：
-
-- 更新精确版本号。
-- 更新 CI 版本断言。
-- 检查 CORS 预检。
-- 验证密码仍不可读取和不可持久化。
-- 从 Warehouse 运行真实 Chromium 全量导入与 Query 验收。
-
-### 修改跨仓库协议
-
-严格使用“Warehouse 先、Frontend 后”的发布顺序，并为不兼容变更提供兼容窗口或原子切换方案。
-
 ---
 
-## 恢复与回滚
+# 18. 故障排查顺序
 
-当前可达的历史恢复点：
+## 页面显示旧版本
 
-| 用途 | 分支 | Commit |
-|---|---|---|
-| 云迁移前恢复点 | `recovery-2026-07-24-pre-cloud-migration` | `151115608b2677bcf0d6029532eccf5b1daf0930` |
-| V4 切换前回滚点 | `rollback/pre-v4-cutover-2026-08-04` | `151115608b2677bcf0d6029532eccf5b1daf0930` |
+强制刷新，或给 Pages URL 加临时查询版本参数；同时核对 `gh-pages/_pages_config_status.txt` 的 `source_sha`。
 
-两个前端恢复分支目前指向同一旧基线。它们用于灾难恢复参考，不是推荐的日常回滚方式。
+## 私有云加载失败
 
-日常回滚优先：
-
-1. 回退最近的前端应用提交。
-2. 等待 Pages 重新发布。
-3. 保留 TiDB、V4 Worker 和不可变归档，不做破坏性删除。
-4. 重新执行健康检查、Manifest 和 Chromium 验收。
-
----
-
-## 当前技术债与推荐改进入口
-
-以下是未来可评估的方向，不代表已经批准执行：
-
-1. **逐步模块化 `index.html`**：按业务模块拆分，但保持全局事件和导入兼容。
-2. **服务端聚合替代部分全量 CSV 解析**：优先迁移 Overview、趋势和大明细分页，降低浏览器内存。
-3. **Query Client 契约测试**：为所有查询参数、分页、日期和错误结构增加浏览器级测试。
-4. **可观测性**：增加不含凭据和业务明细的耗时、重试、缓存命中和失败阶段指标。
-5. **导出稳定性**：统一 Excel/PDF 依赖加载状态和导出错误提示。
-6. **UI 一致性**：经营大盘、交易财务、广告治理统一组件、间距、图表和空状态。
-7. **增量页面更新**：避免每次范围变化重建所有模块。
-8. **数据契约文档化**：让前端字段映射与 Warehouse 注册表形成自动校验。
-
-开展其中任何一项前，应先建立明确批次边界、成功标准和回滚点。
-
----
-
-## 故障排查
-
-### 页面仍显示旧版本
-
-- Windows：`Ctrl + Shift + R`
-- macOS：`Command + Shift + R`
-
-或使用：
-
-```text
-https://mrtanshiyue.github.io/Ads-Operations-Integrity/?v=YYYYMMDD-01
-```
-
-### 私有云加载失败
-
-按顺序检查：
+依次检查：
 
 1. Worker `/api/v1/health`。
-2. 密码是否正确。
-3. GitHub Pages Origin 是否在 CORS 白名单。
-4. Manifest / Summary 是否正常。
-5. 页面显示的首个失败文件。
-6. Raw 是否为 408、425、429、5xx 或浏览器网络错误。
-7. Loader 是否仍是 4.3.0、串行读取、8 次有限重试。
-8. Console 和页面错误指示器。
+2. 浏览器密码是否正确。
+3. Origin 是否在 Worker CORS 白名单。
+4. Query Bootstrap / Status 是否正常。
+5. 是否为 408/425/429/5xx 或网络截断。
+6. Loader 是否仍为 `4.3.0`、Raw 并发 `1`、有界重试。
+7. 是否错误添加了未允许的请求头。
 
-不要添加 `Cache-Control` 等未经 Worker CORS 允许的请求头。
+## Query-native 模块空白
 
-### 文件数或行数不一致
+检查：
+
+1. `PrivateCloudQuery.state()` 是否 ready。
+2. Query Client 是否为 `1.3.0`。
+3. Adapter 是否为 `1.1.0`。
+4. 请求日期、scope、marketplace/campaign 等过滤是否过窄。
+5. 是否把 sourceCoverage unavailable 错当成数值 0。
+6. Legacy renderer 是否仍在抢占该模块；广告趋势由 host guard 管理 ownership。
+7. 不要通过自动 Raw fallback 掩盖 Query 错误。
+
+## 文件数或行数不一致
 
 比较：
 
 ```text
-Manifest totalFiles / rowCount
-Summary totals
-Query Status fileCount / catalogRows
-Page importedFiles / importedRows
+Manifest
+Summary
+Query Status
+Bootstrap coverage
+Page import counters
+Data fingerprint
 ```
 
-同时确认范围、月份、缓存脚本版本和导入阶段。
-
-### 模块空白或导出失败
-
-检查运行时错误、依赖是否在 `assets/vendor/`、生成脚本是否存在、导入是否 `complete`、Query Client 是否 ready，以及 ExcelJS / SheetJS / FileSaver 是否通过锁校验。
+同时确认 scope、月份范围、当前 `report_slots` 和缓存摘要。
 
 ---
 
-## 相关文件与文档
+# 19. 关键文件
 
 ```text
 README.md
 index.html
 assets/private-cloud-warehouse-v4.js
 assets/private-cloud-query-v1.js
+assets/query-native-module-data-v1.js
+assets/query-native-ads-trend-v1.js
+assets/query-native-ads-trend-host-v1.js
 assets/private-cloud-warehouse-v3.js
+scripts/test-progressive-loader.mjs
+scripts/test-query-native-modules.mjs
+scripts/test-query-native-ads-trend.mjs
 scripts/harden-static-site.mjs
 scripts/vendor-lock.json
-docs/CLOUD_V4_CANARY.md
-docs/CLOUD_V4_PRODUCTION_CUTOVER.md
 .github/workflows/ci-main.yml
 .github/workflows/pages.yml
 ```
 
-私有仓库 README 是后端、数据、部署、迁移和安全风险的权威交接文档。前端 README 和 Warehouse README 应在每次跨仓库生产变更后同步更新。
+后端、数据、TiDB、Worker、迁移和完整生产验收的权威文档是 Private Warehouse README。两个 README 应在每次跨仓库生产变更后同步更新。
 
 ---
 
-## 外部平台运行交接：TiDB Cloud 与 Cloudflare
-
-这一节用于让新的开发对话理解外部平台在本项目中的真实职责、配置边界和安全约束。公共前端只消费 Worker API，不直接管理 TiDB Cloud 或 Cloudflare 账户。
-
-### 平台数据路径
+# 20. 一句话理解整个系统
 
 ```text
-Browser / GitHub Pages
-        │
-        │ HTTPS + Authorization: Bearer <current-tab password>
-        ▼
-Cloudflare Worker: amazon-warehouse-cloud-v4
-        │
-        ├─ DATABASE_URL ─────────► TiDB Cloud
-        └─ GITHUB_TOKEN ─────────► Private GitHub archive fallback
+Public GitHub 管前端和 Pages；Private GitHub 管受治理数据、Worker 源码和恢复；
+Cloudflare Worker 是唯一受控 API 网关；TiDB Cloud 是生产主存储与 Query Plane；
+浏览器优先 Query-native，只有显式深分析才加载 verified Raw；IndexedDB 只缓存已验证不可变文件；
+任何跨层改动都必须 Warehouse 先验证、Frontend 后发布，并由 CI + Pages/Worker + Chromium 共同关闭生产门禁。
 ```
-
-前端仓库中不存在 `DATABASE_URL`、Cloudflare Account ID、TiDB 主机名、数据库用户名或任何平台 Token。新对话若需要修改外部平台，必须转到私有 Warehouse 仓库和相应平台控制台核验，不得从前端代码推断凭据。
-
-### TiDB Cloud：前端必须知道的事实
-
-- TiDB Cloud 是生产 `Raw + Query Plane` 的主存储，不是浏览器直连数据库。
-- 浏览器只通过 Worker 访问 `Manifest`、`Summary`、`Raw` 和 `/api/v1/query/*`。
-- 当前健康响应应报告：
-
-```text
-storage = tidb-primary
-catalog = tidb-cloud
-queryPlane = tidb-query-plane-v1
-archive = github-private-repository
-```
-
-- 前端判断数据可用不能只看 `/health`，还应比较：
-
-```text
-Manifest totalFiles / rowCount
-Summary totals
-Query Status fileCount / catalogRows / analyticsReady
-Page importedFiles / importedRows / importStage
-```
-
-- TiDB 当前文件由 `report_slots` 决定；前端不得把目录排序、文件名中的 `latest/final` 或缓存时间当成当前版本。
-- TiDB 连接、迁移、事实表、逻辑恢复和数据库故障处理以 Warehouse README 为准。
-- 精确 TiDB 项目、集群、主机、用户名和连接串属于敏感基础设施信息，不写入公共 README。
-
-### Cloudflare：前端必须知道的事实
-
-当前公开配置来自 Warehouse `cloud-worker/wrangler.jsonc`：
-
-```text
-Worker name: amazon-warehouse-cloud-v4
-Worker API: 4.2.2
-Entry: cloud-worker/src/query_plane.js
-Compatibility date: 2026-07-24
-workers.dev: enabled
-Production URL: https://amazon-warehouse-cloud-v4.tanshiyuesir.workers.dev
-```
-
-当前 Worker 没有使用 KV、R2、D1、Queues、Durable Objects 或自定义域名路由绑定。不要在前端假设这些平台能力已经存在。
-
-允许的浏览器 Origin：
-
-```text
-https://mrtanshiyue.github.io
-http://localhost:8000
-http://127.0.0.1:8000
-```
-
-允许的 CORS 请求头：
-
-```text
-Authorization
-Content-Type
-If-None-Match
-X-Dashboard-Password
-```
-
-前端不得自行添加 `Cache-Control`、自定义追踪头或其他非简单请求头，除非先同步修改 Worker CORS 并完成真实浏览器预检验收。此前 Loader 增加 `Cache-Control` 后，浏览器连健康检查都被预检拦截。
-
-Worker 可能在请求进入应用代码前发生 Cloudflare 平台级网络或 5xx 故障，这类响应可能没有 CORS 头。生产 Loader 因此采用：
-
-```text
-FETCH_CONCURRENCY = 1
-maxAttempts = 8
-bounded exponential backoff
-unique retry query marker
-```
-
-不要把平台级无 CORS 错误误判为数据库内容损坏，也不要用提高并发的方式处理。
-
-### Cloudflare 缓存语义
-
-- Health 与一般错误响应使用私有、不存储策略。
-- Query JSON 使用短时私有缓存和 ETag。
-- 已验证 Raw CSV 使用内容 SHA 作为 ETag，并允许不可变私有缓存。
-- 浏览器缓存命中仍必须受 Authorization、Origin、Manifest 摘要和当前范围约束。
-- 前端请求可以使用 `If-None-Match`，但不要绕过 Worker 内容验证头。
-
-### 外部平台变更前检查表
-
-新对话涉及 TiDB Cloud 或 Cloudflare 时，至少完成：
-
-1. 读取 Warehouse README 的 TiDB Cloud 与 Cloudflare 平台章节。
-2. 检查 `cloud-worker/wrangler.jsonc`、`package.json`、部署工作流和当前 Worker Health。
-3. 确认改动是否影响 `DATABASE_URL`、Worker Secret、CORS、API 版本或 Loader。
-4. 不在前端仓库、PR、日志或截图中暴露平台 ID 和凭据。
-5. 先完成 Warehouse CI、迁移/对账、Worker smoke、Raw、Query 和历史审计。
-6. 再更新前端版本和 Pages。
-7. 最后由 Warehouse Chromium 验证真实线上页面。
-
-### 不应写入公共仓库的平台信息
-
-```text
-TiDB project / cluster ID
-TiDB hostname and username
-DATABASE_URL
-Cloudflare account ID
-Cloudflare API token
-Worker runtime secret values
-DASHBOARD_PASSWORD
-PII_HASH_SECRET
-GitHub PAT values
-```
-
-这些信息的“名称、用途和轮换影响”可以记录，但真实值只能保存在平台控制台和 GitHub Secrets 中。
-
