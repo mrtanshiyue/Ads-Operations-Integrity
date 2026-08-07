@@ -39,3 +39,5 @@ jobs:
           git diff --cached --quiet && exit 1 || true
           git commit -m "Phase 8: canonicalize parity identity and bid comparability"
           git push origin HEAD:phase8/parity-canonical-identity-v103
+
+# trigger: metric-parity-source-assertions-v2
