@@ -4,14 +4,16 @@ import vm from 'node:vm';
 
 const source = readFileSync(new URL('../assets/bid-governance-parity-audit-v1.js', import.meta.url), 'utf8');
 
-assert.match(source, /const AUDIT_VERSION = '1\.0\.2'/);
+assert.match(source, /const AUDIT_VERSION = '1\.0\.3'/);
 assert.match(source, /AdsDashboardApp\?\.debug\?\.getBidGovernanceScopedRowsForParity/);
 assert.doesNotMatch(source, /\bgetBidGovScopedRows\(/);
 assert.match(source, /source: 'query'/);
 assert.match(source, /adProduct: ''/);
 assert.match(source, /executionAuthorized: false/);
-assert.match(source, /metricParityPass: pass/);
-assert.match(source, /migrationCandidate = Boolean\(comparison\.metricParityPass && adProductScopeProven\)/);
+assert.match(source, /const metricParityPass = totalsPass && identityPass/);
+assert.match(source, /comparison\.bidParityPass/);
+assert.match(source, /comparison\.bidGovernanceReady/);
+assert.match(source, /legacyBidComparable/);
 assert.match(source, /rawBootstrapFingerprint/);
 assert.match(source, /dataFingerprint/);
 assert.match(source, /dataFingerprint 缺失/);
@@ -75,7 +77,7 @@ const window = {
         rows: globalThisQueryRows,
         truncated: queryTruncated,
         nextOffset: queryTruncated ? 500 : null,
-        governance: { schemaVersion: 'ads-query-governance-v2', readiness: { bidValueNullabilityTrusted: true, adProductReady } },
+        governance: { schemaVersion: 'ads-query-governance-v2', readiness: { targetingIdentityReady: true, bidSourceColumnReady: true, bidValueNullabilityTrusted: true, adProductReady, advertisedProductIdentityReady: true, attributionMaturityReady: true, bidGovernanceReady: adProductReady } },
       };
     },
   },
@@ -108,7 +110,7 @@ vm.runInContext('const AdsDashboardApp = { debug: { getBidGovernanceScopedRowsFo
 vm.runInContext(source, context, { filename: 'bid-governance-parity-audit-v1.js' });
 
 const audit = window.BidGovernanceParityAudit;
-assert.equal(audit.version, '1.0.2');
+assert.equal(audit.version, '1.0.3');
 
 const exact = audit.compareRows(legacyRows, queryRows);
 assert.equal(exact.verdict, 'pass');
@@ -120,6 +122,21 @@ assert.equal(exact.bidMismatch, 0);
 assert.equal(exact.bidMissingEither, 0);
 assert.equal(exact.metrics.spend.absolute, 0);
 assert.equal(exact.metrics.sales.absolute, 0);
+assert.equal(exact.bidComparable, true);
+assert.equal(exact.bidParityPass, true);
+
+const legacyWithoutIdentityOrBid = legacyRows.map(row => ({ ...row, targetingId: '', currentBid: null }));
+const queryWithProvenIdentityAndBid = queryRows.map((row, index) => ({ ...row, targetingId: index < 2 ? 'T1' : 'T2', currentBid: index === 0 ? 0.5 : index === 1 ? 0.55 : 0.4 }));
+const productionShape = audit.compareRows(legacyWithoutIdentityOrBid, queryWithProvenIdentityAndBid);
+assert.equal(productionShape.metricParityPass, true);
+assert.equal(productionShape.identityPass, true);
+assert.equal(productionShape.groupOverlap, 1);
+assert.equal(productionShape.legacyOnlyCount, 0);
+assert.equal(productionShape.queryOnlyCount, 0);
+assert.equal(productionShape.bidComparable, false);
+assert.equal(productionShape.bidParityPass, false);
+assert.equal(productionShape.verdict, 'warn');
+assert.equal(productionShape.mismatches.length, 0);
 
 const changedQuery = queryRows.map(row => ({ ...row }));
 changedQuery[0].spend = 14;
@@ -186,6 +203,7 @@ assert.equal(runResult.comparison.verdict, 'pass');
 assert.equal(runResult.comparison.metricParityPass, true);
 assert.equal(runResult.comparison.adProductScopeProven, false);
 assert.deepEqual([...runResult.comparison.scopeBlockers], ['adProductReady']);
+assert.equal(runResult.comparison.bidGovernanceReady, false);
 assert.equal(runResult.comparison.migrationCandidate, false);
 assert.equal(runResult.executionAuthorized, false);
 assert.equal(queryRequest.source, 'query');
@@ -199,6 +217,8 @@ const provenRun = await audit.run({ force: true });
 assert.equal(provenRun.comparison.verdict, 'pass');
 assert.equal(provenRun.comparison.adProductScopeProven, true);
 assert.deepEqual([...provenRun.comparison.scopeBlockers], []);
+assert.equal(provenRun.comparison.bidGovernanceReady, true);
+assert.equal(provenRun.comparison.bidComparable, true);
 assert.equal(provenRun.comparison.migrationCandidate, true);
 assert.equal(provenRun.executionAuthorized, false);
 assert.equal(queryRequest.adProduct, '');
