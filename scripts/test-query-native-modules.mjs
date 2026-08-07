@@ -236,7 +236,7 @@ assert.equal(adsResult.rows.length, 3);
 assert.equal(adsResult.governance.schemaVersion, 'ads-query-governance-v2');
 assert.equal(adsResult.governance.readiness.bidValueNullabilityTrusted, true);
 assert.equal(adsResult.governance.readiness.bidGovernanceReady, false);
-assert.deepEqual(adsResult.rows.map(row => row.bid), [null, 0, 1.25]);
+assert.equal(JSON.stringify(adsResult.rows.map(row => row.bid)), JSON.stringify([null, 0, 1.25]));
 assert.ok(adsResult.rows.every(row => row.adProduct === null));
 assert.ok(adsResult.rows.every(row => row.attributionWindowDays === null));
 assert.ok(adsResult.rows.every(row => row.bidValueTrusted === true));
