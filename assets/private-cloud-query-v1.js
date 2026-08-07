@@ -12,6 +12,7 @@
   const ADS_SOURCE_PREFLIGHT_MAX_ENCODED_LENGTH = 12288;
   const QUERY_NATIVE_ADAPTER_VERSION = '1.2.0';
   const QUERY_NATIVE_GATE_VERSION = '1.0.0';
+  const QUERY_NATIVE_SOURCE_READINESS_VERSION = '1.0.0';
   const QUERY_NATIVE_TREND_VERSION = '1.1.0';
   const QUERY_NATIVE_HOST_VERSION = '1.0.0';
   const QUERY_NATIVE_ADAPTER_URL = new URL(
@@ -20,6 +21,10 @@
   ).href;
   const QUERY_NATIVE_GATE_URL = new URL(
     `./query-native-governance-gate-v1.js?v=${QUERY_NATIVE_GATE_VERSION}`,
+    SCRIPT_URL,
+  ).href;
+  const QUERY_NATIVE_SOURCE_READINESS_URL = new URL(
+    `./query-native-ads-source-readiness-v1.js?v=${QUERY_NATIVE_SOURCE_READINESS_VERSION}`,
     SCRIPT_URL,
   ).href;
   const QUERY_NATIVE_TREND_URL = new URL(
@@ -354,6 +359,9 @@
     if (window.QueryNativeGovernanceGate?.version !== QUERY_NATIVE_GATE_VERSION) {
       await loadVersionedScript(QUERY_NATIVE_GATE_URL, 'queryNativeGovernanceGate');
     }
+    if (window.AdsSourceReadinessInspector?.version !== QUERY_NATIVE_SOURCE_READINESS_VERSION) {
+      await loadVersionedScript(QUERY_NATIVE_SOURCE_READINESS_URL, 'queryNativeAdsSourceReadiness');
+    }
     if (window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION) {
       await loadVersionedScript(QUERY_NATIVE_TREND_URL, 'queryNativeAdsTrend');
     }
@@ -365,6 +373,7 @@
       clientVersion: CLIENT_VERSION,
       adapterVersion: window.QueryNativeModuleData?.version || '',
       gateVersion: window.QueryNativeGovernanceGate?.version || '',
+      sourceReadinessVersion: window.AdsSourceReadinessInspector?.version || '',
       trendVersion: window.QueryNativeAdsTrend?.version || '',
       hostVersion: window.QueryNativeAdsTrendHost?.version || '',
     });
@@ -419,6 +428,7 @@
       'ads',
       'transactions',
       'ads-source-preflight',
+      'ads-source-readiness-inspector',
       'governance-execution-gate',
       'query-native-module-assets',
     ],

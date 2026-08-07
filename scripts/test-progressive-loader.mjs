@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const index = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const loader = readFileSync(new URL('../assets/private-cloud-warehouse-v4.js', import.meta.url), 'utf8');
 const query = readFileSync(new URL('../assets/private-cloud-query-v1.js', import.meta.url), 'utf8');
+const sourceReadiness = readFileSync(new URL('../assets/query-native-ads-source-readiness-v1.js', import.meta.url), 'utf8');
 const shopUi = readFileSync(new URL('../assets/generated/inline-script-11.js', import.meta.url), 'utf8');
 
 const section = (source, startNeedle, endNeedle) => {
@@ -21,10 +22,12 @@ assert.match(loader, /const LOADER_VERSION = '4\.3\.0'/);
 assert.match(query, /const CLIENT_VERSION = '1\.3\.0'/);
 assert.match(query, /const QUERY_NATIVE_ADAPTER_VERSION = '1\.2\.0'/);
 assert.match(query, /const QUERY_NATIVE_GATE_VERSION = '1\.0\.0'/);
+assert.match(query, /const QUERY_NATIVE_SOURCE_READINESS_VERSION = '1\.0\.0'/);
 assert.match(query, /const QUERY_NATIVE_TREND_VERSION = '1\.1\.0'/);
 assert.match(query, /const QUERY_NATIVE_HOST_VERSION = '1\.0\.0'/);
 assert.match(query, /query-native-module-data-v1\.js\?v=\$\{QUERY_NATIVE_ADAPTER_VERSION\}/);
 assert.match(query, /query-native-governance-gate-v1\.js\?v=\$\{QUERY_NATIVE_GATE_VERSION\}/);
+assert.match(query, /query-native-ads-source-readiness-v1\.js\?v=\$\{QUERY_NATIVE_SOURCE_READINESS_VERSION\}/);
 assert.match(query, /query-native-ads-trend-v1\.js\?v=\$\{QUERY_NATIVE_TREND_VERSION\}/);
 assert.match(query, /query-native-ads-trend-host-v1\.js\?v=\$\{QUERY_NATIVE_HOST_VERSION\}/);
 assert.match(query, /async function ensureQueryNativeModules\(\)/);
@@ -32,11 +35,19 @@ assert.ok(
   query.indexOf('window.QueryNativeModuleData?.version !== QUERY_NATIVE_ADAPTER_VERSION')
     < query.indexOf('window.QueryNativeGovernanceGate?.version !== QUERY_NATIVE_GATE_VERSION')
     && query.indexOf('window.QueryNativeGovernanceGate?.version !== QUERY_NATIVE_GATE_VERSION')
+      < query.indexOf('window.AdsSourceReadinessInspector?.version !== QUERY_NATIVE_SOURCE_READINESS_VERSION')
+    && query.indexOf('window.AdsSourceReadinessInspector?.version !== QUERY_NATIVE_SOURCE_READINESS_VERSION')
       < query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
     && query.indexOf('window.QueryNativeAdsTrend?.version !== QUERY_NATIVE_TREND_VERSION')
       < query.indexOf('window.QueryNativeAdsTrendHost?.version !== QUERY_NATIVE_HOST_VERSION'),
-  'Query-native module assets must load in adapter → governance gate → controller → host order',
+  'Query-native module assets must load in adapter → governance gate → source readiness → controller → host order',
 );
+assert.match(sourceReadiness, /const INSPECTOR_VERSION = '1\.0\.0'/);
+assert.match(sourceReadiness, /client\.preflightAdsSource\(normalized\)/);
+assert.match(sourceReadiness, /候选就绪 ≠ 生产执行解锁/);
+assert.match(sourceReadiness, /activation\?\.authorizesExecution !== false/);
+assert.doesNotMatch(sourceReadiness, /QueryNativeGovernanceGate\.(?:adopt|refresh|assertActionAllowed)/);
+assert.match(query, /'ads-source-readiness-inspector'/);
 assert.match(shopUi, /const SHOP_UI_VERSION = '1\.1\.0'/);
 assert.match(loader, /const FETCH_CONCURRENCY = 1/);
 assert.match(loader, /loadingStrategy: 'query-first-progressive-v1'/);
@@ -139,3 +150,4 @@ for (const forbidden of [
 
 console.log('Progressive Query-first loader and shop UI invariants passed');
 await import('./test-query-native-governance-gate.mjs');
+await import('./test-ads-source-readiness-inspector.mjs');
