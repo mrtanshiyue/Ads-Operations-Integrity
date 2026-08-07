@@ -11,7 +11,7 @@ assert.match(source, /adapter\.ads\(\{ \.\.\.request, source: 'query'/);
 assert.match(source, /executionAuthorized: false/);
 assert.match(source, /不生成 Suggested Bid/);
 assert.match(source, /本模块不生成调价动作/);
-assert.doesNotMatch(source, /AdsStore/);
+assert.doesNotMatch(source, /\bAdsStore(?:\.|\[|\?)/, 'Preview must not access the legacy AdsStore object');
 assert.doesNotMatch(source, /suggestedBid/);
 assert.doesNotMatch(source, /assertActionAllowed|adoptGovernance|report_slots/);
 
