@@ -1,18 +1,18 @@
 # Ads Operations Integrity — Current Production Status
 
 > **Authority:** current-state companion to `README.md`, last verified `2026-08-08`.
-> If an older production SHA, run, phase number or component version in `README.md` conflicts with this file, use this file for current-state decisions and still re-check live GitHub/Pages/Worker state before changing production.
+> If an older production behavior SHA, run, phase number or component version in `README.md` conflicts with this file, use this file for current-state decisions and still re-check live GitHub/Pages/Worker state before changing production.
+> **Never treat a static document as the current `main` SHA.** Read `main` live. This file records the last verified **runtime-changing Pages behavior SHA**, which can legitimately remain unchanged while cleanup/docs-only commits advance `main`.
 
-## Current repository and Pages baseline
+## Repository and Pages baseline
 
 - Repository: `mrtanshiyue/Ads-Operations-Integrity`
-- Current `main`: `701df9c2b7156f303c47703c0036f58f61c33dc6`
-- Current main commit is **repository cleanup only**:
-  - `Maintenance: clean historical repair artifacts and archive V4 cutover docs (#38)`
-  - it does not change the deployed application runtime.
-- Current main CI for that cleanup: Run `31247951613` ✅
+- Current `main`: **must be read live; do not copy a docs-only SHA into this file**
+- Last repository-cleanup baseline before this status document: `701df9c2b7156f303c47703c0036f58f61c33dc6`
+- Cleanup commit: `Maintenance: clean historical repair artifacts and archive V4 cutover docs (#38)`
+- Cleanup CI: Run `31247951613` ✅
 
-The current deployed GitHub Pages **runtime behavior** remains the last application-changing Phase 12 commit:
+The deployed GitHub Pages **runtime behavior** remains the last application-changing Phase 12 commit:
 
 ```text
 43b32f14ec7726950ff55d938b6ec794405de0a5
@@ -26,7 +26,7 @@ Frontend main CI: 31193065886 ✅
 GitHub Pages:     31193065972 ✅
 ```
 
-Do not confuse the newer cleanup/docs-only `main` SHA with the static application behavior SHA.
+Do not confuse newer cleanup/docs-only `main` SHAs with the static application behavior SHA.
 
 ## Current frontend component versions
 
@@ -78,7 +78,7 @@ Never invent:
 
 ## Cloudflare Workers Free accepted risk
 
-The backend repository has now confirmed through Cloudflare Tail that intermittent full-history Raw failures are platform CPU-limit terminations, not a frontend retry/CORS implementation bug.
+The backend repository has confirmed through Cloudflare Tail that intermittent full-history Raw failures are platform CPU-limit terminations, not a frontend retry/CORS implementation bug.
 
 Observed failing backend invocations:
 
