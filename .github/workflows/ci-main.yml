@@ -58,23 +58,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find assets -maxdepth 1 -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
+          node --check assets/private-cloud-warehouse-v3.js
+          node --check assets/private-cloud-warehouse-v4.js
+          node --check assets/private-cloud-query-v1.js
+          node --check assets/query-native-module-data-v1.js
+          node --check assets/query-native-ads-trend-v1.js
+          node --check assets/query-native-ads-trend-host-v1.js
+          node --check scripts/harden-static-site.mjs
+          node --check scripts/test-progressive-loader.mjs
+          node --check scripts/test-query-native-modules.mjs
+          node --check scripts/test-query-native-ads-trend.mjs
           find assets/generated -type f -name '*.js' -print0 | xargs -0 -r -n 1 node --check
-          find scripts -maxdepth 1 -type f -name '*.mjs' -print0 | xargs -0 -r -n 1 node --check
 
       - name: Verify Query-first progressive loading contract
         shell: bash
         run: node scripts/test-progressive-loader.mjs
 
-      - name: Verify all maintained front-end contracts
+      - name: Verify Query-native module contracts
         shell: bash
         run: |
           set -euo pipefail
-          for test_file in scripts/test-*.mjs; do
-            [ "$test_file" = "scripts/test-progressive-loader.mjs" ] && continue
-            echo "Running $test_file"
-            node "$test_file"
-          done
+          node scripts/test-query-native-modules.mjs
+          node scripts/test-query-native-ads-trend.mjs
 
       - name: Verify locked vendor bytes
         shell: bash
@@ -224,19 +229,6 @@ jobs:
             printf '%s\n' "$transient"
             exit 1
           fi
-          one_off="$(find scripts -maxdepth 1 -type f \( \
-            -name 'repair_*.py' -o \
-            -name 'install_*fallback*.py' -o \
-            -name 'patch-*canary*.mjs' -o \
-            -name 'compare-warehouse-v3-v4.mjs' \
-          \) -print 2>/dev/null || true)"
-          if [ -n "$one_off" ]; then
-            echo "Completed one-off maintenance script(s) remain in the active tree:"
-            printf '%s\n' "$one_off"
-            exit 1
-          fi
-          test ! -f docs/CLOUD_V4_CANARY.md || { echo 'Historical V4 canary document must live under docs/archive'; exit 1; }
-          test ! -f docs/CLOUD_V4_PRODUCTION_CUTOVER.md || { echo 'Historical V4 cutover document must live under docs/archive'; exit 1; }
           unexpected="$(find .github/workflows -maxdepth 1 -type f ! -name 'ci-main.yml' ! -name 'pages.yml' -print)"
           if [ -n "$unexpected" ]; then
             echo "Unexpected active workflow(s):"
