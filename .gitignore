@@ -1,0 +1,33 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+~$*
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credential*
+*secret*
+
+# Local build / validation outputs
+_site/
+.validate/
+coverage/
+node_modules/
+.diagnostics/
+.tmp/
+tmp/
+__pycache__/
+*.pyc
+*.log
+
+# One-off maintenance artifacts must stay off production branches
+scripts/repair_*.py
+scripts/install_*fallback*.py
+scripts/patch-*canary*.mjs
+scripts/compare-warehouse-v3-v4.mjs

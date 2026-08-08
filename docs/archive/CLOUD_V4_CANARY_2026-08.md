@@ -1,4 +1,6 @@
-# Cloud Warehouse V4 Canary Plan
+# Archived: Cloud Warehouse V4 Canary Plan
+
+> Historical record only. This document describes the pre-cutover V3 → V4 canary period and is **not** an active production runbook. Current production uses Cloud Warehouse V4; follow the repository README and current CI/deployment workflows for live operating rules.
 
 ## Safety boundary
 
