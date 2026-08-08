@@ -1,0 +1,27 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+~$*
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credential*
+*secret*
+
+# Local build / validation outputs
+_site/
+.validate/
+coverage/
+node_modules/
+.diagnostics/
+.tmp/
+tmp/
+__pycache__/
+*.pyc
+*.log

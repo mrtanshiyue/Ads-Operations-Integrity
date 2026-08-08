@@ -1,4 +1,6 @@
-# Cloud Warehouse V4 Production Cutover
+# Archived: Cloud Warehouse V4 Production Cutover
+
+> Historical record only. This document describes the pre-cutover V3 → V4 release plan and is **not** an active production runbook. The live system has completed the V4 cutover; current production truth is defined by the repository README plus live CI, Pages and Warehouse deployment checks.
 
 Status: preparation only; the live GitHub Pages application is still on the V3 Worker.
 
