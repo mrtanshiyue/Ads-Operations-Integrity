@@ -1,0 +1,49 @@
+name: Validate Cloudflare Web Rebuild
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rebuild/cloudflare-native-v1
+    paths:
+      - "cloudflare-web/**"
+  pull_request:
+    paths:
+      - "cloudflare-web/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate Worker syntax
+        run: node --check cloudflare-web/src/worker.js
+
+      - name: Validate Cloudflare web boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s cloudflare-web/ARCHITECTURE.md
+          test -s cloudflare-web/wrangler.template.jsonc
+          grep -Fq '"binding": "WAREHOUSE"' cloudflare-web/wrangler.template.jsonc
+          grep -Fq '"binding": "ASSETS"' cloudflare-web/wrangler.template.jsonc
+          grep -Fq "cf-access-jwt-assertion" cloudflare-web/src/worker.js
+          grep -Fq "env.WAREHOUSE.fetch" cloudflare-web/src/worker.js
+          ! grep -RInE "DATABASE_URL|DASHBOARD_PASSWORD|@tidbcloud|GITHUB_TOKEN|R2_BUCKET|D1_DATABASE" cloudflare-web
+
+      - name: Ensure warehouse headers cannot be spoofed from browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          for header in x-ops-user-sub x-ops-user-email x-ops-request-id x-ops-auth-source; do
+            grep -Fq "'$header'" cloudflare-web/src/worker.js
+          done
+          grep -Fq "headers.delete(name)" cloudflare-web/src/worker.js
