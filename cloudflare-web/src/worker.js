@@ -93,24 +93,31 @@ async function verifyAccessIdentity(request, env) {
 
 async function findJwk(teamDomain, kid) {
   if (jwksCache.teamDomain !== teamDomain || jwksCache.expiresAt <= Date.now()) {
-    const response = await fetch(`${teamDomain}/cdn-cgi/access/certs`, {
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) throw new Error(`Access JWKS request failed: ${response.status}`);
-    const payload = await response.json();
-    if (!Array.isArray(payload.keys)) throw new Error('Access JWKS payload is invalid');
-    jwksCache = {
-      teamDomain,
-      expiresAt: Date.now() + JWKS_TTL_MS,
-      keys: payload.keys,
-    };
+    await refreshJwks(teamDomain);
   }
-  const jwk = jwksCache.keys.find((key) => key && key.kid === kid);
+  let jwk = jwksCache.keys.find((key) => key && key.kid === kid);
   if (!jwk) {
-    jwksCache.expiresAt = 0;
-    throw new Error('Access signing key not found');
+    // Access rotates signing keys. A kid miss invalidates the cached keyset and
+    // receives exactly one immediate refresh before the request is rejected.
+    await refreshJwks(teamDomain);
+    jwk = jwksCache.keys.find((key) => key && key.kid === kid);
   }
+  if (!jwk) throw new Error('Access signing key not found');
   return jwk;
+}
+
+async function refreshJwks(teamDomain) {
+  const response = await fetch(`${teamDomain}/cdn-cgi/access/certs`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`Access JWKS request failed: ${response.status}`);
+  const payload = await response.json();
+  if (!Array.isArray(payload.keys)) throw new Error('Access JWKS payload is invalid');
+  jwksCache = {
+    teamDomain,
+    expiresAt: Date.now() + JWKS_TTL_MS,
+    keys: payload.keys,
+  };
 }
 
 function sanitizedUpstreamHeaders(input) {
@@ -136,6 +143,7 @@ function withSecurityHeaders(response, apiResponse) {
   headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   headers.set('Cross-Origin-Opener-Policy', 'same-origin');
   headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+  headers.set('X-Frame-Options', 'DENY');
   if (apiResponse) headers.set('Cache-Control', 'private, no-store');
   return new Response(response.body, {
     status: response.status,
