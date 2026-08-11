@@ -1,7 +1,9 @@
 import { cp, mkdir, rm, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = resolve(import.meta.dirname, '..');
+const here = dirname(fileURLToPath(import.meta.url));
+const root = resolve(here, '..');
 const dist = resolve(root, 'dist');
 const requiredSources = [
   'index.html',
