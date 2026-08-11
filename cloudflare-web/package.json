@@ -1,0 +1,11 @@
+{
+  "name": "ads-operations-web-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/prepare-static-assets.mjs",
+    "validate": "node --check src/worker.js && npm run build",
+    "deploy": "npx wrangler@latest deploy --config wrangler.jsonc"
+  }
+}
