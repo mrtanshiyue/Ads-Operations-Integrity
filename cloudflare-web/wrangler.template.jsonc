@@ -1,0 +1,26 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "ads-operations-web",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-11",
+  "workers_dev": false,
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "services": [
+    {
+      "binding": "WAREHOUSE",
+      "service": "amazon-ops-api"
+    }
+  ],
+  "vars": {
+    "TEAM_DOMAIN": "https://REPLACE_TEAM.cloudflareaccess.com",
+    "ACCESS_AUD": "REPLACE_ACCESS_APPLICATION_AUD"
+  }
+}
