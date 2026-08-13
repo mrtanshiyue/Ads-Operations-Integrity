@@ -3,6 +3,12 @@
   "name": "ads-operations-integrity",
   "main": "./src/worker.js",
   "compatibility_date": "2026-08-11",
+  "services": [
+    {
+      "binding": "WAREHOUSE",
+      "service": "amazon-warehouse-cloud-v4"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
