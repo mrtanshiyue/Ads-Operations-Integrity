@@ -7,6 +7,9 @@
   "build": {
     "command": "npm run build"
   },
+  "vars": {
+    "ACCESS_MODE": "off"
+  },
   "services": [
     {
       "binding": "WAREHOUSE",
