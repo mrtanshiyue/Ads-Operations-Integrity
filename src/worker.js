@@ -23,6 +23,22 @@ function json(body, init = {}) {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
+function accessNotConfigured(context) {
+  return json(
+    {
+      ok: false,
+      error: 'ACCESS_NOT_CONFIGURED',
+      message: 'Cloudflare Access mode is enabled but TEAM_DOMAIN and ACCESS_AUD are not fully configured.',
+      access: {
+        mode: context.mode,
+        configured: false,
+        authenticated: false,
+      },
+    },
+    { status: 503 },
+  );
+}
+
 function accessDenied(context) {
   return json(
     {
@@ -72,6 +88,10 @@ async function proxyWarehouse(request, env, accessContext) {
     );
   }
 
+  if (accessContext?.mode === 'enforce' && !accessContext.configured) {
+    return accessNotConfigured(accessContext);
+  }
+
   if (accessContext?.mode === 'enforce' && !accessContext.authenticated) {
     return accessDenied(accessContext);
   }
@@ -111,6 +131,8 @@ export default {
         accessIdentityLayer: 'phase-2b',
         accessMode: accessConfig.mode,
         accessConfigured: accessConfig.configured,
+        accessActivationReady: accessConfig.configured,
+        accessRuntimeSafe: accessConfig.mode === 'off' || accessConfig.configured,
       });
     }
 
@@ -120,6 +142,10 @@ export default {
       }
 
       const context = await evaluateAccessIdentity(request, env);
+      if (context.mode !== 'off' && !context.configured) {
+        return accessNotConfigured(context);
+      }
+
       const status = context.mode === 'enforce' && !context.authenticated ? 401 : 200;
       return json(
         {

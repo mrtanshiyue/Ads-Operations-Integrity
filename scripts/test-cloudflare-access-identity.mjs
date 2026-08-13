@@ -130,6 +130,17 @@ try {
     },
   };
 
+  const healthResponse = await worker.fetch(
+    new Request('https://example.test/api/_migration/health'),
+    { ACCESS_MODE: 'off', WAREHOUSE: warehouse },
+  );
+  assert.equal(healthResponse.status, 200);
+  const health = await healthResponse.json();
+  assert.equal(health.accessMode, 'off');
+  assert.equal(health.accessConfigured, false);
+  assert.equal(health.accessActivationReady, false);
+  assert.equal(health.accessRuntimeSafe, true);
+
   const offResponse = await worker.fetch(
     new Request('https://example.test/api/v1/health', {
       headers: {
@@ -152,6 +163,13 @@ try {
   assert.equal(capturedRequest.headers.get('x-ops-auth-source'), null);
   assert.notEqual(capturedRequest.headers.get('x-ops-request-id'), 'spoofed-request-id');
 
+  const unconfiguredSession = await worker.fetch(
+    new Request('https://example.test/api/_auth/session'),
+    { ACCESS_MODE: 'observe', WAREHOUSE: warehouse },
+  );
+  assert.equal(unconfiguredSession.status, 503);
+  assert.equal((await unconfiguredSession.json()).error, 'ACCESS_NOT_CONFIGURED');
+
   const observeResponse = await worker.fetch(
     new Request('https://example.test/api/v1/health', {
       headers: {
@@ -169,6 +187,16 @@ try {
   assert.equal(capturedRequest.headers.get('x-ops-user-sub'), 'access-user-123');
   assert.equal(capturedRequest.headers.get('x-ops-user-email'), 'operator@example.com');
   assert.equal(capturedRequest.headers.get('x-ops-auth-source'), 'cloudflare-access');
+
+  const enforceUnconfiguredResponse = await worker.fetch(
+    new Request('https://example.test/api/v1/health', {
+      headers: { authorization: 'Bearer shared-password-still-required' },
+    }),
+    { ACCESS_MODE: 'enforce', WAREHOUSE: warehouse },
+  );
+  assert.equal(enforceUnconfiguredResponse.status, 503);
+  assert.equal(warehouseCalls, 2, 'Unconfigured enforce mode must not reach Warehouse');
+  assert.equal((await enforceUnconfiguredResponse.json()).error, 'ACCESS_NOT_CONFIGURED');
 
   const enforceResponse = await worker.fetch(
     new Request('https://example.test/api/v1/health', {
