@@ -1,0 +1,13 @@
+{
+  "name": "ads-operations-integrity",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-cloudflare.mjs",
+    "check:cloudflare": "node --check src/worker.js && node --check scripts/build-cloudflare.mjs && npm run build",
+    "deploy:cloudflare": "npm run check:cloudflare && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.102.0"
+  }
+}

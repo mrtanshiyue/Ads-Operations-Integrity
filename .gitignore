@@ -17,6 +17,8 @@ Thumbs.db
 # Local build / validation outputs
 _site/
 .validate/
+dist/
+.wrangler/
 coverage/
 node_modules/
 .diagnostics/
