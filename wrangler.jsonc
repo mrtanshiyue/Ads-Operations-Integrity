@@ -8,7 +8,9 @@
     "command": "npm run build"
   },
   "vars": {
-    "ACCESS_MODE": "off"
+    "ACCESS_MODE": "observe",
+    "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
+    "ACCESS_AUD": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8"
   },
   "services": [
     {
