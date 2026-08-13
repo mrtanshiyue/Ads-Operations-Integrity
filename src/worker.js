@@ -27,6 +27,10 @@ async function proxyWarehouse(request, env) {
   const upstreamUrl = new URL(`${url.pathname}${url.search}`, 'https://amazon-warehouse-cloud-v4.internal');
   const headers = new Headers(request.headers);
   headers.delete('host');
+  // This hop is server-to-server through a Service Binding. Do not forward the
+  // browser Origin into the Warehouse's legacy CORS boundary; authorization is
+  // still enforced by the existing Bearer credential on every Warehouse call.
+  headers.delete('origin');
 
   const init = {
     method: request.method,
