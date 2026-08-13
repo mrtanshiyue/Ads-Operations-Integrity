@@ -3,12 +3,12 @@
   "name": "ads-operations-integrity",
   "main": "./src/worker.js",
   "compatibility_date": "2026-08-11",
-  "preview_urls": true,
+  "preview_urls": false,
   "build": {
     "command": "npm run build"
   },
   "vars": {
-    "ACCESS_MODE": "observe",
+    "ACCESS_MODE": "enforce",
     "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
     "ACCESS_AUD": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8"
   },
