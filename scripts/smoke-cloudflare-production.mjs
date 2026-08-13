@@ -16,12 +16,12 @@ async function fetchNoStore(path) {
     headers: {
       'cache-control': 'no-cache',
       pragma: 'no-cache',
-      'user-agent': 'ads-operations-integrity-production-smoke/1.0',
+      'user-agent': 'ads-operations-integrity-production-smoke/1.1',
     },
   });
 }
 
-async function waitForPhase2AHealth() {
+async function waitForPhase2BHealth() {
   let last = 'no response';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     try {
@@ -36,6 +36,9 @@ async function waitForPhase2AHealth() {
           && payload?.hosting === 'cloudflare-workers-static-assets'
           && payload?.dataBackendCutover === false
           && payload?.warehouseTransport === 'service-binding'
+          && payload?.accessIdentityLayer === 'phase-2b'
+          && payload?.accessMode === 'off'
+          && payload?.accessConfigured === false
         ) {
           return payload;
         }
@@ -45,11 +48,22 @@ async function waitForPhase2AHealth() {
     }
     if (attempt < MAX_ATTEMPTS) await sleep(RETRY_MS);
   }
-  throw new Error(`Phase 2A production health did not become ready. Last result: ${last}`);
+  throw new Error(`Phase 2B production health did not become ready. Last result: ${last}`);
 }
 
-const health = await waitForPhase2AHealth();
-console.log('Cloudflare Phase 2A health ready:', JSON.stringify(health));
+const health = await waitForPhase2BHealth();
+console.log('Cloudflare Phase 2B health ready:', JSON.stringify(health));
+
+const sessionResponse = await fetchNoStore('/api/_auth/session');
+assert.equal(sessionResponse.status, 200, `Default-off Access session endpoint returned HTTP ${sessionResponse.status}`);
+const session = await sessionResponse.json();
+assert.deepEqual(session.access, {
+  mode: 'off',
+  configured: false,
+  authenticated: false,
+});
+assert.equal(session.user, null);
+console.log('Cloudflare Access identity layer is deployed but safely disabled by default');
 
 const unauthorized = await fetchNoStore('/api/v1/health');
 const unauthorizedText = await unauthorized.text();
