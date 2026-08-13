@@ -16,7 +16,7 @@ async function fetchNoStore(path) {
     headers: {
       'cache-control': 'no-cache',
       pragma: 'no-cache',
-      'user-agent': 'ads-operations-integrity-production-smoke/1.1',
+      'user-agent': 'ads-operations-integrity-production-smoke/1.2',
     },
   });
 }
@@ -39,6 +39,8 @@ async function waitForPhase2BHealth() {
           && payload?.accessIdentityLayer === 'phase-2b'
           && payload?.accessMode === 'off'
           && payload?.accessConfigured === false
+          && payload?.accessActivationReady === false
+          && payload?.accessRuntimeSafe === true
         ) {
           return payload;
         }
@@ -63,7 +65,7 @@ assert.deepEqual(session.access, {
   authenticated: false,
 });
 assert.equal(session.user, null);
-console.log('Cloudflare Access identity layer is deployed but safely disabled by default');
+console.log('Cloudflare Access identity layer is deployed, activation is not configured, and default-off runtime remains safe');
 
 const unauthorized = await fetchNoStore('/api/v1/health');
 const unauthorizedText = await unauthorized.text();
