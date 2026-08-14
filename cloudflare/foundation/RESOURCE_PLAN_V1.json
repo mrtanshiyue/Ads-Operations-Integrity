@@ -1,35 +1,40 @@
 {
   "version": 1,
-  "status": "design-only",
+  "status": "implementation-ready",
   "location_hint": "apac",
   "production": {
     "d1": [
       {"name": "ads-ops-control-prod", "role": "control", "binding": "CONTROL_DB"},
-      {"name": "ads-ops-store-01-prod", "role": "store", "binding": "STORE_DB_01"},
-      {"name": "ads-ops-store-02-prod", "role": "store", "binding": "STORE_DB_02"},
-      {"name": "ads-ops-store-03-prod", "role": "store", "binding": "STORE_DB_03"},
-      {"name": "ads-ops-store-04-prod", "role": "store", "binding": "STORE_DB_04"}
+      {"name": "ads-ops-store-01-prod", "role": "store", "binding": "STORE_01_DB"},
+      {"name": "ads-ops-store-02-prod", "role": "store", "binding": "STORE_02_DB"},
+      {"name": "ads-ops-store-03-prod", "role": "store", "binding": "STORE_03_DB"},
+      {"name": "ads-ops-store-04-prod", "role": "store", "binding": "STORE_04_DB"}
     ],
     "r2": [
-      {"name": "ads-ops-data-prod", "binding": "ADS_DATA"}
+      {"name": "ads-ops-data-prod", "binding": "DATA_BUCKET"}
     ],
     "workers": [
-      {"name": "ads-operations-web", "role": "web-and-api"},
-      {"name": "ads-operations-sync", "role": "amazon-sync-and-workflows"}
+      {"name": "ads-operations-web-prod", "role": "web-and-api"},
+      {"name": "ads-operations-sync-prod", "role": "amazon-sync-and-workflows"}
     ]
   },
   "development": {
     "d1": [
       {"name": "ads-ops-control-dev", "role": "control", "binding": "CONTROL_DB"},
-      {"name": "ads-ops-store-dev", "role": "store", "binding": "STORE_DB_01"}
+      {"name": "ads-ops-store-dev", "role": "store", "binding": "STORE_01_DB"}
     ],
     "r2": [
-      {"name": "ads-ops-data-dev", "binding": "ADS_DATA"}
+      {"name": "ads-ops-data-dev", "binding": "DATA_BUCKET"}
+    ],
+    "workers": [
+      {"name": "ads-operations-web-dev", "role": "web-and-api"},
+      {"name": "ads-operations-sync-dev", "role": "amazon-sync-and-workflows"}
     ]
   },
   "notes": [
     "No Cloudflare resource is created by this file.",
     "Amazon credentials are Secrets Store bindings and are never represented here.",
+    "D1 binding names are server-only and are not returned to browser clients.",
     "Expand development to four store D1 databases only when useful and account capacity is confirmed."
   ]
 }
