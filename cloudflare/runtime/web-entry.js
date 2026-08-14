@@ -1,7 +1,7 @@
 import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
-import { handleStoreDailyApiRoute } from './store-daily-api.js';
+import { handleStoreDailySourceObjectHeadApiRoute } from './store-daily-source-object-head-api.js';
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
@@ -66,7 +66,7 @@ export default {
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {
         if (url.pathname.endsWith('/search-terms-daily')) {
-          const response = await handleStoreDailyApiRoute({ request, env, actor, url });
+          const response = await handleStoreDailySourceObjectHeadApiRoute({ request, env, actor, url });
           if (response) return response;
         }
         const response = await handleStoreApiRoute({ request, env, actor, url });
