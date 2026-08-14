@@ -33,6 +33,18 @@ function controlDb() {
 function storeDb(overrides = {}) {
   return {
     prepare(sql) {
+      if (sql.includes('FROM report_jobs')) {
+        assert.doesNotMatch(sql, /JOIN\s+report_jobs/i);
+        return {
+          bind() {
+            return {
+              async all() {
+                return { results: [] };
+              },
+            };
+          },
+        };
+      }
       assert.match(sql, /MAX\(st\.updated_at\) AS fact_mirror_updated_at/);
       assert.match(sql, /COUNT\(\*\) AS fact_row_count/);
       assert.match(sql, /COUNT\(st\.source_report_job_id\) AS source_report_job_non_null_count/);
