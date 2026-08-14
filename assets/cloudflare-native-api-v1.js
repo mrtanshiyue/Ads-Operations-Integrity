@@ -73,6 +73,8 @@
     updateNegativeKeyword: (id, body) => request(`/api/v1/negative-keywords/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
 
     storeProducts: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/products`, params)),
+    putStoreProduct: (storeId, productId, sellerSku, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/${encodeURIComponent(sellerSku)}`, { method: 'PUT', body }),
+    deleteStoreProduct: (storeId, productId, sellerSku) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/${encodeURIComponent(sellerSku)}`, { method: 'DELETE' }),
     campaigns: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/campaigns`, params)),
     adGroups: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/ad-groups`, params)),
     storeKeywords: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/keywords`, params)),
