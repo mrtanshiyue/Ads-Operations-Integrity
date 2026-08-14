@@ -7,6 +7,7 @@
   const TARGETING_SOURCE_TIMESTAMP_SEMANTIC = 'source_entity_updated_at';
   const STORE_FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
   const FACT_MIRROR_TIMESTAMP_SEMANTIC = 'latest_local_fact_row_updated_at';
+  const STORE_FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -110,6 +111,7 @@
     let cursor = null;
     let sourceContractReady = true;
     let factContractReady = true;
+    let factLineageContractReady = true;
     do {
       const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
@@ -120,20 +122,29 @@
       });
       const pageContractReady = validStoreSourceContract(payload?.sourceContract);
       const pageFactContractReady = validStoreFactContract(payload?.factContract);
+      const pageFactLineageContractReady = validStoreFactLineageContract(payload?.factLineageContract);
       sourceContractReady = sourceContractReady && pageContractReady;
       factContractReady = factContractReady && pageFactContractReady;
+      factLineageContractReady = factLineageContractReady && pageFactLineageContractReady;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       for (const item of items) {
         rows.push(toLegacyAdRow(store, item, options, {
           sourceContractReady: pageContractReady,
           factContractReady: pageFactContractReady,
+          factLineageContractReady: pageFactLineageContractReady,
         }));
         if (rows.length >= MAX_ROWS_PER_STORE) break;
       }
       cursor = payload?.nextCursor || null;
       if (!items.length || rows.length >= MAX_ROWS_PER_STORE) break;
     } while (cursor);
-    return { rows, truncated: Boolean(cursor), sourceContractReady, factContractReady };
+    return {
+      rows,
+      truncated: Boolean(cursor),
+      sourceContractReady,
+      factContractReady,
+      factLineageContractReady,
+    };
   }
 
   function validStoreSourceContract(contract) {
@@ -151,7 +162,13 @@
       && contract?.mirrorTimestampAggregation === 'max';
   }
 
-  function sourceProvenance(item, sourceContractReady, factContractReady) {
+  function validStoreFactLineageContract(contract) {
+    return contract?.schemaVersion === STORE_FACT_LINEAGE_CONTRACT_VERSION
+      && contract?.sourceReportJobId === 'search_term_daily.source_report_job_id'
+      && contract?.sourceReportJobAggregation === 'unanimous_non_null';
+  }
+
+  function sourceProvenance(item, sourceContractReady, factContractReady, factLineageContractReady) {
     const keywordId = text(item?.keywordId);
     const targetId = text(item?.targetId);
     const xorIdentity = Boolean(keywordId) !== Boolean(targetId);
@@ -172,6 +189,10 @@
     const targetingSourceUpdatedAt = identityValid ? nullableText(item?.targetingSourceUpdatedAt) : null;
     const adProduct = sourceContractReady ? text(item?.adProduct) : '';
     const factMirrorUpdatedAt = factContractReady ? nullableText(item?.factMirrorUpdatedAt) : null;
+    const sourceReportJobId = factLineageContractReady ? nullableText(item?.sourceReportJobId) : null;
+    const sourceReportJobIdentityValid = factLineageContractReady
+      && item?.sourceReportJobIdentityValid === true
+      && sourceReportJobId !== null;
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
       targetingIdentityValid: identityValid,
@@ -191,6 +212,10 @@
       factMirrorUpdatedAt,
       factMirrorUpdatedAtObserved: factMirrorUpdatedAt !== null,
       factMirrorTimestampSemantic: factContractReady ? FACT_MIRROR_TIMESTAMP_SEMANTIC : null,
+      factLineageSchemaVersion: factLineageContractReady ? STORE_FACT_LINEAGE_CONTRACT_VERSION : '',
+      sourceReportJobIdentityValid,
+      sourceReportJobId: sourceReportJobIdentityValid ? sourceReportJobId : null,
+      sourceReportJobObserved: sourceReportJobIdentityValid,
     };
   }
 
@@ -204,6 +229,7 @@
       item,
       context.sourceContractReady === true,
       context.factContractReady === true,
+      context.factLineageContractReady === true,
     );
     const currentBid = provenance.bidNullabilityPreserved && provenance.bidMicros !== null
       ? microsToAmount(provenance.bidMicros)
@@ -226,6 +252,7 @@
       currentBidSyncedAt: provenance.currentBidSyncedAt,
       targetingSourceUpdatedAt: provenance.targetingSourceUpdatedAt,
       factMirrorUpdatedAt: provenance.factMirrorUpdatedAt,
+      sourceReportJobId: provenance.sourceReportJobId,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -262,6 +289,10 @@
         factMirrorUpdatedAt: provenance.factMirrorUpdatedAt,
         factMirrorUpdatedAtObserved: provenance.factMirrorUpdatedAtObserved,
         factMirrorTimestampSemantic: provenance.factMirrorTimestampSemantic,
+        factLineageSchemaVersion: provenance.factLineageSchemaVersion,
+        sourceReportJobIdentityValid: provenance.sourceReportJobIdentityValid,
+        sourceReportJobId: provenance.sourceReportJobId,
+        sourceReportJobObserved: provenance.sourceReportJobObserved,
       },
       sourceCoverage: {
         backend: 'cloudflare-d1',
@@ -273,7 +304,7 @@
     };
   }
 
-  function summarizeSourceEvidence(rows, sourceContractReady, factContractReady) {
+  function summarizeSourceEvidence(rows, sourceContractReady, factContractReady, factLineageContractReady) {
     const input = Array.isArray(rows) ? rows : [];
     const provenanceRows = input.map((row) => row?.sourceProvenance || {});
     return {
@@ -282,6 +313,8 @@
       sourceContractObserved: Boolean(sourceContractReady),
       factSchemaVersion: factContractReady ? STORE_FACT_CONTRACT_VERSION : '',
       factContractObserved: Boolean(factContractReady),
+      factLineageSchemaVersion: factLineageContractReady ? STORE_FACT_LINEAGE_CONTRACT_VERSION : '',
+      factLineageContractObserved: Boolean(factLineageContractReady),
       targetingIdentityObserved: input.length > 0
         && provenanceRows.every((item) => item.targetingIdentityValid === true),
       bidSourceObserved: input.length > 0
@@ -299,6 +332,10 @@
       factMirrorTimestampSemantic: factContractReady ? FACT_MIRROR_TIMESTAMP_SEMANTIC : null,
       factMirrorUpdatedAtObserved: input.length > 0
         && provenanceRows.every((item) => item.factMirrorUpdatedAtObserved === true),
+      sourceReportJobIdentityObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceReportJobIdentityValid === true),
+      sourceReportJobObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceReportJobObserved === true),
     };
   }
 
@@ -362,6 +399,7 @@
         truncated: perStore.some((entry) => entry.truncated),
         sourceContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceContractReady),
         factContractReady: perStore.length > 0 && perStore.every((entry) => entry.factContractReady),
+        factLineageContractReady: perStore.length > 0 && perStore.every((entry) => entry.factLineageContractReady),
       };
     });
 
@@ -371,6 +409,7 @@
       collected.rows,
       collected.sourceContractReady,
       collected.factContractReady,
+      collected.factLineageContractReady,
     );
     return {
       rows: page,

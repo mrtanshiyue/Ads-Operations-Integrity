@@ -4,6 +4,7 @@ const MAX_LIMIT = 200;
 const MAX_DAYS = 93;
 const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
 const FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
+const FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -73,6 +74,10 @@ async function listDailySearchTerms(request, db, url) {
         st.normalized_search_term,
         MAX(st.match_type) AS report_match_type,
         MAX(st.updated_at) AS fact_mirror_updated_at,
+        COUNT(*) AS fact_row_count,
+        COUNT(st.source_report_job_id) AS source_report_job_non_null_count,
+        COUNT(DISTINCT st.source_report_job_id) AS source_report_job_distinct_count,
+        MIN(st.source_report_job_id) AS source_report_job_id_candidate,
         SUM(st.impressions) AS impressions,
         SUM(st.clicks) AS clicks,
         SUM(st.cost_micros) AS cost_micros,
@@ -113,6 +118,7 @@ async function listDailySearchTerms(request, db, url) {
 
   const rows = (result.results || []).map((row) => {
     const source = targetingSource(row);
+    const lineage = sourceReportJobLineage(row);
     return {
       groupKey: row.group_key,
       reportDate: row.report_date,
@@ -138,6 +144,8 @@ async function listDailySearchTerms(request, db, url) {
       normalizedSearchTerm: row.normalized_search_term,
       matchType: row.keyword_match_type || row.report_match_type || null,
       factMirrorUpdatedAt: nullableText(row.fact_mirror_updated_at),
+      sourceReportJobId: lineage.jobId,
+      sourceReportJobIdentityValid: lineage.valid,
       impressions: number(row.impressions),
       clicks: number(row.clicks),
       costMicros: number(row.cost_micros),
@@ -164,6 +172,11 @@ async function listDailySearchTerms(request, db, url) {
       schemaVersion: FACT_CONTRACT_VERSION,
       mirrorTimestamp: 'search_term_daily.updated_at',
       mirrorTimestampAggregation: 'max',
+    },
+    factLineageContract: {
+      schemaVersion: FACT_LINEAGE_CONTRACT_VERSION,
+      sourceReportJobId: 'search_term_daily.source_report_job_id',
+      sourceReportJobAggregation: 'unanimous_non_null',
     },
     range: { startDate, endDate, days },
     grain: 'day',
@@ -223,6 +236,18 @@ function targetingSource(row) {
     sourceUpdatedAt: nullableText(row.target_source_updated_at),
     bidSource: 'target',
   };
+}
+
+function sourceReportJobLineage(row) {
+  const rowCount = number(row.fact_row_count);
+  const nonNullCount = number(row.source_report_job_non_null_count);
+  const distinctCount = number(row.source_report_job_distinct_count);
+  const candidate = nullableText(row.source_report_job_id_candidate);
+  const valid = rowCount > 0
+    && nonNullCount === rowCount
+    && distinctCount === 1
+    && candidate !== null;
+  return { valid, jobId: valid ? candidate : null };
 }
 
 function isoDate(value) {
