@@ -173,7 +173,7 @@ const overview = await bridge.overview({ scope: 'DEV01', from: '2026-08-11', to:
 assert.equal(overview.source, 'query-cloudflare-d1');
 assert.equal(overview.grain, 'day');
 assert.deepEqual(overview.series.map((row) => row.date), ['2026-08-11', '2026-08-12']);
-assert.deepEqual(overview.totals, {
+assert.deepEqual(JSON.parse(JSON.stringify(overview.totals)), {
   impressions: 100,
   clicks: 10,
   spend: 1,
