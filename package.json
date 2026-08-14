@@ -7,7 +7,8 @@
     "check:cloudflare": "node --check src/worker.js && node --check scripts/build-cloudflare.mjs && npm run build",
     "deploy:cloudflare": "npm run check:cloudflare && wrangler deploy",
     "build:cf-native": "node scripts/build-cloudflare-native.mjs",
-    "test:cf-foundation": "python3 scripts/test-cloudflare-foundation.py && node scripts/test-rollup-contract.mjs && node scripts/test-rollup-observability.mjs",
+    "test:cf-access": "node scripts/test-access-contract.mjs",
+    "test:cf-foundation": "python3 scripts/test-cloudflare-foundation.py && node scripts/test-rollup-contract.mjs && node scripts/test-rollup-observability.mjs && npm run test:cf-access",
     "provision:cf-native:dev:dry": "node scripts/provision-cloudflare-dev.mjs --dry-run",
     "provision:cf-native:dev": "node scripts/provision-cloudflare-dev.mjs",
     "bootstrap:cf-native:dev": "node scripts/bootstrap-cloudflare-dev.mjs",
@@ -15,7 +16,7 @@
     "validate:cf-native:prod": "node scripts/validate-cloudflare-native.mjs --env production",
     "smoke:cf-native": "node scripts/smoke-cloudflare-native.mjs",
     "smoke:cf-native:auth": "node scripts/smoke-cloudflare-native.mjs --authenticated",
-    "check:cf-native": "node --check assets/cloudflare-native-api-v1.js && node --check assets/cloudflare-native-query-bridge-v1.js && node --check cloudflare/runtime/web-entry.js && node --check cloudflare/runtime/control-api.js && node --check cloudflare/runtime/store-api.js && node --check cloudflare/runtime/store-daily-api.js && node --check cloudflare/runtime/analytics-api.js && node --check cloudflare/runtime/data-health-api.js && node --check cloudflare/runtime/rollup.js && node --check cloudflare/runtime/rollup-observability.js && node --check cloudflare/runtime/web-worker.js && node --check cloudflare/runtime/sync-worker.js && node --check scripts/build-cloudflare-native.mjs && node --check scripts/validate-cloudflare-native.mjs && node --check scripts/provision-cloudflare-dev.mjs && node --check scripts/bootstrap-cloudflare-dev.mjs && node --check scripts/smoke-cloudflare-native.mjs && node --check scripts/test-rollup-contract.mjs && node --check scripts/test-rollup-observability.mjs && python3 -m py_compile scripts/test-cloudflare-foundation.py && npm run build:cf-native && npm run validate:cf-native:dev",
+    "check:cf-native": "node --check assets/cloudflare-native-api-v1.js && node --check assets/cloudflare-native-query-bridge-v1.js && node --check cloudflare/runtime/web-entry.js && node --check cloudflare/runtime/control-api.js && node --check cloudflare/runtime/store-api.js && node --check cloudflare/runtime/store-daily-api.js && node --check cloudflare/runtime/analytics-api.js && node --check cloudflare/runtime/data-health-api.js && node --check cloudflare/runtime/rollup.js && node --check cloudflare/runtime/rollup-observability.js && node --check cloudflare/runtime/web-worker.js && node --check cloudflare/runtime/sync-worker.js && node --check scripts/build-cloudflare-native.mjs && node --check scripts/validate-cloudflare-native.mjs && node --check scripts/provision-cloudflare-dev.mjs && node --check scripts/bootstrap-cloudflare-dev.mjs && node --check scripts/smoke-cloudflare-native.mjs && node --check scripts/test-access-contract.mjs && node --check scripts/test-rollup-contract.mjs && node --check scripts/test-rollup-observability.mjs && python3 -m py_compile scripts/test-cloudflare-foundation.py && npm run build:cf-native && npm run validate:cf-native:dev",
     "dev:cf-native": "npm run build:cf-native && wrangler dev --env dev --config cloudflare/runtime/wrangler.native.jsonc",
     "dev:cf-sync": "wrangler dev --env dev --config cloudflare/runtime/wrangler.sync.jsonc",
     "deploy:cf-native:dev": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env dev --require-ready && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc",
@@ -23,7 +24,7 @@
     "deploy:cf-stack:dev": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env dev --require-ready && wrangler deploy --env dev --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc",
     "deploy:cf-native:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc",
     "deploy:cf-sync:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc",
-    "deploy:cf-stack:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc"
+    "deploy:cf-stack:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc"
   },
   "devDependencies": {
     "wrangler": "4.114.0"
