@@ -54,6 +54,7 @@ console.log(JSON.stringify({
   env: envName,
   requireReady,
   web: {
+    main: webConfig.main,
     d1Bindings: bindingNames(webEnv.d1_databases),
     r2Bindings: bindingNames(webEnv.r2_buckets),
     workflows: bindingNames(webEnv.workflows),
@@ -73,7 +74,7 @@ async function readConfig(configPath) {
 }
 
 function validateWebRuntime() {
-  if (webConfig.main !== './web-worker.js') errors.push('web main must be ./web-worker.js');
+  if (webConfig.main !== './web-entry.js') errors.push('web main must be ./web-entry.js');
   if (webConfig.assets?.binding !== 'ASSETS') errors.push('web assets.binding must be ASSETS');
   if (webConfig.assets?.not_found_handling !== 'single-page-application') {
     errors.push('web assets.not_found_handling must be single-page-application');
