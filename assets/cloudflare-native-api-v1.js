@@ -61,6 +61,8 @@
     createProduct: (body) => request('/api/v1/products', { method: 'POST', body }),
     updateProduct: (productId, body) => request(`/api/v1/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body }),
     productKeywords: (productId, params) => request(query(`/api/v1/products/${encodeURIComponent(productId)}/keywords`, params)),
+    putProductKeyword: (productId, keywordId, body) => request(`/api/v1/products/${encodeURIComponent(productId)}/keywords/${encodeURIComponent(keywordId)}`, { method: 'PUT', body }),
+    deleteProductKeyword: (productId, keywordId) => request(`/api/v1/products/${encodeURIComponent(productId)}/keywords/${encodeURIComponent(keywordId)}`, { method: 'DELETE' }),
 
     listKeywords: (params) => request(query('/api/v1/keywords', params)),
     createKeyword: (body) => request('/api/v1/keywords', { method: 'POST', body }),
