@@ -1,6 +1,7 @@
 import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
+import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 
 const CONTROL_ROUTE_PATTERNS = [
@@ -9,11 +10,14 @@ const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/negative-keywords(?:\/[^/]+)?$/,
 ];
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms)$/;
+const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords)$/;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const modularRoute = isControlRoute(url.pathname) || STORE_ROUTE_PATTERN.test(url.pathname);
+    const modularRoute = isControlRoute(url.pathname)
+      || STORE_ROUTE_PATTERN.test(url.pathname)
+      || ANALYTICS_ROUTE_PATTERN.test(url.pathname);
     if (!modularRoute || request.method === 'OPTIONS') {
       return legacyWebWorker.fetch(request, env, ctx);
     }
@@ -39,6 +43,10 @@ export default {
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleStoreApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
+      if (ANALYTICS_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleAnalyticsApiRoute({ request, env, actor, url });
         if (response) return response;
       }
       return legacyWebWorker.fetch(request, env, ctx);
