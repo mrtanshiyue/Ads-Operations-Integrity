@@ -117,14 +117,22 @@ export async function verifyAccessIdentity(request, env = {}) {
   if (!Number.isFinite(payload.exp) || payload.exp <= now) throw new Error('Expired Access JWT');
   if (Number.isFinite(payload.nbf) && payload.nbf > now + 30) throw new Error('Access JWT not active');
 
-  const sub = String(payload.sub || '').trim();
-  if (!sub) throw new Error('Access JWT subject missing');
-  const email = String(payload.email || '').trim().toLowerCase();
+  return normalizeVerifiedAccessIdentity(payload);
+}
 
+export function normalizeVerifiedAccessIdentity(payload = {}) {
+  const userSub = String(payload.sub || '').trim();
+  const serviceTokenId = String(payload.common_name || '').trim();
+  if (!userSub && (!serviceTokenId || !serviceTokenId.endsWith('.access'))) {
+    throw new Error('Access JWT subject missing');
+  }
+
+  const email = String(payload.email || '').trim().toLowerCase();
   return {
-    sub,
+    sub: userSub || serviceTokenId,
     email,
     exp: Number(payload.exp),
+    principalType: userSub ? 'user' : 'service_token',
   };
 }
 
