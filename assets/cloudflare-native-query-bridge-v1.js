@@ -1,7 +1,7 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -93,7 +93,7 @@
     const rows = [];
     let cursor = null;
     do {
-      const payload = await api().searchTerms(store.storeId, {
+      const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
         endDate: options.to,
         sort: 'cost',
@@ -115,22 +115,23 @@
     const keywordId = text(item.keywordId);
     const targetId = text(item.targetId);
     const targetingId = keywordId || targetId;
-    const targeting = text(item.keywordText) || targetId;
+    const targeting = text(item.keywordText) || text(item.targetExpressionText) || targetId;
     const searchTerm = text(item.searchTerm);
+    const reportDate = canonicalDate(item.reportDate);
     return {
-      id: [store.storeId, item.profileId, item.campaignId, item.adGroupId, targetingId, searchTerm].map(text).join('|'),
+      id: [store.storeId, reportDate, item.profileId, item.campaignId, item.adGroupId, targetingId, searchTerm].map(text).join('|'),
       storeId: store.storeCode || store.storeId.toUpperCase(),
-      date: options.to,
+      date: reportDate,
       campaignId: text(item.campaignId),
       campaign: text(item.campaignName),
       adGroupId: text(item.adGroupId),
       adGroup: text(item.adGroupName),
       targetingId,
       targeting,
-      targetingType: targetId ? 'PRODUCT_TARGET' : (keywordId ? 'KEYWORD' : ''),
+      targetingType: text(item.targetType) || (keywordId ? 'KEYWORD' : (targetId ? 'PRODUCT_TARGET' : '')),
       targetingState: '',
       searchTerm,
-      matchType: '',
+      matchType: text(item.matchType),
       currentBid: null,
       targetBid: null,
       bid: null,
@@ -146,7 +147,7 @@
       purchasedAsin: null,
       purchasedSku: null,
       sourceFile: 'cloudflare-d1',
-      reportGranularity: 'RANGE',
+      reportGranularity: 'DAY',
       attributionWindowDays: null,
       bidValueTrusted: false,
       governanceReady: false,
@@ -154,7 +155,8 @@
         backend: 'cloudflare-d1',
         startDate: options.from,
         endDate: options.to,
-        aggregatedRange: true,
+        grain: 'day',
+        aggregatedRange: false,
       },
     };
   }
@@ -173,6 +175,7 @@
         campaign: true,
         adGroup: true,
         searchTerm: true,
+        date: true,
         keywordOrTargetIdentity: 'partial',
         adProduct: false,
         currentBid: false,
@@ -190,7 +193,8 @@
       },
       legacyCompatibility: {
         transport: 'cloudflare-native-query-bridge-v1',
-        rangeRows: true,
+        dailyRows: true,
+        rangeRows: false,
         bidNullability: 'explicit-null-untrusted',
       },
     };
@@ -204,12 +208,12 @@
     const limit = boundedInteger(options.limit, 500, 1, 500);
     const offset = boundedInteger(options.offset, 0, 0, 500000);
     const selectedStores = await resolveScope(scope);
-    const fingerprint = { scope, from, to, stores: selectedStores.map((store) => store.storeId) };
+    const fingerprint = { scope, from, to, stores: selectedStores.map((store) => store.storeId), grain: 'day' };
 
     const collected = await cached('ads', fingerprint, async () => {
       const perStore = await Promise.all(selectedStores.map((store) => collectStoreSearchTerms(store, { from, to })));
       const rows = perStore.flatMap((entry) => entry.rows);
-      rows.sort((a, b) => b.spend - a.spend || b.sales - a.sales || a.id.localeCompare(b.id));
+      rows.sort((a, b) => b.spend - a.spend || b.sales - a.sales || b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
       return {
         rows,
         truncated: perStore.some((entry) => entry.truncated),
