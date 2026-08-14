@@ -2,6 +2,7 @@ import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
+import { handleDataHealthApiRoute } from './data-health-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 
 const CONTROL_ROUTE_PATTERNS = [
@@ -10,7 +11,7 @@ const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/negative-keywords(?:\/[^/]+)?$/,
 ];
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms)$/;
-const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords)$/;
+const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 
 export default {
   async fetch(request, env, ctx) {
@@ -46,6 +47,10 @@ export default {
         if (response) return response;
       }
       if (ANALYTICS_ROUTE_PATTERN.test(url.pathname)) {
+        if (url.pathname === '/api/v1/analytics/data-health') {
+          const response = await handleDataHealthApiRoute({ request, env, actor, url });
+          if (response) return response;
+        }
         const response = await handleAnalyticsApiRoute({ request, env, actor, url });
         if (response) return response;
       }
