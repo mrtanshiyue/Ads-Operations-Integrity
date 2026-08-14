@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(repoRoot, 'dist-cloudflare-native');
-const required = ['index.html', 'assets'];
+const required = ['index.html', 'assets', 'assets/cloudflare-native-api-v1.js'];
 
 for (const entry of required) {
   await access(path.join(repoRoot, entry), constants.R_OK);
@@ -19,12 +19,23 @@ const connectSrcPattern = /connect-src\s+[^;]+;/i;
 if (!connectSrcPattern.test(sourceIndex)) {
   throw new Error('index.html CSP is missing connect-src; refusing to build without an explicit network boundary');
 }
+if (!/<\/head>/i.test(sourceIndex)) {
+  throw new Error('index.html is missing </head>; cannot inject the native API client safely');
+}
 
 // The Cloudflare-native runtime exposes all browser APIs on the same origin under /api/*.
 // Remove legacy external API origins from the deployment artifact without mutating source index.html.
-const nativeIndex = sourceIndex.replace(connectSrcPattern, "connect-src 'self';");
+let nativeIndex = sourceIndex.replace(connectSrcPattern, "connect-src 'self';");
 if (!/connect-src\s+'self';/i.test(nativeIndex)) {
   throw new Error('Failed to enforce same-origin connect-src in native build');
+}
+
+const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
+if (!nativeIndex.includes(nativeClientTag)) {
+  nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${nativeClientTag}\n</head>`);
+}
+if (!nativeIndex.includes(nativeClientTag)) {
+  throw new Error('Failed to inject the native browser API client');
 }
 await writeFile(path.join(outputDir, 'index.html'), nativeIndex, 'utf8');
 
@@ -46,4 +57,5 @@ console.log(JSON.stringify({
   output: path.relative(repoRoot, outputDir),
   indexBytes: indexStat.size,
   browserConnectPolicy: "'self'",
+  nativeApiClient: 'assets/cloudflare-native-api-v1.js',
 }, null, 2));
