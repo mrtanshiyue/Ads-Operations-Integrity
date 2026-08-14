@@ -5,7 +5,12 @@
   "scripts": {
     "build": "node scripts/build-cloudflare.mjs",
     "check:cloudflare": "node --check src/worker.js && node --check scripts/build-cloudflare.mjs && npm run build",
-    "deploy:cloudflare": "npm run check:cloudflare && wrangler deploy"
+    "deploy:cloudflare": "npm run check:cloudflare && wrangler deploy",
+    "build:cf-native": "node scripts/build-cloudflare-native.mjs",
+    "check:cf-native": "node --check cloudflare/runtime/web-worker.js && node --check scripts/build-cloudflare-native.mjs && npm run build:cf-native",
+    "dev:cf-native": "npm run build:cf-native && wrangler dev --env dev --config cloudflare/runtime/wrangler.native.jsonc",
+    "deploy:cf-native:dev": "npm run check:cf-native && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc",
+    "deploy:cf-native:prod": "npm run check:cf-native && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc"
   },
   "devDependencies": {
     "wrangler": "^4.102.0"
