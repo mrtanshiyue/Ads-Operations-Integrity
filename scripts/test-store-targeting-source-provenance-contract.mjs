@@ -177,7 +177,7 @@ class CustomEvent {
   constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
 }
 vm.runInNewContext(bridgeSource, { window, CustomEvent, URL, console, setTimeout, clearTimeout });
-assert.equal(window.CloudflareNativeQueryBridge.version, '1.2.0');
+assert.equal(window.CloudflareNativeQueryBridge.version, '1.3.0');
 const bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
