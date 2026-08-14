@@ -10,6 +10,7 @@ const required = [
   'assets',
   'assets/cloudflare-native-api-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
+  'assets/cloudflare-gate6-acceptance-v1.js',
 ];
 
 for (const entry of required) {
@@ -43,13 +44,14 @@ nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
 
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${nativeBridgeTag}\n`;
-for (const tag of [nativeClientTag, nativeBridgeTag]) {
+const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
+const nativeTags = `  ${nativeClientTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, nativeBridgeTag, gate6AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
-if (!nativeIndex.includes(nativeClientTag) || !nativeIndex.includes(nativeBridgeTag)) {
-  throw new Error('Failed to inject the native browser API/query bridge');
+if (!nativeIndex.includes(nativeClientTag) || !nativeIndex.includes(nativeBridgeTag) || !nativeIndex.includes(gate6AcceptanceTag)) {
+  throw new Error('Failed to inject the native browser API/query bridge/Gate 6 acceptance client');
 }
 if (legacyQueryScriptPattern.test(nativeIndex)) {
   throw new Error('Legacy private cloud query client remains in native index');
@@ -90,5 +92,6 @@ console.log(JSON.stringify({
   browserConnectPolicy: "'self'",
   nativeApiClient: 'assets/cloudflare-native-api-v1.js',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
+  gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   legacyQueryScriptTagsRemoved: legacyQueryMatches.length,
 }, null, 2));
