@@ -1,8 +1,9 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1';
+  const CURRENT_BID_SNAPSHOT_SEMANTIC = 'current_entity_mirror';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -19,6 +20,11 @@
 
   function text(value) {
     return String(value ?? '').trim();
+  }
+
+  function nullableText(value) {
+    if (value === null || value === undefined || value === '') return null;
+    return typeof value === 'string' ? value : String(value);
   }
 
   function number(value) {
@@ -145,6 +151,7 @@
       || item?.currentBidMicros === undefined
       || (Number.isFinite(Number(item.currentBidMicros)) && Number(item.currentBidMicros) >= 0);
     const bidNullabilityPreserved = identityValid && bidSourceMatches && bidValueShapeValid;
+    const currentBidSyncedAt = identityValid && bidSourceMatches ? nullableText(item?.currentBidSyncedAt) : null;
     const adProduct = sourceContractReady ? text(item?.adProduct) : '';
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
@@ -153,6 +160,9 @@
       bidSource: bidSourceMatches ? bidSource : null,
       bidNullabilityPreserved,
       bidMicros,
+      bidSnapshotSemantic: sourceContractReady ? CURRENT_BID_SNAPSHOT_SEMANTIC : null,
+      currentBidSyncedAt,
+      currentBidSyncedAtObserved: currentBidSyncedAt !== null,
       adProductPresent: Boolean(adProduct),
       adProduct,
     };
@@ -183,6 +193,7 @@
       searchTerm: text(item.searchTerm),
       matchType: text(item.matchType),
       currentBid,
+      currentBidSyncedAt: provenance.currentBidSyncedAt,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -208,6 +219,9 @@
         bidSource: provenance.bidSource,
         bidNullabilityPreserved: provenance.bidNullabilityPreserved,
         bidMicros: provenance.bidMicros,
+        bidSnapshotSemantic: provenance.bidSnapshotSemantic,
+        currentBidSyncedAt: provenance.currentBidSyncedAt,
+        currentBidSyncedAtObserved: provenance.currentBidSyncedAtObserved,
         adProductPresent: provenance.adProductPresent,
       },
       sourceCoverage: {
@@ -233,6 +247,9 @@
         && provenanceRows.every((item) => item.bidSource === 'keyword' || item.bidSource === 'target'),
       bidNullabilityPreserved: input.length > 0
         && provenanceRows.every((item) => item.bidNullabilityPreserved === true),
+      currentBidSnapshotSemantic: sourceContractReady ? CURRENT_BID_SNAPSHOT_SEMANTIC : null,
+      currentBidSyncedAtObserved: input.length > 0
+        && provenanceRows.every((item) => item.currentBidSyncedAtObserved === true),
       adProductObserved: input.length > 0
         && provenanceRows.every((item) => item.adProductPresent === true),
     };
@@ -274,6 +291,7 @@
         dailyRows: true,
         rangeRows: false,
         bidNullability: 'explicit-null-untrusted',
+        bidSnapshot: 'current-entity-mirror-untrusted',
       },
     };
   }
