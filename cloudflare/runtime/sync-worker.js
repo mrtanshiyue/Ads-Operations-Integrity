@@ -1,4 +1,5 @@
-import { NonRetryableError, WorkflowEntrypoint } from 'cloudflare:workers';
+import { WorkflowEntrypoint } from 'cloudflare:workers';
+import { NonRetryableError } from 'cloudflare:workflows';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const ALLOWED_TRIGGER_TYPES = new Set(['scheduled', 'manual', 'recovery', 'backfill']);
