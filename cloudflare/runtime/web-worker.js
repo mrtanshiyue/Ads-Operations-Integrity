@@ -24,14 +24,11 @@ export default {
           ok: true,
           service: 'ads-operations-web',
           environment: env.APP_ENV || 'unknown',
-          bindings: {
+          dependencies: {
             assets: Boolean(env.ASSETS),
             controlDb: Boolean(env.CONTROL_DB),
             dataBucket: Boolean(env.DATA_BUCKET),
-            store01: Boolean(env.STORE_01_DB),
-            store02: Boolean(env.STORE_02_DB),
-            store03: Boolean(env.STORE_03_DB),
-            store04: Boolean(env.STORE_04_DB),
+            storeDatabases: configuredStoreDatabaseCount(env),
           },
         }, 200, request);
       }
@@ -90,10 +87,7 @@ export default {
 
         const storeDb = resolveStoreDb(env, store.d1_binding_key);
         if (!storeDb) {
-          return json({
-            error: 'store_db_not_bound',
-            binding: store.d1_binding_key,
-          }, 503, request);
+          return json({ error: 'store_db_unavailable' }, 503, request);
         }
 
         const health = await storeDatabaseHealth(storeDb);
@@ -102,20 +96,20 @@ export default {
             storeId: store.store_id,
             storeCode: store.store_code,
             displayName: store.display_name,
-            binding: store.d1_binding_key,
           },
           health,
         }, 200, request);
       }
 
-      if (url.pathname === '/api/v1/system/bindings' && request.method === 'GET') {
+      if (url.pathname === '/api/v1/system/health' && request.method === 'GET') {
         const permissions = await globalPermissionsForActor(env.CONTROL_DB, actor.user_id);
         if (!permissions.has('system.manage')) {
           return json({ error: 'forbidden', permission: 'system.manage' }, 403, request);
         }
         return json({
-          storeBindings: configuredStoreBindings(env),
-          r2: Boolean(env.DATA_BUCKET),
+          controlDatabase: true,
+          storeDatabases: configuredStoreDatabaseCount(env),
+          dataBucket: Boolean(env.DATA_BUCKET),
         }, 200, request);
       }
 
@@ -223,7 +217,7 @@ async function globalRolesForActor(db, userId) {
 async function storeMembershipsForActor(db, userId) {
   const result = await db.prepare(`
     SELECT s.store_id, s.store_code, s.display_name, s.marketplace_code, s.amazon_region,
-           s.d1_binding_key, sm.role_key
+           sm.role_key
     FROM store_members sm
     JOIN stores s ON s.store_id = sm.store_id
     WHERE sm.user_id = ?1 AND s.status = 'active'
@@ -244,7 +238,7 @@ async function storesForActor(db, userId) {
   if (global) {
     const all = await db.prepare(`
       SELECT store_id, store_code, display_name, marketplace_code, amazon_region,
-             d1_binding_key, status, sort_order
+             status, sort_order
       FROM stores
       WHERE status <> 'disabled'
       ORDER BY sort_order, store_code
@@ -341,9 +335,9 @@ async function storeDatabaseHealth(db) {
   };
 }
 
-function configuredStoreBindings(env) {
+function configuredStoreDatabaseCount(env) {
   return ['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']
-    .filter((name) => Boolean(env[name]));
+    .filter((name) => Boolean(env[name])).length;
 }
 
 function safeIdentity(identity) {
