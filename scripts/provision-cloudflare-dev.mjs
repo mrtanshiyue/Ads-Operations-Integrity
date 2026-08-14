@@ -4,8 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const configPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc');
-const configArg = 'cloudflare/runtime/wrangler.native.jsonc';
+const runtimeConfigs = [
+  path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc'),
+  path.join(repoRoot, 'cloudflare/runtime/wrangler.sync.jsonc'),
+];
+const migrationConfigArg = 'cloudflare/runtime/wrangler.native.jsonc';
 
 const RESOURCES = Object.freeze({
   controlDb: 'ads-ops-control-dev',
@@ -133,38 +136,46 @@ function ensureR2(name) {
   if (!r2Exists(name)) throw new Error(`R2 bucket ${name} was not visible after creation`);
 }
 
-async function writeDevDatabaseIds(controlUuid, storeUuid) {
+async function updateRuntimeConfig(configPath, controlUuid, storeUuid) {
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   const dev = config?.env?.dev;
-  if (!dev) throw new Error('wrangler.native.jsonc is missing env.dev');
+  if (!dev) throw new Error(`${path.basename(configPath)} is missing env.dev`);
 
   const byBinding = new Map((dev.d1_databases || []).map((item) => [item.binding, item]));
   const control = byBinding.get('CONTROL_DB');
   const store = byBinding.get('STORE_01_DB');
-  if (!control || !store) throw new Error('env.dev must contain CONTROL_DB and STORE_01_DB');
+  if (!control || !store) {
+    throw new Error(`${path.basename(configPath)} env.dev must contain CONTROL_DB and STORE_01_DB`);
+  }
   if (control.database_name !== RESOURCES.controlDb || store.database_name !== RESOURCES.storeDb) {
-    throw new Error('Dev D1 names in config do not match the fixed provisioning allowlist');
+    throw new Error(`${path.basename(configPath)} dev D1 names do not match the fixed provisioning allowlist`);
   }
   if (dev.r2_buckets?.[0]?.bucket_name !== RESOURCES.bucket || dev.r2_buckets?.[0]?.binding !== 'DATA_BUCKET') {
-    throw new Error('Dev R2 binding/name does not match the fixed provisioning allowlist');
+    throw new Error(`${path.basename(configPath)} dev R2 binding/name does not match the fixed provisioning allowlist`);
   }
 
   control.database_id = controlUuid;
   store.database_id = storeUuid;
 
   if (dryRun) {
-    console.log('[dry-run] would update dev D1 UUIDs in cloudflare/runtime/wrangler.native.jsonc');
+    console.log(`[dry-run] would update dev D1 UUIDs in ${path.relative(repoRoot, configPath)}`);
     return;
   }
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-  console.log('Updated dev D1 UUIDs in cloudflare/runtime/wrangler.native.jsonc.');
+  console.log(`Updated dev D1 UUIDs in ${path.relative(repoRoot, configPath)}.`);
+}
+
+async function writeDevDatabaseIds(controlUuid, storeUuid) {
+  for (const configPath of runtimeConfigs) {
+    await updateRuntimeConfig(configPath, controlUuid, storeUuid);
+  }
 }
 
 function applyRemoteMigrations(databaseName) {
   console.log(`Applying remote migrations to ${databaseName}...`);
   runWrangler([
     'd1', 'migrations', 'apply', databaseName,
-    '--remote', '--env', 'dev', '--config', configArg,
+    '--remote', '--env', 'dev', '--config', migrationConfigArg,
   ], { input: 'y\n' });
 }
 
@@ -173,7 +184,7 @@ function remoteForeignKeyCheck(databaseName) {
     'd1', 'execute', databaseName,
     '--remote', '--yes', '--json',
     '--command', 'PRAGMA foreign_key_check;',
-    '--env', 'dev', '--config', configArg,
+    '--env', 'dev', '--config', migrationConfigArg,
   ], { json: true });
   const payload = parseJsonOutput(result.stdout, `${databaseName} foreign_key_check`);
   const sets = Array.isArray(payload) ? payload : (Array.isArray(payload?.result) ? payload.result : []);
@@ -210,8 +221,9 @@ async function main() {
     controlDb: RESOURCES.controlDb,
     storeDb: RESOURCES.storeDb,
     dataBucket: RESOURCES.bucket,
+    updatedConfigs: runtimeConfigs.map((configPath) => path.relative(repoRoot, configPath)),
     migrationsApplied: applyMigrations,
-    nextGate: 'Configure TEAM_DOMAIN and ACCESS_AUD, seed the dev owner, then deploy ads-operations-web-dev.',
+    nextGate: 'Configure Cloudflare Access values, seed the dev owner, then deploy the web and sync development Workers.',
   }, null, 2));
 }
 
