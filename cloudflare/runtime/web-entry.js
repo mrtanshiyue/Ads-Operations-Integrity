@@ -1,6 +1,7 @@
 import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
+import { handleStoreDailySourceObjectMetadataApiRoute } from './store-daily-source-object-metadata-api.js';
 import { handleStoreDailySourceObjectChecksumApiRoute } from './store-daily-source-object-checksum-api.js';
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
@@ -92,6 +93,8 @@ export default {
     }
   },
 };
+
+void handleStoreDailySourceObjectMetadataApiRoute;
 
 function isControlRoute(pathname) {
   return CONTROL_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));

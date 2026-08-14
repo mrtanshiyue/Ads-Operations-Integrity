@@ -128,12 +128,12 @@ assert.match(helper, /bytes\.byteLength !== 32/);
 assert.doesNotMatch(`${gate22}\n${helper}`, /DATA_BUCKET\.get\s*\(|bucket\.get\s*\(|\.arrayBuffer\s*\(|\.text\s*\(/);
 assert.doesNotMatch(`${gate22}\n${helper}`, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW/);
 assert.doesNotMatch(`${gate22}\n${helper}`, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
-assert.match(webEntry, /handleStoreDailySourceObjectChecksumApiRoute/);
-assert.doesNotMatch(webEntry, /handleStoreDailySourceObjectMetadataApiRoute/);
+assert.match(webEntry, /handleStoreDailySourceObjectMetadataApiRoute/);
+assert.match(webEntry, /const response = await handleStoreDailySourceObjectChecksumApiRoute/);
 
 console.log(JSON.stringify({ ok: true, gate: 22, contracts: [
   'r2-native-sha256-checksum-contract-explicit', 'gate21-metadata-sha256-identity-required',
   'native-sha256-must-match-d1-content-sha256', 'missing-native-sha256-fails-closed',
   'native-sha256-mismatch-fails-closed', 'gate20-22-share-one-underlying-r2-head-per-key',
-  'no-r2-get-or-body-consumption', 'no-write-path-or-readiness-change',
+  'gate21-entry-boundary-preserved', 'no-r2-get-or-body-consumption', 'no-write-path-or-readiness-change',
 ] }));
