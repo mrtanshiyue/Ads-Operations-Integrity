@@ -1,5 +1,6 @@
 import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
+import { handleStoreApiRoute } from './store-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 
 const CONTROL_ROUTE_PATTERNS = [
@@ -7,11 +8,13 @@ const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/keywords(?:\/[^/]+)?$/,
   /^\/api\/v1\/negative-keywords(?:\/[^/]+)?$/,
 ];
+const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms)$/;
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (!isControlRoute(url.pathname) || request.method === 'OPTIONS') {
+    const modularRoute = isControlRoute(url.pathname) || STORE_ROUTE_PATTERN.test(url.pathname);
+    if (!modularRoute || request.method === 'OPTIONS') {
       return legacyWebWorker.fetch(request, env, ctx);
     }
 
@@ -30,11 +33,17 @@ export default {
     await touchLastSeen(env.CONTROL_DB, actor.user_id);
 
     try {
-      const response = await handleControlApiRoute({ request, env, actor, url });
-      if (response) return response;
+      if (isControlRoute(url.pathname)) {
+        const response = await handleControlApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
+      if (STORE_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleStoreApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
       return legacyWebWorker.fetch(request, env, ctx);
     } catch (error) {
-      console.error('control_api_error', {
+      console.error('modular_api_error', {
         message: error?.message || String(error),
         stack: error?.stack,
         path: url.pathname,
