@@ -208,8 +208,8 @@ async function verifyRemoteSummaries() {
     ORDER BY keyword_id
   `).bind(STORE_ID, AS_OF_DATE, WINDOW_DAYS).all();
   assert.deepEqual(keywords.results, [
-    { keyword_id: 'keyword-synth-dev-reading', impressions: 1000, clicks: 100, cost_micros: 10000000, purchases: 20, units_sold: 22, sales_micros: 50000000 },
     { keyword_id: 'keyword-synth-dev-readers', impressions: 600, clicks: 60, cost_micros: 6000000, purchases: 12, units_sold: 13, sales_micros: 30000000 },
+    { keyword_id: 'keyword-synth-dev-reading', impressions: 1000, clicks: 100, cost_micros: 10000000, purchases: 20, units_sold: 22, sales_micros: 50000000 },
   ]);
 
   const runs = await controlDb.prepare(`
