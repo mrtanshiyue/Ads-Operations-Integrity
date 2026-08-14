@@ -16,6 +16,7 @@
       "vars": {
         "APP_ENV": "development",
         "ACCESS_MODE": "observe",
+        "SYNC_TRIGGER_ENABLED": "false",
         "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
         "ACCESS_AUD": "REPLACE_ME"
       },
@@ -38,6 +39,14 @@
           "binding": "DATA_BUCKET",
           "bucket_name": "ads-ops-data-dev"
         }
+      ],
+      "workflows": [
+        {
+          "name": "ads-amazon-sync-dev",
+          "binding": "AMAZON_SYNC_WORKFLOW",
+          "class_name": "AmazonAdsSyncWorkflow",
+          "script_name": "ads-operations-sync-dev"
+        }
       ]
     },
     "production": {
@@ -45,6 +54,7 @@
       "vars": {
         "APP_ENV": "production",
         "ACCESS_MODE": "enforce",
+        "SYNC_TRIGGER_ENABLED": "false",
         "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
         "ACCESS_AUD": "REPLACE_ME"
       },
@@ -84,6 +94,14 @@
         {
           "binding": "DATA_BUCKET",
           "bucket_name": "ads-ops-data-prod"
+        }
+      ],
+      "workflows": [
+        {
+          "name": "ads-amazon-sync-prod",
+          "binding": "AMAZON_SYNC_WORKFLOW",
+          "class_name": "AmazonAdsSyncWorkflow",
+          "script_name": "ads-operations-sync-prod"
         }
       ]
     }
