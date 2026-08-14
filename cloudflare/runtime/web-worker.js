@@ -72,6 +72,42 @@ export default {
         }, 200, request);
       }
 
+      const storeHealthMatch = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/health$/);
+      if (storeHealthMatch && request.method === 'GET') {
+        const storeId = decodeURIComponent(storeHealthMatch[1]);
+        const allowed = await actorHasStorePermission(
+          env.CONTROL_DB,
+          actor.user_id,
+          storeId,
+          'ads.read',
+        );
+        if (!allowed) {
+          return json({ error: 'forbidden', permission: 'ads.read' }, 403, request);
+        }
+
+        const store = await loadStore(env.CONTROL_DB, storeId);
+        if (!store) return json({ error: 'store_not_found' }, 404, request);
+
+        const storeDb = resolveStoreDb(env, store.d1_binding_key);
+        if (!storeDb) {
+          return json({
+            error: 'store_db_not_bound',
+            binding: store.d1_binding_key,
+          }, 503, request);
+        }
+
+        const health = await storeDatabaseHealth(storeDb);
+        return json({
+          store: {
+            storeId: store.store_id,
+            storeCode: store.store_code,
+            displayName: store.display_name,
+            binding: store.d1_binding_key,
+          },
+          health,
+        }, 200, request);
+      }
+
       if (url.pathname === '/api/v1/system/bindings' && request.method === 'GET') {
         const permissions = await globalPermissionsForActor(env.CONTROL_DB, actor.user_id);
         if (!permissions.has('system.manage')) {
@@ -264,6 +300,45 @@ async function actorHasStorePermission(db, userId, storeId, permissionKey) {
     LIMIT 1
   `).bind(userId, storeId, permissionKey).first();
   return Boolean(scoped);
+}
+
+async function loadStore(db, storeId) {
+  return db.prepare(`
+    SELECT store_id, store_code, display_name, d1_binding_key, status
+    FROM stores
+    WHERE store_id = ?1 AND status <> 'disabled'
+    LIMIT 1
+  `).bind(storeId).first();
+}
+
+function resolveStoreDb(env, bindingKey) {
+  const allowed = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
+  if (!allowed.has(bindingKey)) return null;
+  return env[bindingKey] || null;
+}
+
+async function storeDatabaseHealth(db) {
+  const [profiles, campaigns, keywords, lastSync] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS count FROM amazon_profiles').first(),
+    db.prepare('SELECT COUNT(*) AS count FROM campaigns').first(),
+    db.prepare('SELECT COUNT(*) AS count FROM keywords').first(),
+    db.prepare(`
+      SELECT run_id, status, started_at, completed_at, created_at
+      FROM sync_runs
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).first(),
+  ]);
+
+  return {
+    ok: true,
+    counts: {
+      profiles: Number(profiles?.count || 0),
+      campaigns: Number(campaigns?.count || 0),
+      keywords: Number(keywords?.count || 0),
+    },
+    lastSync: lastSync || null,
+  };
 }
 
 function configuredStoreBindings(env) {
