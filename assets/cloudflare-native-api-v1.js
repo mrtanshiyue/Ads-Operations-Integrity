@@ -37,12 +37,7 @@
 
     if (!response.ok) {
       const code = payload?.error || `http_${response.status}`;
-      throw new ApiError(code, {
-        status: response.status,
-        code,
-        requestId,
-        payload,
-      });
+      throw new ApiError(code, { status: response.status, code, requestId, payload });
     }
     return payload;
   }
@@ -65,6 +60,7 @@
     listProducts: (params) => request(query('/api/v1/products', params)),
     createProduct: (body) => request('/api/v1/products', { method: 'POST', body }),
     updateProduct: (productId, body) => request(`/api/v1/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body }),
+    productKeywords: (productId, params) => request(query(`/api/v1/products/${encodeURIComponent(productId)}/keywords`, params)),
 
     listKeywords: (params) => request(query('/api/v1/keywords', params)),
     createKeyword: (body) => request('/api/v1/keywords', { method: 'POST', body }),
