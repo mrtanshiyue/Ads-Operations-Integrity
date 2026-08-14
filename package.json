@@ -24,7 +24,7 @@
     "deploy:cf-stack:dev": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env dev --require-ready && wrangler deploy --env dev --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc",
     "deploy:cf-native:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc",
     "deploy:cf-sync:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc",
-    "deploy:cf-stack:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc"
+    "deploy:cf-stack:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc"
   },
   "devDependencies": {
     "wrangler": "4.114.0"
