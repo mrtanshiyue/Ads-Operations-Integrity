@@ -8,10 +8,12 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const bridgeSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-query-bridge-v1.js'), 'utf8');
 
 const sourceContract = {
-  schemaVersion: 'store-targeting-source-v1',
+  schemaVersion: 'store-targeting-source-v2',
   identityRule: 'keyword_xor_target',
   bidUnit: 'micros',
   bidNullability: 'preserved',
+  currentBidMirrorTimestamp: 'synced_at',
+  targetingSourceTimestamp: 'source_updated_at',
 };
 const items = [
   {
@@ -32,6 +34,7 @@ const items = [
     targetingState: 'ENABLED',
     currentBidMicros: 0,
     currentBidSyncedAt: '2026-08-14 09:35:29',
+    targetingSourceUpdatedAt: null,
     bidSource: 'keyword',
     searchTerm: 'reading glasses',
     normalizedSearchTerm: 'reading glasses',
@@ -61,6 +64,7 @@ const items = [
     targetingState: 'ENABLED',
     currentBidMicros: null,
     currentBidSyncedAt: '2026-08-14 09:36:00',
+    targetingSourceUpdatedAt: null,
     bidSource: 'target',
     searchTerm: 'reader glasses',
     normalizedSearchTerm: 'reader glasses',
@@ -92,7 +96,7 @@ class CustomEvent {
   constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
 }
 vm.runInNewContext(bridgeSource, { window, CustomEvent, URL, console, setTimeout, clearTimeout });
-assert.equal(window.CloudflareNativeQueryBridge.version, '1.3.0');
+assert.equal(window.CloudflareNativeQueryBridge.version, '1.4.0');
 
 let bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,

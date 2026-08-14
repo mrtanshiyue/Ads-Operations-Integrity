@@ -2,7 +2,7 @@ const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'ST
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 const MAX_DAYS = 93;
-const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1';
+const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -59,12 +59,14 @@ async function listDailySearchTerms(request, db, url) {
         k.match_type AS keyword_match_type,
         k.state AS keyword_state,
         k.bid_micros AS keyword_bid_micros,
+        k.source_updated_at AS keyword_source_updated_at,
         k.synced_at AS keyword_synced_at,
         st.target_id,
         t.target_type,
         t.expression_text AS target_expression_text,
         t.state AS target_state,
         t.bid_micros AS target_bid_micros,
+        t.source_updated_at AS target_source_updated_at,
         t.synced_at AS target_synced_at,
         MIN(st.search_term) AS search_term,
         st.normalized_search_term,
@@ -86,8 +88,8 @@ async function listDailySearchTerms(request, db, url) {
         AND (?5 IS NULL OR st.ad_group_id = ?5)
         AND (?6 IS NULL OR st.search_term LIKE ?6 ESCAPE '\\' OR st.normalized_search_term LIKE ?6 ESCAPE '\\')
       GROUP BY st.report_date, st.profile_id, st.ad_product, st.campaign_id, c.name,
-               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros, k.synced_at,
-               st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, t.synced_at, st.normalized_search_term
+               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros, k.source_updated_at, k.synced_at,
+               st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, t.source_updated_at, t.synced_at, st.normalized_search_term
     ), ranked AS (
       SELECT *, ${sortColumn} AS sort_value FROM aggregated
     )
@@ -128,6 +130,7 @@ async function listDailySearchTerms(request, db, url) {
       targetingState: source.state,
       currentBidMicros: source.bidMicros,
       currentBidSyncedAt: source.syncedAt,
+      targetingSourceUpdatedAt: source.sourceUpdatedAt,
       bidSource: source.bidSource,
       searchTerm: row.search_term,
       normalizedSearchTerm: row.normalized_search_term,
@@ -151,6 +154,8 @@ async function listDailySearchTerms(request, db, url) {
       identityRule: 'keyword_xor_target',
       bidUnit: 'micros',
       bidNullability: 'preserved',
+      currentBidMirrorTimestamp: 'synced_at',
+      targetingSourceTimestamp: 'source_updated_at',
     },
     range: { startDate, endDate, days },
     grain: 'day',
@@ -188,7 +193,7 @@ function targetingSource(row) {
   const keywordId = String(row.keyword_id || '').trim();
   const targetId = String(row.target_id || '').trim();
   if (Boolean(keywordId) === Boolean(targetId)) {
-    return { valid: false, kind: null, state: null, bidMicros: null, syncedAt: null, bidSource: null };
+    return { valid: false, kind: null, state: null, bidMicros: null, syncedAt: null, sourceUpdatedAt: null, bidSource: null };
   }
   if (keywordId) {
     return {
@@ -197,6 +202,7 @@ function targetingSource(row) {
       state: nullableText(row.keyword_state),
       bidMicros: nullableNonNegativeNumber(row.keyword_bid_micros),
       syncedAt: nullableText(row.keyword_synced_at),
+      sourceUpdatedAt: nullableText(row.keyword_source_updated_at),
       bidSource: 'keyword',
     };
   }
@@ -206,6 +212,7 @@ function targetingSource(row) {
     state: nullableText(row.target_state),
     bidMicros: nullableNonNegativeNumber(row.target_bid_micros),
     syncedAt: nullableText(row.target_synced_at),
+    sourceUpdatedAt: nullableText(row.target_source_updated_at),
     bidSource: 'target',
   };
 }

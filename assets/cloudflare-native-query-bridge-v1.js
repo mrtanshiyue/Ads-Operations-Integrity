@@ -1,9 +1,10 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.3.0';
-  const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1';
+  const VERSION = '1.4.0';
+  const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
   const CURRENT_BID_SNAPSHOT_SEMANTIC = 'current_entity_mirror';
+  const TARGETING_SOURCE_TIMESTAMP_SEMANTIC = 'source_entity_updated_at';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -131,7 +132,9 @@
     return contract?.schemaVersion === STORE_SOURCE_CONTRACT_VERSION
       && contract?.identityRule === 'keyword_xor_target'
       && contract?.bidUnit === 'micros'
-      && contract?.bidNullability === 'preserved';
+      && contract?.bidNullability === 'preserved'
+      && contract?.currentBidMirrorTimestamp === 'synced_at'
+      && contract?.targetingSourceTimestamp === 'source_updated_at';
   }
 
   function sourceProvenance(item, sourceContractReady) {
@@ -152,6 +155,7 @@
       || (Number.isFinite(Number(item.currentBidMicros)) && Number(item.currentBidMicros) >= 0);
     const bidNullabilityPreserved = identityValid && bidSourceMatches && bidValueShapeValid;
     const currentBidSyncedAt = identityValid && bidSourceMatches ? nullableText(item?.currentBidSyncedAt) : null;
+    const targetingSourceUpdatedAt = identityValid ? nullableText(item?.targetingSourceUpdatedAt) : null;
     const adProduct = sourceContractReady ? text(item?.adProduct) : '';
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
@@ -163,6 +167,9 @@
       bidSnapshotSemantic: sourceContractReady ? CURRENT_BID_SNAPSHOT_SEMANTIC : null,
       currentBidSyncedAt,
       currentBidSyncedAtObserved: currentBidSyncedAt !== null,
+      targetingSourceUpdatedAt,
+      targetingSourceUpdatedAtObserved: targetingSourceUpdatedAt !== null,
+      targetingSourceTimestampSemantic: sourceContractReady ? TARGETING_SOURCE_TIMESTAMP_SEMANTIC : null,
       adProductPresent: Boolean(adProduct),
       adProduct,
     };
@@ -194,6 +201,7 @@
       matchType: text(item.matchType),
       currentBid,
       currentBidSyncedAt: provenance.currentBidSyncedAt,
+      targetingSourceUpdatedAt: provenance.targetingSourceUpdatedAt,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -222,6 +230,9 @@
         bidSnapshotSemantic: provenance.bidSnapshotSemantic,
         currentBidSyncedAt: provenance.currentBidSyncedAt,
         currentBidSyncedAtObserved: provenance.currentBidSyncedAtObserved,
+        targetingSourceUpdatedAt: provenance.targetingSourceUpdatedAt,
+        targetingSourceUpdatedAtObserved: provenance.targetingSourceUpdatedAtObserved,
+        targetingSourceTimestampSemantic: provenance.targetingSourceTimestampSemantic,
         adProductPresent: provenance.adProductPresent,
       },
       sourceCoverage: {
@@ -250,6 +261,9 @@
       currentBidSnapshotSemantic: sourceContractReady ? CURRENT_BID_SNAPSHOT_SEMANTIC : null,
       currentBidSyncedAtObserved: input.length > 0
         && provenanceRows.every((item) => item.currentBidSyncedAtObserved === true),
+      targetingSourceTimestampSemantic: sourceContractReady ? TARGETING_SOURCE_TIMESTAMP_SEMANTIC : null,
+      targetingSourceUpdatedAtObserved: input.length > 0
+        && provenanceRows.every((item) => item.targetingSourceUpdatedAtObserved === true),
       adProductObserved: input.length > 0
         && provenanceRows.every((item) => item.adProductPresent === true),
     };

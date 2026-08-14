@@ -56,11 +56,15 @@ function storeDb() {
                     keyword_match_type: 'EXACT',
                     keyword_state: 'ENABLED',
                     keyword_bid_micros: 0,
+                    keyword_source_updated_at: null,
+                    keyword_synced_at: '2026-08-14 09:35:29',
                     target_id: null,
                     target_type: null,
                     target_expression_text: null,
                     target_state: null,
                     target_bid_micros: null,
+                    target_source_updated_at: null,
+                    target_synced_at: null,
                     search_term: 'reading glasses',
                     normalized_search_term: 'reading glasses',
                     report_match_type: 'EXACT',
@@ -86,11 +90,15 @@ function storeDb() {
                     keyword_match_type: null,
                     keyword_state: null,
                     keyword_bid_micros: null,
+                    keyword_source_updated_at: null,
+                    keyword_synced_at: null,
                     target_id: 'target-1',
                     target_type: 'PRODUCT_TARGETING',
                     target_expression_text: 'asin="B000000001"',
                     target_state: 'ENABLED',
                     target_bid_micros: null,
+                    target_source_updated_at: null,
+                    target_synced_at: '2026-08-14 09:36:00',
                     search_term: 'reader glasses',
                     normalized_search_term: 'reader glasses',
                     report_match_type: null,
@@ -127,10 +135,12 @@ assert.equal(response.headers.get('cache-control'), 'no-store');
 assert.equal(response.headers.get('x-request-id'), 'gate12-read-ray');
 const payload = await response.json();
 assert.deepEqual(payload.sourceContract, {
-  schemaVersion: 'store-targeting-source-v1',
+  schemaVersion: 'store-targeting-source-v2',
   identityRule: 'keyword_xor_target',
   bidUnit: 'micros',
   bidNullability: 'preserved',
+  currentBidMirrorTimestamp: 'synced_at',
+  targetingSourceTimestamp: 'source_updated_at',
 });
 assert.equal(payload.items.length, 2);
 assert.deepEqual({
@@ -177,7 +187,7 @@ class CustomEvent {
   constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
 }
 vm.runInNewContext(bridgeSource, { window, CustomEvent, URL, console, setTimeout, clearTimeout });
-assert.equal(window.CloudflareNativeQueryBridge.version, '1.3.0');
+assert.equal(window.CloudflareNativeQueryBridge.version, '1.4.0');
 const bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
@@ -218,7 +228,7 @@ for (const row of bridged.rows) {
   assert.equal(row.attributionWindowDays, null);
 }
 
-assert.match(apiSource, /SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1'/);
+assert.match(apiSource, /SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2'/);
 assert.match(apiSource, /st\.ad_product/);
 assert.match(apiSource, /k\.bid_micros AS keyword_bid_micros/);
 assert.match(apiSource, /t\.bid_micros AS target_bid_micros/);
