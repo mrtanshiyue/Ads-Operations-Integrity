@@ -12,7 +12,7 @@
     "provision:cf-native:dev": "node scripts/provision-cloudflare-dev.mjs",
     "validate:cf-native:dev": "node scripts/validate-cloudflare-native.mjs --env dev",
     "validate:cf-native:prod": "node scripts/validate-cloudflare-native.mjs --env production",
-    "check:cf-native": "node --check cloudflare/runtime/web-worker.js && node --check cloudflare/runtime/sync-worker.js && node --check scripts/build-cloudflare-native.mjs && node --check scripts/validate-cloudflare-native.mjs && node --check scripts/provision-cloudflare-dev.mjs && python3 -m py_compile scripts/test-cloudflare-foundation.py && npm run build:cf-native && npm run validate:cf-native:dev",
+    "check:cf-native": "node --check cloudflare/runtime/web-entry.js && node --check cloudflare/runtime/control-api.js && node --check cloudflare/runtime/web-worker.js && node --check cloudflare/runtime/sync-worker.js && node --check scripts/build-cloudflare-native.mjs && node --check scripts/validate-cloudflare-native.mjs && node --check scripts/provision-cloudflare-dev.mjs && python3 -m py_compile scripts/test-cloudflare-foundation.py && npm run build:cf-native && npm run validate:cf-native:dev",
     "dev:cf-native": "npm run build:cf-native && wrangler dev --env dev --config cloudflare/runtime/wrangler.native.jsonc",
     "dev:cf-sync": "wrangler dev --env dev --config cloudflare/runtime/wrangler.sync.jsonc",
     "deploy:cf-native:dev": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env dev --require-ready && wrangler deploy --env dev --config cloudflare/runtime/wrangler.native.jsonc",
