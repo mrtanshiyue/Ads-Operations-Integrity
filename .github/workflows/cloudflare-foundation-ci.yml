@@ -1,4 +1,5 @@
 name: Cloudflare Foundation CI
+# Keep Gate contract files listed explicitly so test-only changes trigger exact-commit CI.
 
 on:
   push:
