@@ -6,6 +6,7 @@ const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
 const FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
 const FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
 const SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
+const SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -122,7 +123,9 @@ async function listDailySearchTerms(request, db, url) {
   const rows = resultRows.map((row) => {
     const source = targetingSource(row);
     const lineage = sourceReportJobLineage(row);
-    const sourceReport = sourceAmazonReportIdentity(row, lineage, sourceReportJobs.get(lineage.jobId));
+    const reportJob = sourceReportJobs.get(lineage.jobId);
+    const sourceReport = sourceAmazonReportIdentity(row, lineage, reportJob);
+    const sourceObject = sourceR2ObjectIdentity(sourceReport, reportJob);
     return {
       groupKey: row.group_key,
       reportDate: row.report_date,
@@ -152,6 +155,8 @@ async function listDailySearchTerms(request, db, url) {
       sourceReportJobIdentityValid: lineage.valid,
       sourceAmazonReportId: sourceReport.amazonReportId,
       sourceAmazonReportIdentityValid: sourceReport.valid,
+      sourceR2ObjectKey: sourceObject.r2ObjectKey,
+      sourceR2ObjectIdentityValid: sourceObject.valid,
       impressions: number(row.impressions),
       clicks: number(row.clicks),
       costMicros: number(row.cost_micros),
@@ -190,6 +195,12 @@ async function listDailySearchTerms(request, db, url) {
       amazonReportId: 'report_jobs.amazon_report_id',
       joinRule: 'validated_source_report_job_id',
       contextRule: 'profile_ad_product_date_covered',
+    },
+    sourceObjectContract: {
+      schemaVersion: SOURCE_OBJECT_CONTRACT_VERSION,
+      r2ObjectKey: 'report_jobs.r2_object_key',
+      storageBackend: 'r2',
+      identityRule: 'validated_source_amazon_report_identity',
     },
     range: { startDate, endDate, days },
     grain: 'day',
@@ -271,7 +282,7 @@ async function loadSourceReportJobs(db, rows) {
   if (!jobIds.length) return new Map();
   const placeholders = jobIds.map((_, index) => `?${index + 1}`).join(',');
   const result = await db.prepare(`
-    SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date
+    SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key
     FROM report_jobs
     WHERE job_id IN (${placeholders})
   `).bind(...jobIds).all();
@@ -303,6 +314,13 @@ function sourceAmazonReportIdentity(row, lineage, reportJob) {
     && reportStartDate <= reportDate
     && reportDate <= reportEndDate;
   return { valid, amazonReportId: valid ? amazonReportId : null };
+}
+
+function sourceR2ObjectIdentity(sourceReport, reportJob) {
+  if (!sourceReport?.valid || !reportJob) return { valid: false, r2ObjectKey: null };
+  const r2ObjectKey = nullableText(reportJob.r2_object_key);
+  const valid = r2ObjectKey !== null;
+  return { valid, r2ObjectKey: valid ? r2ObjectKey : null };
 }
 
 function isoDate(value) {

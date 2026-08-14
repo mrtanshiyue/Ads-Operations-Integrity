@@ -81,6 +81,7 @@ function reportJob(overrides = {}) {
     ad_product: 'SPONSORED_PRODUCTS',
     start_date: '2026-08-12',
     end_date: '2026-08-12',
+    r2_object_key: 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz',
     ...overrides,
   };
 }
@@ -90,7 +91,7 @@ function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
     prepare(sql) {
       if (sql.includes('FROM report_jobs')) {
         assert.doesNotMatch(sql, /JOIN\s+report_jobs/i);
-        assert.match(sql, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date(?:, r2_object_key)?/);
+        assert.match(sql, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key/);
         assert.match(sql, /WHERE job_id IN \(\?1\)/);
         return {
           bind(...params) {
@@ -103,11 +104,6 @@ function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
           },
         };
       }
-      assert.match(sql, /MAX\(st\.updated_at\) AS fact_mirror_updated_at/);
-      assert.match(sql, /COUNT\(\*\) AS fact_row_count/);
-      assert.match(sql, /COUNT\(st\.source_report_job_id\) AS source_report_job_non_null_count/);
-      assert.match(sql, /COUNT\(DISTINCT st\.source_report_job_id\) AS source_report_job_distinct_count/);
-      assert.match(sql, /MIN\(st\.source_report_job_id\) AS source_report_job_id_candidate/);
       assert.doesNotMatch(sql, /report_jobs/i);
       return {
         bind() {
@@ -125,7 +121,7 @@ function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
 async function apiPayload(options = {}) {
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/search-terms-daily?startDate=2026-08-12&endDate=2026-08-12&limit=20', {
     method: 'GET',
-    headers: { 'cf-ray': 'gate17-read-ray' },
+    headers: { 'cf-ray': 'gate18-read-ray' },
   });
   const response = await handleStoreDailyApiRoute({
     request,
@@ -138,25 +134,26 @@ async function apiPayload(options = {}) {
 }
 
 const payload = await apiPayload();
-assert.deepEqual(payload.factLineageContract, {
-  schemaVersion: 'store-search-term-fact-lineage-v1',
-  sourceReportJobId: 'search_term_daily.source_report_job_id',
-  sourceReportJobAggregation: 'unanimous_non_null',
+assert.deepEqual(payload.sourceObjectContract, {
+  schemaVersion: 'store-search-term-source-object-v1',
+  r2ObjectKey: 'report_jobs.r2_object_key',
+  storageBackend: 'r2',
+  identityRule: 'validated_source_amazon_report_identity',
 });
-assert.deepEqual(payload.sourceReportContract, {
-  schemaVersion: 'store-search-term-source-report-v1',
-  sourceReportJobId: 'report_jobs.job_id',
-  amazonReportId: 'report_jobs.amazon_report_id',
-  joinRule: 'validated_source_report_job_id',
-  contextRule: 'profile_ad_product_date_covered',
-});
-assert.equal(payload.items[0].sourceReportJobId, 'report-job-1');
 assert.equal(payload.items[0].sourceReportJobIdentityValid, true);
-assert.equal(payload.items[0].sourceAmazonReportId, 'amazon-report-1');
 assert.equal(payload.items[0].sourceAmazonReportIdentityValid, true);
-assert.equal(payload.items[0].factMirrorUpdatedAt, '2026-08-14 09:35:29');
+assert.equal(payload.items[0].sourceAmazonReportId, 'amazon-report-1');
+assert.equal(payload.items[0].sourceR2ObjectKey, 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz');
+assert.equal(payload.items[0].sourceR2ObjectIdentityValid, true);
 assert.equal(payload.items[0].currentBidSyncedAt, '2026-08-14 09:35:29');
 assert.equal(payload.items[0].targetingSourceUpdatedAt, null);
+assert.equal(payload.items[0].factMirrorUpdatedAt, '2026-08-14 09:35:29');
+
+const missingObject = await apiPayload({ report: { r2_object_key: null } });
+assert.equal(missingObject.items[0].sourceAmazonReportId, 'amazon-report-1');
+assert.equal(missingObject.items[0].sourceAmazonReportIdentityValid, true);
+assert.equal(missingObject.items[0].sourceR2ObjectKey, null);
+assert.equal(missingObject.items[0].sourceR2ObjectIdentityValid, false);
 
 for (const options of [
   { missingReport: true },
@@ -166,38 +163,10 @@ for (const options of [
   { report: { start_date: '2026-08-13', end_date: '2026-08-14' } },
 ]) {
   const invalid = await apiPayload(options);
-  assert.equal(invalid.items[0].sourceReportJobId, 'report-job-1');
-  assert.equal(invalid.items[0].sourceReportJobIdentityValid, true);
-  assert.equal(invalid.items[0].sourceAmazonReportId, null);
   assert.equal(invalid.items[0].sourceAmazonReportIdentityValid, false);
+  assert.equal(invalid.items[0].sourceR2ObjectKey, null);
+  assert.equal(invalid.items[0].sourceR2ObjectIdentityValid, false);
 }
-
-const ambiguousRequest = new Request('https://example.test/api/v1/stores/store-dev-01/search-terms-daily?startDate=2026-08-12&endDate=2026-08-12&limit=20');
-let reportLookupAttempted = false;
-const ambiguousDb = {
-  prepare(sql) {
-    if (sql.includes('FROM report_jobs')) reportLookupAttempted = true;
-    return storeDb({
-      fact: {
-        fact_row_count: 2,
-        source_report_job_non_null_count: 2,
-        source_report_job_distinct_count: 2,
-        source_report_job_id_candidate: 'report-job-1',
-      },
-    }).prepare(sql);
-  },
-};
-const ambiguousResponse = await handleStoreDailyApiRoute({
-  request: ambiguousRequest,
-  env: { CONTROL_DB: controlDb(), STORE_01_DB: ambiguousDb },
-  actor: { user_id: 'user-dev-owner' },
-  url: new URL(ambiguousRequest.url),
-});
-const ambiguous = await ambiguousResponse.json();
-assert.equal(reportLookupAttempted, false);
-assert.equal(ambiguous.items[0].sourceReportJobId, null);
-assert.equal(ambiguous.items[0].sourceAmazonReportId, null);
-assert.equal(ambiguous.items[0].sourceAmazonReportIdentityValid, false);
 
 let bridgePayload = payload;
 const window = {
@@ -219,48 +188,46 @@ let bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
 let row = bridged.rows[0];
-assert.equal(row.sourceReportJobId, 'report-job-1');
 assert.equal(row.sourceAmazonReportId, 'amazon-report-1');
-assert.equal(row.sourceProvenance.sourceReportSchemaVersion, 'store-search-term-source-report-v1');
-assert.equal(row.sourceProvenance.sourceAmazonReportIdentityValid, true);
-assert.equal(row.sourceProvenance.sourceAmazonReportId, 'amazon-report-1');
-assert.equal(row.sourceProvenance.sourceAmazonReportObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceReportContractObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceAmazonReportIdentityObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceAmazonReportObserved, true);
+assert.equal(row.sourceR2ObjectKey, 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz');
+assert.equal(row.sourceProvenance.sourceObjectSchemaVersion, 'store-search-term-source-object-v1');
+assert.equal(row.sourceProvenance.sourceR2ObjectIdentityValid, true);
+assert.equal(row.sourceProvenance.sourceR2ObjectObserved, true);
+assert.equal(bridged.governance.sourceEvidence.sourceObjectContractObserved, true);
+assert.equal(bridged.governance.sourceEvidence.sourceR2ObjectIdentityObserved, true);
+assert.equal(bridged.governance.sourceEvidence.sourceR2ObjectObserved, true);
 
 bridgePayload = {
   ...payload,
-  sourceReportContract: { ...payload.sourceReportContract, joinRule: 'any_job_id' },
+  sourceObjectContract: { ...payload.sourceObjectContract, identityRule: 'any_report_object' },
 };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
 row = bridged.rows[0];
-assert.equal(row.sourceReportJobId, 'report-job-1');
-assert.equal(row.sourceProvenance.sourceReportJobIdentityValid, true);
-assert.equal(row.sourceAmazonReportId, null);
-assert.equal(row.sourceProvenance.sourceAmazonReportIdentityValid, false);
-assert.equal(row.sourceProvenance.sourceAmazonReportObserved, false);
-assert.equal(bridged.governance.sourceEvidence.sourceReportContractObserved, false);
+assert.equal(row.sourceAmazonReportId, 'amazon-report-1');
+assert.equal(row.sourceProvenance.sourceAmazonReportIdentityValid, true);
+assert.equal(row.sourceR2ObjectKey, null);
+assert.equal(row.sourceProvenance.sourceR2ObjectIdentityValid, false);
+assert.equal(bridged.governance.sourceEvidence.sourceObjectContractObserved, false);
+
+bridgePayload = { ...payload, sourceObjectContract: null };
+window.CloudflareNativeQueryBridge.clearCache();
+bridged = await window.CloudflareNativeQueryBridge.ads({
+  scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
+});
+assert.equal(bridged.rows[0].sourceAmazonReportId, 'amazon-report-1');
+assert.equal(bridged.rows[0].sourceR2ObjectKey, null);
 
 bridgePayload = { ...payload, sourceReportContract: null };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
-assert.equal(bridged.rows[0].sourceReportJobId, 'report-job-1');
 assert.equal(bridged.rows[0].sourceAmazonReportId, null);
-
-bridgePayload = { ...payload, factLineageContract: null };
-window.CloudflareNativeQueryBridge.clearCache();
-bridged = await window.CloudflareNativeQueryBridge.ads({
-  scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
-});
-assert.equal(bridged.rows[0].sourceReportJobId, null);
-assert.equal(bridged.rows[0].sourceAmazonReportId, null);
-assert.equal(bridged.rows[0].sourceProvenance.sourceAmazonReportIdentityValid, false);
+assert.equal(bridged.rows[0].sourceR2ObjectKey, null);
+assert.equal(bridged.rows[0].sourceProvenance.sourceR2ObjectIdentityValid, false);
 
 for (const key of [
   'targetingIdentityReady', 'bidSourceColumnReady', 'bidValueNullabilityTrusted', 'adProductReady',
@@ -271,37 +238,34 @@ for (const item of bridged.rows) {
   assert.equal(item.governanceReady, false);
 }
 
-assert.match(apiSource, /SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1'/);
-assert.match(apiSource, /FROM report_jobs/);
-assert.match(apiSource, /WHERE job_id IN \(\$\{placeholders\}\)/);
-assert.match(apiSource, /amazonReportId:\s*'report_jobs\.amazon_report_id'/);
-assert.match(apiSource, /joinRule:\s*'validated_source_report_job_id'/);
-assert.match(apiSource, /contextRule:\s*'profile_ad_product_date_covered'/);
-assert.match(bridgeSource, /joinRule === 'validated_source_report_job_id'/);
-assert.match(bridgeSource, /sourceAmazonReportIdentityObserved/);
+assert.match(apiSource, /SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1'/);
+assert.match(apiSource, /r2ObjectKey:\s*'report_jobs\.r2_object_key'/);
+assert.match(apiSource, /storageBackend:\s*'r2'/);
+assert.match(apiSource, /identityRule:\s*'validated_source_amazon_report_identity'/);
+assert.match(apiSource, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key/);
+assert.match(bridgeSource, /identityRule === 'validated_source_amazon_report_identity'/);
+assert.match(bridgeSource, /sourceR2ObjectIdentityObserved/);
 assert.doesNotMatch(apiSource, /JOIN\s+report_jobs/i);
-assert.doesNotMatch(apiSource, /content_sha256|request_fingerprint|request_json|row_count AS report_job/i);
+assert.doesNotMatch(apiSource, /content_sha256|content_bytes|request_fingerprint|request_json|row_count AS report_job|status AS report_job_status/i);
 assert.doesNotMatch(apiSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(bridgeSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
-assert.doesNotMatch(apiSource, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW/);
+assert.doesNotMatch(apiSource, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW|DATA_BUCKET/);
 assert.match(bridgeSource, /bidValueTrusted:\s*false/);
 assert.match(bridgeSource, /bidGovernanceReady:\s*false/);
 assert.match(bridgeSource, /campaignStudioReady:\s*false/);
 
 console.log(JSON.stringify({
   ok: true,
-  gate: 17,
+  gate: 18,
   contracts: [
-    'amazon-report-id-provenance-explicit',
-    'report-job-lookup-after-lineage-validation',
-    'ambiguous-lineage-skips-report-job-lookup',
-    'report-job-context-profile-consistent',
-    'report-job-context-ad-product-consistent',
-    'report-job-date-coverage-consistent',
-    'missing-amazon-report-id-fails-closed',
-    'source-report-contract-required-before-bridge-provenance',
-    'gate16-lineage-query-preserved',
-    'report-job-metadata-not-expanded',
+    'r2-object-key-provenance-explicit',
+    'r2-object-provenance-after-amazon-report-identity',
+    'missing-r2-object-key-fails-closed',
+    'invalid-amazon-report-identity-blocks-r2-object-provenance',
+    'source-object-contract-required-before-bridge-provenance',
+    'gate17-amazon-report-identity-preserved',
+    'report-content-metadata-not-expanded',
+    'no-r2-object-read-introduced',
     'no-freshness-threshold-introduced',
     'governance-readiness-remains-closed',
     'store-d1-read-only',

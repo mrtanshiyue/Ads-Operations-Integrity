@@ -1,7 +1,7 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
   const CURRENT_BID_SNAPSHOT_SEMANTIC = 'current_entity_mirror';
   const TARGETING_SOURCE_TIMESTAMP_SEMANTIC = 'source_entity_updated_at';
@@ -9,6 +9,7 @@
   const FACT_MIRROR_TIMESTAMP_SEMANTIC = 'latest_local_fact_row_updated_at';
   const STORE_FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
   const STORE_SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
+  const STORE_SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -114,6 +115,7 @@
     let factContractReady = true;
     let factLineageContractReady = true;
     let sourceReportContractReady = true;
+    let sourceObjectContractReady = true;
     do {
       const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
@@ -126,10 +128,12 @@
       const pageFactContractReady = validStoreFactContract(payload?.factContract);
       const pageFactLineageContractReady = validStoreFactLineageContract(payload?.factLineageContract);
       const pageSourceReportContractReady = validStoreSourceReportContract(payload?.sourceReportContract);
+      const pageSourceObjectContractReady = validStoreSourceObjectContract(payload?.sourceObjectContract);
       sourceContractReady = sourceContractReady && pageContractReady;
       factContractReady = factContractReady && pageFactContractReady;
       factLineageContractReady = factLineageContractReady && pageFactLineageContractReady;
       sourceReportContractReady = sourceReportContractReady && pageSourceReportContractReady;
+      sourceObjectContractReady = sourceObjectContractReady && pageSourceObjectContractReady;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       for (const item of items) {
         rows.push(toLegacyAdRow(store, item, options, {
@@ -137,6 +141,7 @@
           factContractReady: pageFactContractReady,
           factLineageContractReady: pageFactLineageContractReady,
           sourceReportContractReady: pageSourceReportContractReady,
+          sourceObjectContractReady: pageSourceObjectContractReady,
         }));
         if (rows.length >= MAX_ROWS_PER_STORE) break;
       }
@@ -150,6 +155,7 @@
       factContractReady,
       factLineageContractReady,
       sourceReportContractReady,
+      sourceObjectContractReady,
     };
   }
 
@@ -182,12 +188,20 @@
       && contract?.contextRule === 'profile_ad_product_date_covered';
   }
 
+  function validStoreSourceObjectContract(contract) {
+    return contract?.schemaVersion === STORE_SOURCE_OBJECT_CONTRACT_VERSION
+      && contract?.r2ObjectKey === 'report_jobs.r2_object_key'
+      && contract?.storageBackend === 'r2'
+      && contract?.identityRule === 'validated_source_amazon_report_identity';
+  }
+
   function sourceProvenance(
     item,
     sourceContractReady,
     factContractReady,
     factLineageContractReady,
     sourceReportContractReady,
+    sourceObjectContractReady,
   ) {
     const keywordId = text(item?.keywordId);
     const targetId = text(item?.targetId);
@@ -218,6 +232,11 @@
       && sourceReportJobIdentityValid
       && item?.sourceAmazonReportIdentityValid === true
       && sourceAmazonReportId !== null;
+    const sourceR2ObjectKey = sourceObjectContractReady ? nullableText(item?.sourceR2ObjectKey) : null;
+    const sourceR2ObjectIdentityValid = sourceObjectContractReady
+      && sourceAmazonReportIdentityValid
+      && item?.sourceR2ObjectIdentityValid === true
+      && sourceR2ObjectKey !== null;
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
       targetingIdentityValid: identityValid,
@@ -245,6 +264,10 @@
       sourceAmazonReportIdentityValid,
       sourceAmazonReportId: sourceAmazonReportIdentityValid ? sourceAmazonReportId : null,
       sourceAmazonReportObserved: sourceAmazonReportIdentityValid,
+      sourceObjectSchemaVersion: sourceObjectContractReady ? STORE_SOURCE_OBJECT_CONTRACT_VERSION : '',
+      sourceR2ObjectIdentityValid,
+      sourceR2ObjectKey: sourceR2ObjectIdentityValid ? sourceR2ObjectKey : null,
+      sourceR2ObjectObserved: sourceR2ObjectIdentityValid,
     };
   }
 
@@ -260,6 +283,7 @@
       context.factContractReady === true,
       context.factLineageContractReady === true,
       context.sourceReportContractReady === true,
+      context.sourceObjectContractReady === true,
     );
     const currentBid = provenance.bidNullabilityPreserved && provenance.bidMicros !== null
       ? microsToAmount(provenance.bidMicros)
@@ -284,6 +308,7 @@
       factMirrorUpdatedAt: provenance.factMirrorUpdatedAt,
       sourceReportJobId: provenance.sourceReportJobId,
       sourceAmazonReportId: provenance.sourceAmazonReportId,
+      sourceR2ObjectKey: provenance.sourceR2ObjectKey,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -328,6 +353,10 @@
         sourceAmazonReportIdentityValid: provenance.sourceAmazonReportIdentityValid,
         sourceAmazonReportId: provenance.sourceAmazonReportId,
         sourceAmazonReportObserved: provenance.sourceAmazonReportObserved,
+        sourceObjectSchemaVersion: provenance.sourceObjectSchemaVersion,
+        sourceR2ObjectIdentityValid: provenance.sourceR2ObjectIdentityValid,
+        sourceR2ObjectKey: provenance.sourceR2ObjectKey,
+        sourceR2ObjectObserved: provenance.sourceR2ObjectObserved,
       },
       sourceCoverage: {
         backend: 'cloudflare-d1',
@@ -345,6 +374,7 @@
     factContractReady,
     factLineageContractReady,
     sourceReportContractReady,
+    sourceObjectContractReady,
   ) {
     const input = Array.isArray(rows) ? rows : [];
     const provenanceRows = input.map((row) => row?.sourceProvenance || {});
@@ -358,6 +388,8 @@
       factLineageContractObserved: Boolean(factLineageContractReady),
       sourceReportSchemaVersion: sourceReportContractReady ? STORE_SOURCE_REPORT_CONTRACT_VERSION : '',
       sourceReportContractObserved: Boolean(sourceReportContractReady),
+      sourceObjectSchemaVersion: sourceObjectContractReady ? STORE_SOURCE_OBJECT_CONTRACT_VERSION : '',
+      sourceObjectContractObserved: Boolean(sourceObjectContractReady),
       targetingIdentityObserved: input.length > 0
         && provenanceRows.every((item) => item.targetingIdentityValid === true),
       bidSourceObserved: input.length > 0
@@ -383,6 +415,10 @@
         && provenanceRows.every((item) => item.sourceAmazonReportIdentityValid === true),
       sourceAmazonReportObserved: input.length > 0
         && provenanceRows.every((item) => item.sourceAmazonReportObserved === true),
+      sourceR2ObjectIdentityObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceR2ObjectIdentityValid === true),
+      sourceR2ObjectObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceR2ObjectObserved === true),
     };
   }
 
@@ -448,6 +484,7 @@
         factContractReady: perStore.length > 0 && perStore.every((entry) => entry.factContractReady),
         factLineageContractReady: perStore.length > 0 && perStore.every((entry) => entry.factLineageContractReady),
         sourceReportContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceReportContractReady),
+        sourceObjectContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceObjectContractReady),
       };
     });
 
@@ -459,6 +496,7 @@
       collected.factContractReady,
       collected.factLineageContractReady,
       collected.sourceReportContractReady,
+      collected.sourceObjectContractReady,
     );
     return {
       rows: page,
