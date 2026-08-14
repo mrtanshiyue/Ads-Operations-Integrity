@@ -45,7 +45,7 @@ const writeDb = createD1RestDatabase({
 });
 await assert.rejects(
   writeDb.prepare('INSERT INTO t(id) VALUES(?1)').bind('id-1').run(),
-  /d1_rest_query_failed:7500/,
+  /d1_rest_query_failed:7500:transient internal error/,
 );
 assert.equal(writeCalls, 1);
 assert.equal(writeSleeps, 0);
@@ -63,7 +63,9 @@ const forbiddenDb = createD1RestDatabase({
 });
 await assert.rejects(
   forbiddenDb.prepare('SELECT 1 AS ok').first(),
-  (error) => error.message === 'd1_rest_query_failed:9109' && error.httpStatus === 403 && error.apiCode === 9109,
+  (error) => error.message === 'd1_rest_query_failed:9109:forbidden'
+    && error.httpStatus === 403
+    && error.apiCode === 9109,
 );
 assert.equal(forbiddenCalls, 1);
 
@@ -90,6 +92,7 @@ console.log(JSON.stringify({
     'write-no-retry',
     'permission-error-no-retry',
     'foreign-key-read-retry',
+    'safe-error-detail',
   ],
 }));
 
