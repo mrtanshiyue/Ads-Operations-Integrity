@@ -4,7 +4,7 @@
 
 All browser access is authenticated by Cloudflare Access and authorized again by application RBAC.
 
-Route families:
+Implemented foundation routes:
 
 ```text
 GET    /api/health
@@ -12,8 +12,14 @@ GET    /api/v1/session
 GET    /api/v1/stores
 GET    /api/v1/capabilities
 GET    /api/v1/stores/:storeId/health
+POST   /api/v1/stores/:storeId/sync
+GET    /api/v1/stores/:storeId/sync/:instanceId
 GET    /api/v1/system/health
+```
 
+Planned business route families:
+
+```text
 GET    /api/v1/products
 POST   /api/v1/products
 PATCH  /api/v1/products/:productId
@@ -37,8 +43,6 @@ GET    /api/v1/stores/:storeId/products
 
 POST   /api/v1/stores/:storeId/actions
 GET    /api/v1/stores/:storeId/actions
-POST   /api/v1/stores/:storeId/sync
-GET    /api/v1/stores/:storeId/sync/:runId
 ```
 
 ## Authorization invariant
@@ -49,6 +53,7 @@ Global and store-scoped roles are never flattened into one authorization set.
 - Store roles (`operator`, `analyst`, `viewer`) grant permissions only for the store membership that assigned the role.
 - Every store-scoped route must authorize `user_id + store_id + permission_key` before resolving the Store D1 binding.
 - A user who has `ads.write` on Store 01 must not inherit `ads.write` on Store 02.
+- Starting a sync requires `sync.run`; inspecting that store's sync status requires `sync.read`.
 
 ## Routing invariant
 
@@ -73,11 +78,65 @@ Unrecognized or missing bindings fail closed as `store_db_unavailable`. Binding 
 
 ## Sync Worker boundary
 
-The sync Worker is not a general public API. It owns Amazon Ads OAuth exchange, report creation/polling/download, R2 writes, parsing, D1 UPSERTs, rollup generation, and optimization mutations.
+The sync Worker owns the durable Amazon Ads synchronization workflow. The target production responsibilities are OAuth exchange, report creation/polling/download, R2 writes, parsing, D1 UPSERTs, rollup generation, and optimization mutations.
 
-The web Worker invokes sync operations through a Cloudflare service binding or Workflow binding. Browser code never receives Amazon refresh tokens or client secrets.
+The web Worker binds directly to the Workflow defined in the isolated sync Worker by using a cross-script Workflow binding. Browser code never receives Amazon refresh tokens, client secrets, Workflow credentials, or internal D1 binding names.
 
-## Mutation pattern
+The current foundation is deliberately inert:
+
+```text
+web:  SYNC_TRIGGER_ENABLED=false
+sync: AMAZON_ADS_ENABLED=false
+```
+
+Both flags are enforced by the deployment validator. No Workflow schedule is configured. The Amazon adapter must not be enabled until OAuth, report adapters, R2 ingestion, remote idempotency tests, and production review are complete.
+
+## Sync trigger idempotency
+
+`POST /api/v1/stores/:storeId/sync` requires an `Idempotency-Key` header.
+
+The Worker derives a deterministic Workflow instance ID from:
+
+```text
+storeId
++ profileId
++ startDate
++ endDate
++ sorted datasets
++ Idempotency-Key
+```
+
+The digest becomes a `sync-<sha256>` Workflow instance ID. A repeated request with the same logical inputs and key reuses the existing `sync_runs`/Workflow instance rather than creating a second synchronization job.
+
+Before triggering the Workflow, the web Worker also:
+
+1. checks `sync.run` for the specific store;
+2. resolves the Store D1 internally;
+3. verifies the Amazon profile is active in that Store D1;
+4. inserts the matching `sync_runs` ledger row;
+5. creates the Workflow instance with the deterministic ID;
+6. records a Control D1 audit event.
+
+Status lookup first verifies that the `instanceId` exists in the requested Store D1's `sync_runs` table before querying the Workflow binding. This prevents a user authorized for one store from using the status API to inspect another store's Workflow instance.
+
+## Canonical sync datasets
+
+The foundation currently accepts only these normalized destinations:
+
+```text
+campaign_daily
+ad_group_daily
+keyword_daily
+target_daily
+search_term_daily
+advertised_product_daily
+purchased_product_daily
+placement_daily
+```
+
+Amazon report-type names are adapter details. The API and downstream BI layer operate on these canonical dataset keys.
+
+## Amazon mutation pattern
 
 Amazon-changing operations follow this sequence:
 
@@ -98,4 +157,4 @@ List endpoints use cursor pagination. Avoid large offset scans on fact tables. D
 
 ## Error contract
 
-API errors return a stable machine code plus request ID. Never expose raw Amazon authorization responses, SQL text, token content, D1 binding identifiers, or stack traces to the browser.
+API errors return a stable machine code plus request ID. Never expose raw Amazon authorization responses, SQL text, token content, D1 binding identifiers, Workflow internals, or stack traces to the browser.
