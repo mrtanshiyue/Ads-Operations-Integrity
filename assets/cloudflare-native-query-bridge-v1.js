@@ -1,7 +1,7 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.4.0';
   const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
   const CURRENT_BID_SNAPSHOT_SEMANTIC = 'current_entity_mirror';
   const TARGETING_SOURCE_TIMESTAMP_SEMANTIC = 'source_entity_updated_at';
