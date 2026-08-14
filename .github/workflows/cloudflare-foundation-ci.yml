@@ -1,0 +1,64 @@
+name: Cloudflare Foundation CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/**'
+      - 'scripts/build-cloudflare-native.mjs'
+      - 'scripts/provision-cloudflare-dev.mjs'
+      - 'scripts/test-cloudflare-foundation.py'
+      - 'scripts/validate-cloudflare-native.mjs'
+      - 'package.json'
+      - 'index.html'
+      - 'assets/**'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/**'
+      - 'scripts/build-cloudflare-native.mjs'
+      - 'scripts/provision-cloudflare-dev.mjs'
+      - 'scripts/test-cloudflare-foundation.py'
+      - 'scripts/validate-cloudflare-native.mjs'
+      - 'package.json'
+      - 'index.html'
+      - 'assets/**'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Database foundation tests
+        run: npm run test:cf-foundation
+
+      - name: Cloudflare native checks
+        run: npm run check:cf-native
