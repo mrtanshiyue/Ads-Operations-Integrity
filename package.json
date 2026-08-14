@@ -23,6 +23,6 @@
     "deploy:cf-stack:prod": "npm run check:cf-native && npm run test:cf-foundation && node scripts/validate-cloudflare-native.mjs --env production --require-ready && wrangler deploy --env production --config cloudflare/runtime/wrangler.sync.jsonc && wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc"
   },
   "devDependencies": {
-    "wrangler": "^4.114.0"
+    "wrangler": "4.114.0"
   }
 }
