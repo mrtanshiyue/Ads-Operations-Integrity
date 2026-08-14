@@ -79,6 +79,7 @@
     storeKeywords: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/keywords`, params)),
     targets: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/targets`, params)),
     searchTerms: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/search-terms`, params)),
+    searchTermsDaily: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/search-terms-daily`, params)),
 
     analyticsOverview: (params) => request(query('/api/v1/analytics/overview', params)),
     analyticsProducts: (params) => request(query('/api/v1/analytics/products', params)),
