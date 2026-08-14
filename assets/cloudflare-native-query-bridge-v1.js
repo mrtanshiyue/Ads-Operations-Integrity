@@ -8,6 +8,7 @@
   const STORE_FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
   const FACT_MIRROR_TIMESTAMP_SEMANTIC = 'latest_local_fact_row_updated_at';
   const STORE_FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
+  const STORE_SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -112,6 +113,7 @@
     let sourceContractReady = true;
     let factContractReady = true;
     let factLineageContractReady = true;
+    let sourceReportContractReady = true;
     do {
       const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
@@ -123,15 +125,18 @@
       const pageContractReady = validStoreSourceContract(payload?.sourceContract);
       const pageFactContractReady = validStoreFactContract(payload?.factContract);
       const pageFactLineageContractReady = validStoreFactLineageContract(payload?.factLineageContract);
+      const pageSourceReportContractReady = validStoreSourceReportContract(payload?.sourceReportContract);
       sourceContractReady = sourceContractReady && pageContractReady;
       factContractReady = factContractReady && pageFactContractReady;
       factLineageContractReady = factLineageContractReady && pageFactLineageContractReady;
+      sourceReportContractReady = sourceReportContractReady && pageSourceReportContractReady;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       for (const item of items) {
         rows.push(toLegacyAdRow(store, item, options, {
           sourceContractReady: pageContractReady,
           factContractReady: pageFactContractReady,
           factLineageContractReady: pageFactLineageContractReady,
+          sourceReportContractReady: pageSourceReportContractReady,
         }));
         if (rows.length >= MAX_ROWS_PER_STORE) break;
       }
@@ -144,6 +149,7 @@
       sourceContractReady,
       factContractReady,
       factLineageContractReady,
+      sourceReportContractReady,
     };
   }
 
@@ -168,7 +174,21 @@
       && contract?.sourceReportJobAggregation === 'unanimous_non_null';
   }
 
-  function sourceProvenance(item, sourceContractReady, factContractReady, factLineageContractReady) {
+  function validStoreSourceReportContract(contract) {
+    return contract?.schemaVersion === STORE_SOURCE_REPORT_CONTRACT_VERSION
+      && contract?.sourceReportJobId === 'report_jobs.job_id'
+      && contract?.amazonReportId === 'report_jobs.amazon_report_id'
+      && contract?.joinRule === 'validated_source_report_job_id'
+      && contract?.contextRule === 'profile_ad_product_date_covered';
+  }
+
+  function sourceProvenance(
+    item,
+    sourceContractReady,
+    factContractReady,
+    factLineageContractReady,
+    sourceReportContractReady,
+  ) {
     const keywordId = text(item?.keywordId);
     const targetId = text(item?.targetId);
     const xorIdentity = Boolean(keywordId) !== Boolean(targetId);
@@ -193,6 +213,11 @@
     const sourceReportJobIdentityValid = factLineageContractReady
       && item?.sourceReportJobIdentityValid === true
       && sourceReportJobId !== null;
+    const sourceAmazonReportId = sourceReportContractReady ? nullableText(item?.sourceAmazonReportId) : null;
+    const sourceAmazonReportIdentityValid = sourceReportContractReady
+      && sourceReportJobIdentityValid
+      && item?.sourceAmazonReportIdentityValid === true
+      && sourceAmazonReportId !== null;
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
       targetingIdentityValid: identityValid,
@@ -216,6 +241,10 @@
       sourceReportJobIdentityValid,
       sourceReportJobId: sourceReportJobIdentityValid ? sourceReportJobId : null,
       sourceReportJobObserved: sourceReportJobIdentityValid,
+      sourceReportSchemaVersion: sourceReportContractReady ? STORE_SOURCE_REPORT_CONTRACT_VERSION : '',
+      sourceAmazonReportIdentityValid,
+      sourceAmazonReportId: sourceAmazonReportIdentityValid ? sourceAmazonReportId : null,
+      sourceAmazonReportObserved: sourceAmazonReportIdentityValid,
     };
   }
 
@@ -230,6 +259,7 @@
       context.sourceContractReady === true,
       context.factContractReady === true,
       context.factLineageContractReady === true,
+      context.sourceReportContractReady === true,
     );
     const currentBid = provenance.bidNullabilityPreserved && provenance.bidMicros !== null
       ? microsToAmount(provenance.bidMicros)
@@ -253,6 +283,7 @@
       targetingSourceUpdatedAt: provenance.targetingSourceUpdatedAt,
       factMirrorUpdatedAt: provenance.factMirrorUpdatedAt,
       sourceReportJobId: provenance.sourceReportJobId,
+      sourceAmazonReportId: provenance.sourceAmazonReportId,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -293,6 +324,10 @@
         sourceReportJobIdentityValid: provenance.sourceReportJobIdentityValid,
         sourceReportJobId: provenance.sourceReportJobId,
         sourceReportJobObserved: provenance.sourceReportJobObserved,
+        sourceReportSchemaVersion: provenance.sourceReportSchemaVersion,
+        sourceAmazonReportIdentityValid: provenance.sourceAmazonReportIdentityValid,
+        sourceAmazonReportId: provenance.sourceAmazonReportId,
+        sourceAmazonReportObserved: provenance.sourceAmazonReportObserved,
       },
       sourceCoverage: {
         backend: 'cloudflare-d1',
@@ -304,7 +339,13 @@
     };
   }
 
-  function summarizeSourceEvidence(rows, sourceContractReady, factContractReady, factLineageContractReady) {
+  function summarizeSourceEvidence(
+    rows,
+    sourceContractReady,
+    factContractReady,
+    factLineageContractReady,
+    sourceReportContractReady,
+  ) {
     const input = Array.isArray(rows) ? rows : [];
     const provenanceRows = input.map((row) => row?.sourceProvenance || {});
     return {
@@ -315,6 +356,8 @@
       factContractObserved: Boolean(factContractReady),
       factLineageSchemaVersion: factLineageContractReady ? STORE_FACT_LINEAGE_CONTRACT_VERSION : '',
       factLineageContractObserved: Boolean(factLineageContractReady),
+      sourceReportSchemaVersion: sourceReportContractReady ? STORE_SOURCE_REPORT_CONTRACT_VERSION : '',
+      sourceReportContractObserved: Boolean(sourceReportContractReady),
       targetingIdentityObserved: input.length > 0
         && provenanceRows.every((item) => item.targetingIdentityValid === true),
       bidSourceObserved: input.length > 0
@@ -336,6 +379,10 @@
         && provenanceRows.every((item) => item.sourceReportJobIdentityValid === true),
       sourceReportJobObserved: input.length > 0
         && provenanceRows.every((item) => item.sourceReportJobObserved === true),
+      sourceAmazonReportIdentityObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceAmazonReportIdentityValid === true),
+      sourceAmazonReportObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceAmazonReportObserved === true),
     };
   }
 
@@ -400,6 +447,7 @@
         sourceContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceContractReady),
         factContractReady: perStore.length > 0 && perStore.every((entry) => entry.factContractReady),
         factLineageContractReady: perStore.length > 0 && perStore.every((entry) => entry.factLineageContractReady),
+        sourceReportContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceReportContractReady),
       };
     });
 
@@ -410,6 +458,7 @@
       collected.sourceContractReady,
       collected.factContractReady,
       collected.factLineageContractReady,
+      collected.sourceReportContractReady,
     );
     return {
       rows: page,

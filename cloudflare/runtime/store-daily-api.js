@@ -5,6 +5,7 @@ const MAX_DAYS = 93;
 const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
 const FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
 const FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
+const SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -97,8 +98,34 @@ async function listDailySearchTerms(request, db, url) {
       GROUP BY st.report_date, st.profile_id, st.ad_product, st.campaign_id, c.name,
                st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros, k.source_updated_at, k.synced_at,
                st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, t.source_updated_at, t.synced_at, st.normalized_search_term
+    ), lineage_validated AS (
+      SELECT
+        *,
+        CASE
+          WHEN fact_row_count > 0
+            AND source_report_job_non_null_count = fact_row_count
+            AND source_report_job_distinct_count = 1
+            AND source_report_job_id_candidate IS NOT NULL
+          THEN source_report_job_id_candidate
+          ELSE NULL
+        END AS validated_source_report_job_id
+      FROM aggregated
+    ), source_report_enriched AS (
+      SELECT
+        lv.*,
+        rj.job_id AS report_job_id,
+        rj.amazon_report_id AS source_amazon_report_id,
+        rj.profile_id AS report_job_profile_id,
+        rj.ad_product AS report_job_ad_product,
+        rj.start_date AS report_job_start_date,
+        rj.end_date AS report_job_end_date
+      FROM lineage_validated lv
+      LEFT JOIN (
+        SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date
+        FROM report_jobs
+      ) rj ON rj.job_id = lv.validated_source_report_job_id
     ), ranked AS (
-      SELECT *, ${sortColumn} AS sort_value FROM aggregated
+      SELECT *, ${sortColumn} AS sort_value FROM source_report_enriched
     )
     SELECT * FROM ranked
     WHERE (?7 IS NULL OR sort_value < ?7 OR (sort_value = ?7 AND group_key < ?8))
@@ -119,6 +146,7 @@ async function listDailySearchTerms(request, db, url) {
   const rows = (result.results || []).map((row) => {
     const source = targetingSource(row);
     const lineage = sourceReportJobLineage(row);
+    const sourceReport = sourceAmazonReportIdentity(row, lineage);
     return {
       groupKey: row.group_key,
       reportDate: row.report_date,
@@ -146,6 +174,8 @@ async function listDailySearchTerms(request, db, url) {
       factMirrorUpdatedAt: nullableText(row.fact_mirror_updated_at),
       sourceReportJobId: lineage.jobId,
       sourceReportJobIdentityValid: lineage.valid,
+      sourceAmazonReportId: sourceReport.amazonReportId,
+      sourceAmazonReportIdentityValid: sourceReport.valid,
       impressions: number(row.impressions),
       clicks: number(row.clicks),
       costMicros: number(row.cost_micros),
@@ -177,6 +207,13 @@ async function listDailySearchTerms(request, db, url) {
       schemaVersion: FACT_LINEAGE_CONTRACT_VERSION,
       sourceReportJobId: 'search_term_daily.source_report_job_id',
       sourceReportJobAggregation: 'unanimous_non_null',
+    },
+    sourceReportContract: {
+      schemaVersion: SOURCE_REPORT_CONTRACT_VERSION,
+      sourceReportJobId: 'report_jobs.job_id',
+      amazonReportId: 'report_jobs.amazon_report_id',
+      joinRule: 'validated_source_report_job_id',
+      contextRule: 'profile_ad_product_date_covered',
     },
     range: { startDate, endDate, days },
     grain: 'day',
@@ -248,6 +285,31 @@ function sourceReportJobLineage(row) {
     && distinctCount === 1
     && candidate !== null;
   return { valid, jobId: valid ? candidate : null };
+}
+
+function sourceAmazonReportIdentity(row, lineage) {
+  if (!lineage?.valid || !lineage.jobId) return { valid: false, amazonReportId: null };
+  const reportJobId = nullableText(row.report_job_id);
+  const amazonReportId = nullableText(row.source_amazon_report_id);
+  const reportProfileId = nullableText(row.report_job_profile_id);
+  const reportAdProduct = nullableText(row.report_job_ad_product);
+  const reportStartDate = isoDate(row.report_job_start_date);
+  const reportEndDate = isoDate(row.report_job_end_date);
+  const factProfileId = nullableText(row.profile_id);
+  const factAdProduct = nullableText(row.ad_product);
+  const reportDate = isoDate(row.report_date);
+  const valid = reportJobId === lineage.jobId
+    && amazonReportId !== null
+    && reportProfileId !== null
+    && reportProfileId === factProfileId
+    && reportAdProduct !== null
+    && reportAdProduct === factAdProduct
+    && reportStartDate !== null
+    && reportEndDate !== null
+    && reportDate !== null
+    && reportStartDate <= reportDate
+    && reportDate <= reportEndDate;
+  return { valid, amazonReportId: valid ? amazonReportId : null };
 }
 
 function isoDate(value) {
