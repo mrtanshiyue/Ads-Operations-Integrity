@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(repoRoot, 'dist-cloudflare-native');
-const required = ['index.html', 'assets', 'assets/cloudflare-native-api-v1.js'];
+const required = [
+  'index.html',
+  'assets',
+  'assets/cloudflare-native-api-v1.js',
+  'assets/cloudflare-native-query-bridge-v1.js',
+];
 
 for (const entry of required) {
   await access(path.join(repoRoot, entry), constants.R_OK);
@@ -30,13 +35,26 @@ if (!/connect-src\s+'self';/i.test(nativeIndex)) {
   throw new Error('Failed to enforce same-origin connect-src in native build');
 }
 
+// The native runtime owns the Query Client transport. Strip the previous browser query client
+// from the deployment artifact only; the repository source remains untouched for rollback.
+const legacyQueryScriptPattern = /<script\b[^>]*src=["'][^"']*assets\/private-cloud-query-v1\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi;
+const legacyQueryMatches = nativeIndex.match(legacyQueryScriptPattern) || [];
+nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
+
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
-if (!nativeIndex.includes(nativeClientTag)) {
-  nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${nativeClientTag}\n</head>`);
+const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
+const nativeTags = `  ${nativeClientTag}\n  ${nativeBridgeTag}\n`;
+for (const tag of [nativeClientTag, nativeBridgeTag]) {
+  nativeIndex = nativeIndex.replaceAll(tag, '');
 }
-if (!nativeIndex.includes(nativeClientTag)) {
-  throw new Error('Failed to inject the native browser API client');
+nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
+if (!nativeIndex.includes(nativeClientTag) || !nativeIndex.includes(nativeBridgeTag)) {
+  throw new Error('Failed to inject the native browser API/query bridge');
 }
+if (legacyQueryScriptPattern.test(nativeIndex)) {
+  throw new Error('Legacy private cloud query client remains in native index');
+}
+
 await writeFile(path.join(outputDir, 'index.html'), nativeIndex, 'utf8');
 
 await cp(path.join(repoRoot, 'assets'), path.join(outputDir, 'assets'), {
@@ -46,6 +64,19 @@ await cp(path.join(repoRoot, 'assets'), path.join(outputDir, 'assets'), {
     return base !== '.DS_Store' && base !== 'Thumbs.db';
   },
 });
+
+// Native-only provenance correction. The adapter logic remains unchanged, but native builds
+// must not claim the retired backend as their data source.
+const moduleDataPath = path.join(outputDir, 'assets/query-native-module-data-v1.js');
+try {
+  const moduleData = await readFile(moduleDataPath, 'utf8');
+  const sourceTokenCount = (moduleData.match(/query-tidb/g) || []).length;
+  if (sourceTokenCount) {
+    await writeFile(moduleDataPath, moduleData.replaceAll('query-tidb', 'query-cloudflare-d1'), 'utf8');
+  }
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+}
 
 await writeFile(path.join(outputDir, '_headers'), `/*\n  X-Content-Type-Options: nosniff\n  X-Frame-Options: DENY\n  Referrer-Policy: strict-origin-when-cross-origin\n  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()\n\n/index.html\n  Cache-Control: no-cache\n`, 'utf8');
 
@@ -58,4 +89,6 @@ console.log(JSON.stringify({
   indexBytes: indexStat.size,
   browserConnectPolicy: "'self'",
   nativeApiClient: 'assets/cloudflare-native-api-v1.js',
+  nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
+  legacyQueryScriptTagsRemoved: legacyQueryMatches.length,
 }, null, 2));
