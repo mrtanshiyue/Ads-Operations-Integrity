@@ -99,8 +99,9 @@ const payload = await response.json();
 assert.deepEqual(payload.factContract, {
   schemaVersion: 'store-search-term-fact-v1',
   mirrorTimestamp: 'search_term_daily.updated_at',
-  mirrorAggregation: 'max',
+  mirrorTimestampAggregation: 'max',
 });
+assert.equal(Object.hasOwn(payload.factContract, 'mirrorAggregation'), false);
 assert.equal(payload.sourceContract.schemaVersion, 'store-targeting-source-v2');
 assert.equal(payload.items[0].factMirrorUpdatedAt, '2026-08-14 09:35:29');
 assert.equal(payload.items[0].currentBidSyncedAt, '2026-08-14 09:35:29');
@@ -135,6 +136,24 @@ assert.equal(bridged.governance.sourceEvidence.factContractObserved, true);
 assert.equal(bridged.governance.sourceEvidence.factMirrorUpdatedAtObserved, true);
 assert.equal(bridged.governance.sourceEvidence.factMirrorTimestampSemantic, 'latest_local_fact_row_updated_at');
 
+bridgePayload = {
+  ...payload,
+  factContract: {
+    schemaVersion: 'store-search-term-fact-v1',
+    mirrorTimestamp: 'search_term_daily.updated_at',
+    mirrorAggregation: 'max',
+  },
+};
+window.CloudflareNativeQueryBridge.clearCache();
+bridged = await window.CloudflareNativeQueryBridge.ads({
+  scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
+});
+assert.equal(bridged.rows[0].factMirrorUpdatedAt, null);
+assert.equal(bridged.rows[0].sourceProvenance.factMirrorUpdatedAtObserved, false);
+assert.equal(bridged.rows[0].sourceProvenance.factMirrorTimestampSemantic, null);
+assert.equal(bridged.governance.sourceEvidence.factContractObserved, false);
+assert.equal(bridged.governance.sourceEvidence.factMirrorUpdatedAtObserved, false);
+
 bridgePayload = { ...payload, factContract: null };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
@@ -158,7 +177,10 @@ for (const item of bridged.rows) {
 assert.match(apiSource, /FACT_CONTRACT_VERSION = 'store-search-term-fact-v1'/);
 assert.match(apiSource, /MAX\(st\.updated_at\) AS fact_mirror_updated_at/);
 assert.match(apiSource, /mirrorTimestamp:\s*'search_term_daily\.updated_at'/);
-assert.match(apiSource, /mirrorAggregation:\s*'max'/);
+assert.match(apiSource, /mirrorTimestampAggregation:\s*'max'/);
+assert.doesNotMatch(apiSource, /mirrorAggregation:\s*'max'/);
+assert.match(bridgeSource, /mirrorTimestampAggregation === 'max'/);
+assert.doesNotMatch(bridgeSource, /mirrorAggregation === 'max'/);
 assert.match(bridgeSource, /FACT_MIRROR_TIMESTAMP_SEMANTIC = 'latest_local_fact_row_updated_at'/);
 assert.match(bridgeSource, /factMirrorUpdatedAtObserved/);
 assert.doesNotMatch(apiSource, /freshness|stale|freshThreshold|ageMs/i);
@@ -175,6 +197,7 @@ console.log(JSON.stringify({
     'daily-fact-mirror-timestamp-aggregated-with-max',
     'daily-fact-mirror-timestamp-lossless-api-pass-through',
     'fact-contract-semantic-explicit',
+    'fact-contract-aggregation-field-name-locked',
     'fact-contract-required-before-bridge-provenance',
     'fact-mirror-and-targeting-timestamps-remain-separated',
     'fact-timestamp-evidence-without-freshness-threshold',

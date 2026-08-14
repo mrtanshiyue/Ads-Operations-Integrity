@@ -163,7 +163,7 @@ async function listDailySearchTerms(request, db, url) {
     factContract: {
       schemaVersion: FACT_CONTRACT_VERSION,
       mirrorTimestamp: 'search_term_daily.updated_at',
-      mirrorAggregation: 'max',
+      mirrorTimestampAggregation: 'max',
     },
     range: { startDate, endDate, days },
     grain: 'day',

@@ -148,7 +148,7 @@
   function validStoreFactContract(contract) {
     return contract?.schemaVersion === STORE_FACT_CONTRACT_VERSION
       && contract?.mirrorTimestamp === 'search_term_daily.updated_at'
-      && contract?.mirrorAggregation === 'max';
+      && contract?.mirrorTimestampAggregation === 'max';
   }
 
   function sourceProvenance(item, sourceContractReady, factContractReady) {
