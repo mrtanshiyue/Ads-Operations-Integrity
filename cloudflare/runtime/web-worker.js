@@ -5,6 +5,17 @@ const JSON_HEADERS = {
   'cache-control': 'no-store',
   'x-content-type-options': 'nosniff',
 };
+const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
+const SYNC_DATASETS = new Set([
+  'campaign_daily',
+  'ad_group_daily',
+  'keyword_daily',
+  'target_daily',
+  'search_term_daily',
+  'advertised_product_daily',
+  'purchased_product_daily',
+  'placement_daily',
+]);
 
 export default {
   async fetch(request, env) {
@@ -29,7 +40,9 @@ export default {
             controlDb: Boolean(env.CONTROL_DB),
             dataBucket: Boolean(env.DATA_BUCKET),
             storeDatabases: configuredStoreDatabaseCount(env),
+            syncWorkflow: Boolean(env.AMAZON_SYNC_WORKFLOW),
           },
+          syncTriggerEnabled: env.SYNC_TRIGGER_ENABLED === 'true',
         }, 200, request);
       }
 
@@ -66,39 +79,41 @@ export default {
         return json({
           globalPermissions: [...globalPermissions].sort(),
           storePermissions,
+          syncTriggerEnabled: env.SYNC_TRIGGER_ENABLED === 'true',
         }, 200, request);
       }
 
       const storeHealthMatch = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/health$/);
       if (storeHealthMatch && request.method === 'GET') {
         const storeId = decodeURIComponent(storeHealthMatch[1]);
-        const allowed = await actorHasStorePermission(
-          env.CONTROL_DB,
-          actor.user_id,
-          storeId,
-          'ads.read',
-        );
-        if (!allowed) {
-          return json({ error: 'forbidden', permission: 'ads.read' }, 403, request);
-        }
+        const allowed = await actorHasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.read');
+        if (!allowed) return json({ error: 'forbidden', permission: 'ads.read' }, 403, request);
 
-        const store = await loadStore(env.CONTROL_DB, storeId);
-        if (!store) return json({ error: 'store_not_found' }, 404, request);
+        const route = await authorizedStoreRoute(env, storeId);
+        if (route.error) return json({ error: route.error }, route.status, request);
 
-        const storeDb = resolveStoreDb(env, store.d1_binding_key);
-        if (!storeDb) {
-          return json({ error: 'store_db_unavailable' }, 503, request);
-        }
-
-        const health = await storeDatabaseHealth(storeDb);
+        const health = await storeDatabaseHealth(route.storeDb);
         return json({
           store: {
-            storeId: store.store_id,
-            storeCode: store.store_code,
-            displayName: store.display_name,
+            storeId: route.store.store_id,
+            storeCode: route.store.store_code,
+            displayName: route.store.display_name,
           },
           health,
         }, 200, request);
+      }
+
+      const syncStartMatch = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/sync$/);
+      if (syncStartMatch && request.method === 'POST') {
+        const storeId = decodeURIComponent(syncStartMatch[1]);
+        return startStoreSync(request, env, actor, storeId);
+      }
+
+      const syncStatusMatch = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/sync\/([^/]+)$/);
+      if (syncStatusMatch && request.method === 'GET') {
+        const storeId = decodeURIComponent(syncStatusMatch[1]);
+        const instanceId = decodeURIComponent(syncStatusMatch[2]);
+        return storeSyncStatus(request, env, actor, storeId, instanceId);
       }
 
       if (url.pathname === '/api/v1/system/health' && request.method === 'GET') {
@@ -110,6 +125,8 @@ export default {
           controlDatabase: true,
           storeDatabases: configuredStoreDatabaseCount(env),
           dataBucket: Boolean(env.DATA_BUCKET),
+          syncWorkflow: Boolean(env.AMAZON_SYNC_WORKFLOW),
+          syncTriggerEnabled: env.SYNC_TRIGGER_ENABLED === 'true',
         }, 200, request);
       }
 
@@ -125,6 +142,137 @@ export default {
     }
   },
 };
+
+async function startStoreSync(request, env, actor, storeId) {
+  const allowed = await actorHasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'sync.run');
+  if (!allowed) return json({ error: 'forbidden', permission: 'sync.run' }, 403, request);
+  if (env.SYNC_TRIGGER_ENABLED !== 'true') return json({ error: 'sync_trigger_disabled' }, 503, request);
+  if (!env.AMAZON_SYNC_WORKFLOW) return json({ error: 'sync_workflow_not_bound' }, 503, request);
+
+  const route = await authorizedStoreRoute(env, storeId);
+  if (route.error) return json({ error: route.error }, route.status, request);
+
+  const body = await readJsonBody(request);
+  if (body.error) return json({ error: body.error }, 400, request);
+
+  const input = normalizeSyncRequest(body.value);
+  if (input.error) return json({ error: input.error }, 400, request);
+
+  const idempotencyKey = normalizeIdempotencyKey(request.headers.get('idempotency-key'));
+  if (!idempotencyKey) {
+    return json({ error: 'idempotency_key_required' }, 400, request);
+  }
+
+  const instanceId = await syncInstanceId(storeId, input.value, idempotencyKey);
+  const existingRun = await route.storeDb.prepare(`
+    SELECT run_id, profile_id, trigger_type, scope_key, status, started_at, completed_at, created_at
+    FROM sync_runs
+    WHERE run_id = ?1
+    LIMIT 1
+  `).bind(instanceId).first();
+
+  if (existingRun) {
+    const existing = await getWorkflowStatusSafe(env.AMAZON_SYNC_WORKFLOW, instanceId);
+    return json({
+      instanceId,
+      reused: true,
+      run: publicSyncRun(existingRun),
+      workflow: existing,
+    }, 200, request);
+  }
+
+  const profile = await route.storeDb.prepare(`
+    SELECT profile_id, status
+    FROM amazon_profiles
+    WHERE profile_id = ?1
+    LIMIT 1
+  `).bind(input.value.profileId).first();
+  if (!profile || profile.status !== 'active') {
+    return json({ error: 'sync_profile_not_active' }, 400, request);
+  }
+
+  const scopeKey = `ads:${input.value.datasets.join(',')}:${input.value.startDate}:${input.value.endDate}`;
+  await route.storeDb.prepare(`
+    INSERT INTO sync_runs(
+      run_id, profile_id, trigger_type, scope_key, status, requested_by, created_at
+    ) VALUES(?1, ?2, 'manual', ?3, 'queued', ?4, CURRENT_TIMESTAMP)
+  `).bind(instanceId, input.value.profileId, scopeKey, actor.user_id).run();
+
+  try {
+    const instance = await env.AMAZON_SYNC_WORKFLOW.create({
+      id: instanceId,
+      params: {
+        storeId,
+        profileId: input.value.profileId,
+        startDate: input.value.startDate,
+        endDate: input.value.endDate,
+        datasets: input.value.datasets,
+        triggerType: 'manual',
+        reportConfigVersion: 'v1',
+        requestedBy: actor.user_id,
+      },
+    });
+    const status = await instance.status();
+    await writeAudit(env.CONTROL_DB, {
+      actorUserId: actor.user_id,
+      storeId,
+      action: 'sync.start',
+      entityType: 'workflow_instance',
+      entityId: instanceId,
+      request,
+      details: { datasets: input.value.datasets, startDate: input.value.startDate, endDate: input.value.endDate },
+    });
+    return json({ instanceId: instance.id, reused: false, workflow: publicWorkflowStatus(status) }, 202, request);
+  } catch (error) {
+    const existing = await getWorkflowStatusSafe(env.AMAZON_SYNC_WORKFLOW, instanceId);
+    if (existing?.status && existing.status !== 'unknown') {
+      return json({ instanceId, reused: true, workflow: existing }, 200, request);
+    }
+
+    await route.storeDb.prepare(`
+      UPDATE sync_runs
+      SET status = 'failed', completed_at = CURRENT_TIMESTAMP, error_summary = ?2
+      WHERE run_id = ?1
+    `).bind(instanceId, safeErrorCode(error)).run();
+    throw error;
+  }
+}
+
+async function storeSyncStatus(request, env, actor, storeId, instanceId) {
+  const allowed = await actorHasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'sync.read');
+  if (!allowed) return json({ error: 'forbidden', permission: 'sync.read' }, 403, request);
+  if (!validWorkflowId(instanceId)) return json({ error: 'sync_instance_id_invalid' }, 400, request);
+
+  const route = await authorizedStoreRoute(env, storeId);
+  if (route.error) return json({ error: route.error }, route.status, request);
+
+  const run = await route.storeDb.prepare(`
+    SELECT run_id, profile_id, trigger_type, scope_key, status, started_at, completed_at,
+           error_summary, created_at
+    FROM sync_runs
+    WHERE run_id = ?1
+    LIMIT 1
+  `).bind(instanceId).first();
+  if (!run) return json({ error: 'sync_run_not_found' }, 404, request);
+
+  const workflow = env.AMAZON_SYNC_WORKFLOW
+    ? await getWorkflowStatusSafe(env.AMAZON_SYNC_WORKFLOW, instanceId)
+    : { status: 'unknown' };
+
+  return json({
+    instanceId,
+    run: publicSyncRun(run),
+    workflow,
+  }, 200, request);
+}
+
+async function authorizedStoreRoute(env, storeId) {
+  const store = await loadStore(env.CONTROL_DB, storeId);
+  if (!store) return { error: 'store_not_found', status: 404 };
+  const storeDb = resolveStoreDb(env, store.d1_binding_key);
+  if (!storeDb) return { error: 'store_db_unavailable', status: 503 };
+  return { store, storeDb };
+}
 
 async function sessionResponse(request, env, access) {
   if (!access.authenticated) {
@@ -166,6 +314,9 @@ async function sessionResponse(request, env, access) {
     permissions: {
       global: [...globalPermissions].sort(),
       stores: storePermissions,
+    },
+    features: {
+      syncTriggerEnabled: env.SYNC_TRIGGER_ENABLED === 'true',
     },
   }, 200, request);
 }
@@ -306,8 +457,7 @@ async function loadStore(db, storeId) {
 }
 
 function resolveStoreDb(env, bindingKey) {
-  const allowed = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
-  if (!allowed.has(bindingKey)) return null;
+  if (!STORE_BINDINGS.has(bindingKey)) return null;
   return env[bindingKey] || null;
 }
 
@@ -335,9 +485,133 @@ async function storeDatabaseHealth(db) {
   };
 }
 
+async function readJsonBody(request) {
+  const length = Number(request.headers.get('content-length') || 0);
+  if (length > 64 * 1024) return { error: 'request_body_too_large' };
+  try {
+    const value = await request.json();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'json_object_required' };
+    return { value };
+  } catch {
+    return { error: 'invalid_json' };
+  }
+}
+
+function normalizeSyncRequest(body) {
+  const profileId = String(body.profileId || '').trim();
+  if (!profileId || profileId.length > 200) return { error: 'sync_profile_id_invalid' };
+  const startDate = validIsoDate(body.startDate);
+  const endDate = validIsoDate(body.endDate);
+  if (!startDate || !endDate || endDate < startDate) return { error: 'sync_date_range_invalid' };
+
+  const datasets = [...new Set((Array.isArray(body.datasets) ? body.datasets : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (!datasets.length) return { error: 'sync_datasets_required' };
+  for (const dataset of datasets) {
+    if (!SYNC_DATASETS.has(dataset)) return { error: 'sync_dataset_not_allowed' };
+  }
+  return { value: { profileId, startDate, endDate, datasets } };
+}
+
+function validIsoDate(value) {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) return null;
+  return text;
+}
+
+function normalizeIdempotencyKey(value) {
+  const key = String(value || '').trim();
+  if (key.length < 8 || key.length > 128) return null;
+  if (!/^[A-Za-z0-9._:-]+$/.test(key)) return null;
+  return key;
+}
+
+async function syncInstanceId(storeId, input, idempotencyKey) {
+  const digest = await sha256Hex(JSON.stringify({
+    storeId,
+    profileId: input.profileId,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    datasets: [...input.datasets].sort(),
+    idempotencyKey,
+  }));
+  return `sync-${digest.slice(0, 64)}`;
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function validWorkflowId(value) {
+  return typeof value === 'string' && value.length >= 1 && value.length <= 100 && /^[A-Za-z0-9._:-]+$/.test(value);
+}
+
+async function getWorkflowStatusSafe(binding, instanceId) {
+  try {
+    const instance = await binding.get(instanceId);
+    return publicWorkflowStatus(await instance.status());
+  } catch {
+    return { status: 'unknown' };
+  }
+}
+
+function publicWorkflowStatus(status) {
+  return {
+    status: String(status?.status || 'unknown'),
+    hasError: Boolean(status?.error),
+    rollbackOutcome: status?.rollback?.outcome || null,
+  };
+}
+
+function publicSyncRun(run) {
+  return {
+    runId: run.run_id,
+    profileId: run.profile_id,
+    triggerType: run.trigger_type,
+    scopeKey: run.scope_key,
+    status: run.status,
+    startedAt: run.started_at || null,
+    completedAt: run.completed_at || null,
+    hasError: Boolean(run.error_summary),
+    createdAt: run.created_at,
+  };
+}
+
+async function writeAudit(db, event) {
+  try {
+    await db.prepare(`
+      INSERT INTO audit_log(
+        event_id, actor_user_id, store_id, action, entity_type, entity_id,
+        request_id, cf_ray, details_json
+      ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+    `).bind(
+      crypto.randomUUID(),
+      event.actorUserId || null,
+      event.storeId || null,
+      event.action,
+      event.entityType || null,
+      event.entityId || null,
+      event.request.headers.get('cf-ray') || null,
+      event.request.headers.get('cf-ray') || null,
+      event.details ? JSON.stringify(event.details) : null,
+    ).run();
+  } catch (error) {
+    console.error('audit_write_failed', { message: error?.message || String(error), action: event.action });
+  }
+}
+
+function safeErrorCode(error) {
+  const value = String(error?.name || 'workflow_create_failed').replace(/[^A-Za-z0-9_.:-]/g, '_');
+  return value.slice(0, 120);
+}
+
 function configuredStoreDatabaseCount(env) {
-  return ['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']
-    .filter((name) => Boolean(env[name])).length;
+  return [...STORE_BINDINGS].filter((name) => Boolean(env[name])).length;
 }
 
 function safeIdentity(identity) {
