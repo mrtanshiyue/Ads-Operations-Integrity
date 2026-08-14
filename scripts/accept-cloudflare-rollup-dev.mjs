@@ -57,7 +57,7 @@ await seedStore();
 await assertForeignKeysClean('after-seed');
 
 const sourceRows = {
-  store: await scalar(storeDb, `SELECT COUNT(*) AS n FROM campaign_daily WHERE campaign_id=?1 AND report_date BETWEEN ?2 AND ?3 AND ad_product=?4`, [CAMPAIGN_ID, START_DATE, END_DATE]),
+  store: await scalar(storeDb, `SELECT COUNT(*) AS n FROM campaign_daily WHERE campaign_id=?1 AND report_date BETWEEN ?2 AND ?3 AND ad_product=?4`, [CAMPAIGN_ID, START_DATE, END_DATE, AD_PRODUCT]),
   product: await scalar(storeDb, `SELECT COUNT(*) AS n FROM advertised_product_daily WHERE row_key LIKE 'synth-dev-product-%' AND report_date=?1`, [END_DATE]),
   keyword: await scalar(storeDb, `
     SELECT COUNT(DISTINCT k.normalized_keyword) AS n
