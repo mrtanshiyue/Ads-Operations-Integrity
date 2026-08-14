@@ -3,6 +3,7 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 const MAX_DAYS = 93;
 const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v2';
+const FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -71,6 +72,7 @@ async function listDailySearchTerms(request, db, url) {
         MIN(st.search_term) AS search_term,
         st.normalized_search_term,
         MAX(st.match_type) AS report_match_type,
+        MAX(st.updated_at) AS fact_mirror_updated_at,
         SUM(st.impressions) AS impressions,
         SUM(st.clicks) AS clicks,
         SUM(st.cost_micros) AS cost_micros,
@@ -135,6 +137,7 @@ async function listDailySearchTerms(request, db, url) {
       searchTerm: row.search_term,
       normalizedSearchTerm: row.normalized_search_term,
       matchType: row.keyword_match_type || row.report_match_type || null,
+      factMirrorUpdatedAt: nullableText(row.fact_mirror_updated_at),
       impressions: number(row.impressions),
       clicks: number(row.clicks),
       costMicros: number(row.cost_micros),
@@ -156,6 +159,11 @@ async function listDailySearchTerms(request, db, url) {
       bidNullability: 'preserved',
       currentBidMirrorTimestamp: 'synced_at',
       targetingSourceTimestamp: 'source_updated_at',
+    },
+    factContract: {
+      schemaVersion: FACT_CONTRACT_VERSION,
+      mirrorTimestamp: 'search_term_daily.updated_at',
+      mirrorAggregation: 'max',
     },
     range: { startDate, endDate, days },
     grain: 'day',
