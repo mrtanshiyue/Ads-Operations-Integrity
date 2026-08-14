@@ -49,8 +49,9 @@ class D1RestDatabase {
     let lastError = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      let response;
       try {
-        const response = await this.fetchImpl(
+        response = await this.fetchImpl(
           `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(this.accountId)}/d1/database/${encodeURIComponent(this.databaseId)}/query`,
           {
             method: 'POST',
@@ -62,23 +63,28 @@ class D1RestDatabase {
             body: JSON.stringify(payload),
           },
         );
-        const body = await response.json().catch(() => null);
-        if (response.ok && body?.success && Array.isArray(body.result)) {
-          const failed = body.result.find((item) => item?.success === false);
-          if (failed) throw new Error('d1_rest_statement_failed');
-          return body.result;
-        }
-
-        const code = Number(body?.errors?.[0]?.code || 0);
-        const error = new Error(`d1_rest_query_failed:${code || response.status || 'unknown'}`);
-        if (!retryable || !isTransientFailure(response.status, code) || attempt === attempts) throw error;
-        lastError = error;
       } catch (error) {
-        if (!retryable || !isRetryableException(error) || attempt === attempts) throw error;
+        if (!retryable || attempt === attempts) throw error;
         lastError = error;
+        await retryDelay(attempt, this.sleepImpl);
+        continue;
       }
 
-      await this.sleepImpl(READ_RETRY_DELAYS_MS[attempt - 1] || READ_RETRY_DELAYS_MS.at(-1));
+      const body = await response.json().catch(() => null);
+      if (response.ok && body?.success && Array.isArray(body.result)) {
+        const failed = body.result.find((item) => item?.success === false);
+        if (failed) throw new Error('d1_rest_statement_failed');
+        return body.result;
+      }
+
+      const apiCode = Number(body?.errors?.[0]?.code || 0);
+      const error = Object.assign(
+        new Error(`d1_rest_query_failed:${apiCode || response.status || 'unknown'}`),
+        { httpStatus: response.status, apiCode },
+      );
+      if (!retryable || !isTransientFailure(response.status, apiCode) || attempt === attempts) throw error;
+      lastError = error;
+      await retryDelay(attempt, this.sleepImpl);
     }
 
     throw lastError || new Error('d1_rest_query_failed:unknown');
@@ -134,19 +140,12 @@ function isReadOnlySql(sql) {
   return /^(SELECT\b|WITH\b|EXPLAIN\b|PRAGMA\s+FOREIGN_KEY_CHECK\b)/.test(normalized);
 }
 
-function isTransientFailure(status, code) {
-  return status === 429 || status >= 500 || TRANSIENT_API_CODES.has(Number(code));
+function isTransientFailure(httpStatus, apiCode) {
+  return httpStatus === 429 || httpStatus >= 500 || TRANSIENT_API_CODES.has(Number(apiCode));
 }
 
-function isRetryableException(error) {
-  if (!error) return true;
-  const message = String(error.message || error);
-  if (message === 'd1_rest_statement_failed') return false;
-  if (/^d1_rest_query_failed:/.test(message)) {
-    const code = Number(message.split(':').at(-1));
-    return TRANSIENT_API_CODES.has(code) || code === 429 || code >= 500;
-  }
-  return true;
+async function retryDelay(attempt, sleepImpl) {
+  await sleepImpl(READ_RETRY_DELAYS_MS[attempt - 1] || READ_RETRY_DELAYS_MS.at(-1));
 }
 
 function sleep(ms) {
