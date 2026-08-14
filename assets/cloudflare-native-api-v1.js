@@ -74,6 +74,7 @@
     createNegativeKeyword: (body) => request('/api/v1/negative-keywords', { method: 'POST', body }),
     updateNegativeKeyword: (id, body) => request(`/api/v1/negative-keywords/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
 
+    storeProducts: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/products`, params)),
     campaigns: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/campaigns`, params)),
     adGroups: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/ad-groups`, params)),
     storeKeywords: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/keywords`, params)),

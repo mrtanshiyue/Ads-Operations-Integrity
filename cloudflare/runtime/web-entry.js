@@ -2,6 +2,7 @@ import legacyWebWorker from './web-worker.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
 import { handleStoreDailyApiRoute } from './store-daily-api.js';
+import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
@@ -12,6 +13,7 @@ const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/keywords(?:\/[^/]+)?$/,
   /^\/api\/v1\/negative-keywords(?:\/[^/]+)?$/,
 ];
+const STORE_PRODUCTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/products$/;
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 
@@ -25,6 +27,7 @@ export default {
     }
 
     const modularRoute = isControlRoute(url.pathname)
+      || STORE_PRODUCTS_ROUTE_PATTERN.test(url.pathname)
       || STORE_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname);
     if (!modularRoute || request.method === 'OPTIONS') {
@@ -48,6 +51,10 @@ export default {
     try {
       if (isControlRoute(url.pathname)) {
         const response = await handleControlApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
+      if (STORE_PRODUCTS_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleStoreProductsApiRoute({ request, env, actor, url });
         if (response) return response;
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {

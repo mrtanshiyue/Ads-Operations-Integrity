@@ -29,6 +29,7 @@ GET    /api/v1/negative-keywords
 POST   /api/v1/negative-keywords
 PATCH  /api/v1/negative-keywords/:negativeKeywordId
 
+GET    /api/v1/stores/:storeId/products
 GET    /api/v1/stores/:storeId/campaigns
 GET    /api/v1/stores/:storeId/ad-groups
 GET    /api/v1/stores/:storeId/keywords
@@ -43,7 +44,6 @@ GET    /api/v1/analytics/keywords
 Not yet implemented:
 
 ```text
-GET    /api/v1/stores/:storeId/products
 POST   /api/v1/stores/:storeId/actions
 GET    /api/v1/stores/:storeId/actions
 ```
@@ -68,10 +68,10 @@ Global and store-scoped roles are never flattened into one authorization set.
 
 - Global roles (`owner`, `admin`) may grant permissions across stores.
 - Store roles (`operator`, `analyst`, `viewer`) grant permissions only for the store membership that assigned the role.
-- Every store-scoped route authorizes `user_id + store_id + permission_key` before resolving the Store D1 binding.
+- Every store-scoped route authorizes `user_id + store_id + permission_key` before resolving protected store data.
 - A user who has `ads.write` on Store 01 does not inherit `ads.write` on Store 02.
 - Starting a sync requires `sync.run`; inspecting that store's sync status requires `sync.read`.
-- Store entity and search-term reads require `ads.read` for the target store.
+- Store entity, store-product identity, and search-term reads require `ads.read` for the target store.
 - Cross-store analytics requires `analytics.read` and is automatically narrowed to the caller's authorized stores.
 
 Central control-plane APIs have a different rule:
@@ -86,7 +86,7 @@ The browser never chooses or receives a D1 binding name. It supplies a logical `
 
 1. verifies the user's permission for that `storeId` in Control D1;
 2. loads the store record internally;
-3. reads the server-only `d1_binding_key`;
+3. for Store D1-backed routes, reads the server-only `d1_binding_key`;
 4. resolves it through a fixed binding allowlist;
 5. queries the matching Store D1.
 
@@ -99,7 +99,7 @@ STORE_03_DB -> ads-ops-store-03-prod
 STORE_04_DB -> ads-ops-store-04-prod
 ```
 
-Unrecognized or missing bindings fail closed as `store_db_unavailable`. Binding identifiers are not returned to the browser.
+Unrecognized or missing Store D1 bindings fail closed as `store_db_unavailable`. Binding identifiers are not returned to the browser.
 
 ## Control D1 master-data APIs
 
@@ -108,6 +108,21 @@ Products, canonical keywords, and canonical negative keywords are centralized in
 List endpoints use cursor pagination with a maximum page size of 200. Writes validate allowed status/match-type values, normalize canonical keyword terms, enforce database uniqueness constraints, and return HTTP 409 for canonical conflicts.
 
 This layer does not attempt to mutate Amazon Ads. It manages internal system master data and governance only.
+
+## Store product identity boundary
+
+`GET /api/v1/stores/:storeId/products` is a store-scoped read over Control D1 `product_store_map` joined to canonical `products`.
+
+The route:
+
+- requires `ads.read` for the requested `storeId`;
+- returns the canonical `productId` together with `sellerSku`, `asin`, `parentAsin`, listing status, and product metadata;
+- supports `productStatus`, `listingStatus`, and bounded text search filters;
+- uses keyset pagination over `updated_at + product_id + seller_sku` with a maximum page size of 200;
+- never exposes `d1_binding_key` or other server-only binding identifiers;
+- does not call Amazon, does not start a Workflow, and does not mutate Store D1.
+
+This identity route is the prerequisite for connecting store SKU/ASIN identity to canonical product governance without enabling Amazon Ads synchronization or optimization writes.
 
 ## Store D1 read APIs
 
