@@ -21,8 +21,8 @@ def fk_errors(conn: sqlite3.Connection):
     return conn.execute("PRAGMA foreign_key_check").fetchall()
 
 
-def has_permission(conn, user_id: str, store_id: str, permission: str) -> bool:
-    global_hit = conn.execute(
+def has_global_permission(conn, user_id: str, permission: str) -> bool:
+    return conn.execute(
         """
         SELECT 1
         FROM user_global_roles ugr
@@ -31,8 +31,28 @@ def has_permission(conn, user_id: str, store_id: str, permission: str) -> bool:
         LIMIT 1
         """,
         (user_id, permission),
-    ).fetchone()
-    if global_hit:
+    ).fetchone() is not None
+
+
+def has_assigned_permission(conn, user_id: str, permission: str) -> bool:
+    return conn.execute(
+        """
+        SELECT 1
+        FROM role_permissions rp
+        JOIN (
+          SELECT role_key FROM user_global_roles WHERE user_id = ?
+          UNION
+          SELECT role_key FROM store_members WHERE user_id = ?
+        ) assigned ON assigned.role_key = rp.role_key
+        WHERE rp.permission_key = ?
+        LIMIT 1
+        """,
+        (user_id, user_id, permission),
+    ).fetchone() is not None
+
+
+def has_permission(conn, user_id: str, store_id: str, permission: str) -> bool:
+    if has_global_permission(conn, user_id, permission):
         return True
 
     store_hit = conn.execute(
@@ -46,6 +66,14 @@ def has_permission(conn, user_id: str, store_id: str, permission: str) -> bool:
         (user_id, store_id, permission),
     ).fetchone()
     return store_hit is not None
+
+
+def expect_integrity_error(fn, message: str):
+    try:
+        fn()
+        raise AssertionError(message)
+    except sqlite3.IntegrityError:
+        pass
 
 
 def test_control_schema(db_path: Path):
@@ -82,17 +110,74 @@ def test_control_schema(db_path: Path):
         "INSERT INTO store_members(store_id,user_id,role_key) VALUES('store-02','u-viewer','viewer')"
     )
 
+    # Store authorization must remain scoped.
     assert has_permission(conn, "u-owner", "store-01", "ads.write")
     assert has_permission(conn, "u-owner", "store-02", "ads.write")
     assert has_permission(conn, "u-owner", "store-02", "system.manage")
-
     assert has_permission(conn, "u-operator", "store-01", "ads.write")
     assert not has_permission(conn, "u-operator", "store-02", "ads.write")
     assert not has_permission(conn, "u-operator", "store-02", "ads.read")
-
     assert has_permission(conn, "u-viewer", "store-02", "ads.read")
     assert not has_permission(conn, "u-viewer", "store-02", "ads.write")
     assert not has_permission(conn, "u-viewer", "store-01", "ads.read")
+
+    # Central libraries are readable by assigned users, but master-data writes require global governance roles.
+    for user_id in ("u-owner", "u-operator", "u-viewer"):
+        assert has_assigned_permission(conn, user_id, "products.read")
+        assert has_assigned_permission(conn, user_id, "keywords.read")
+        assert has_assigned_permission(conn, user_id, "negatives.read")
+    assert has_global_permission(conn, "u-owner", "products.manage")
+    assert has_global_permission(conn, "u-owner", "keywords.manage")
+    assert has_global_permission(conn, "u-owner", "negatives.manage")
+    assert not has_global_permission(conn, "u-operator", "products.manage")
+    assert not has_global_permission(conn, "u-operator", "keywords.manage")
+    assert not has_global_permission(conn, "u-operator", "negatives.manage")
+    assert not has_global_permission(conn, "u-viewer", "products.manage")
+
+    # Canonical control-plane uniqueness contracts used by the API.
+    conn.execute(
+        "INSERT INTO products(product_id,model_code,model_name,status) VALUES('prod-1','YS001','Model 1','active')"
+    )
+    expect_integrity_error(
+        lambda: conn.execute(
+            "INSERT INTO products(product_id,model_code,status) VALUES('prod-2','YS001','active')"
+        ),
+        "Duplicate product model_code was accepted",
+    )
+
+    conn.execute(
+        """
+        INSERT INTO keyword_library(keyword_id,keyword_text,normalized_term,language_code,created_by)
+        VALUES('kw-1','Reading Glasses','reading glasses','en-US','u-owner')
+        """
+    )
+    expect_integrity_error(
+        lambda: conn.execute(
+            """
+            INSERT INTO keyword_library(keyword_id,keyword_text,normalized_term,language_code,created_by)
+            VALUES('kw-2','reading   glasses','reading glasses','en-US','u-owner')
+            """
+        ),
+        "Duplicate normalized keyword was accepted",
+    )
+
+    conn.execute(
+        """
+        INSERT INTO negative_keyword_library(
+          negative_keyword_id,keyword_text,normalized_term,match_type,created_by
+        ) VALUES('neg-1','free glasses','free glasses','EXACT','u-owner')
+        """
+    )
+    expect_integrity_error(
+        lambda: conn.execute(
+            """
+            INSERT INTO negative_keyword_library(
+              negative_keyword_id,keyword_text,normalized_term,match_type,created_by
+            ) VALUES('neg-2','Free Glasses','free glasses','EXACT','u-owner')
+            """
+        ),
+        "Duplicate normalized negative keyword was accepted",
+    )
 
     errors = fk_errors(conn)
     assert not errors, f"Control FK errors: {errors}"
@@ -106,6 +191,8 @@ def test_control_schema(db_path: Path):
         "role_permissions": permission_count,
         "foreign_key_errors": len(errors),
         "rbac_isolation": True,
+        "control_api_permissions": True,
+        "control_uniqueness": True,
     }
 
 
@@ -178,30 +265,28 @@ def test_store_schema(db_path: Path):
         ) VALUES('j1','p1','SP','keyword','2026-08-14','2026-08-14','queued','same-key','fp1')
         """
     )
-    try:
-        conn.execute(
+    expect_integrity_error(
+        lambda: conn.execute(
             """
             INSERT INTO report_jobs(
               job_id,profile_id,ad_product,report_type,start_date,end_date,status,
               idempotency_key,request_fingerprint
             ) VALUES('j2','p1','SP','keyword','2026-08-14','2026-08-14','queued','same-key','fp2')
             """
-        )
-        raise AssertionError("Duplicate report idempotency_key was accepted")
-    except sqlite3.IntegrityError:
-        pass
+        ),
+        "Duplicate report idempotency_key was accepted",
+    )
 
-    try:
-        conn.execute(
+    expect_integrity_error(
+        lambda: conn.execute(
             """
             INSERT INTO campaign_daily(
               profile_id,report_date,ad_product,campaign_id,cost_micros
             ) VALUES('p1','2026-08-14','SP','c1',-1)
             """
-        )
-        raise AssertionError("Negative cost_micros was accepted")
-    except sqlite3.IntegrityError:
-        pass
+        ),
+        "Negative cost_micros was accepted",
+    )
 
     errors = fk_errors(conn)
     assert not errors, f"Store FK errors: {errors}"
