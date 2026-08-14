@@ -9,6 +9,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.dev.vars
+**/.dev.vars
 *.pem
 *.key
 *credential*
@@ -18,6 +20,7 @@ Thumbs.db
 _site/
 .validate/
 dist/
+dist-cloudflare-native/
 .wrangler/
 coverage/
 node_modules/
