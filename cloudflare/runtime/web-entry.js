@@ -14,7 +14,7 @@ const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/keywords(?:\/[^/]+)?$/,
   /^\/api\/v1\/negative-keywords(?:\/[^/]+)?$/,
 ];
-const STORE_PRODUCTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/products$/;
+const STORE_PRODUCTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/products(?:\/[^/]+\/[^/]+)?$/;
 const PRODUCT_KEYWORDS_ROUTE_PATTERN = /^\/api\/v1\/products\/[^/]+\/keywords(?:\/[^/]+)?$/;
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
