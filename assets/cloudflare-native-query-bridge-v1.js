@@ -10,6 +10,7 @@
   const STORE_FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
   const STORE_SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
   const STORE_SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1';
+  const STORE_SOURCE_CONTENT_CONTRACT_VERSION = 'store-search-term-source-content-v1';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -116,6 +117,7 @@
     let factLineageContractReady = true;
     let sourceReportContractReady = true;
     let sourceObjectContractReady = true;
+    let sourceContentContractReady = true;
     do {
       const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
@@ -129,11 +131,13 @@
       const pageFactLineageContractReady = validStoreFactLineageContract(payload?.factLineageContract);
       const pageSourceReportContractReady = validStoreSourceReportContract(payload?.sourceReportContract);
       const pageSourceObjectContractReady = validStoreSourceObjectContract(payload?.sourceObjectContract);
+      const pageSourceContentContractReady = validStoreSourceContentContract(payload?.sourceContentContract);
       sourceContractReady = sourceContractReady && pageContractReady;
       factContractReady = factContractReady && pageFactContractReady;
       factLineageContractReady = factLineageContractReady && pageFactLineageContractReady;
       sourceReportContractReady = sourceReportContractReady && pageSourceReportContractReady;
       sourceObjectContractReady = sourceObjectContractReady && pageSourceObjectContractReady;
+      sourceContentContractReady = sourceContentContractReady && pageSourceContentContractReady;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       for (const item of items) {
         rows.push(toLegacyAdRow(store, item, options, {
@@ -142,6 +146,7 @@
           factLineageContractReady: pageFactLineageContractReady,
           sourceReportContractReady: pageSourceReportContractReady,
           sourceObjectContractReady: pageSourceObjectContractReady,
+          sourceContentContractReady: pageSourceContentContractReady,
         }));
         if (rows.length >= MAX_ROWS_PER_STORE) break;
       }
@@ -156,6 +161,7 @@
       factLineageContractReady,
       sourceReportContractReady,
       sourceObjectContractReady,
+      sourceContentContractReady,
     };
   }
 
@@ -195,6 +201,13 @@
       && contract?.identityRule === 'validated_source_amazon_report_identity';
   }
 
+  function validStoreSourceContentContract(contract) {
+    return contract?.schemaVersion === STORE_SOURCE_CONTENT_CONTRACT_VERSION
+      && contract?.contentSha256 === 'report_jobs.content_sha256'
+      && contract?.digestAlgorithm === 'sha256'
+      && contract?.identityRule === 'validated_source_r2_object_identity';
+  }
+
   function sourceProvenance(
     item,
     sourceContractReady,
@@ -202,6 +215,7 @@
     factLineageContractReady,
     sourceReportContractReady,
     sourceObjectContractReady,
+    sourceContentContractReady,
   ) {
     const keywordId = text(item?.keywordId);
     const targetId = text(item?.targetId);
@@ -237,6 +251,12 @@
       && sourceAmazonReportIdentityValid
       && item?.sourceR2ObjectIdentityValid === true
       && sourceR2ObjectKey !== null;
+    const sourceContentSha256 = sourceContentContractReady ? nullableText(item?.sourceContentSha256) : null;
+    const sourceContentSha256ShapeValid = sourceContentSha256 !== null && /^[0-9a-f]{64}$/i.test(sourceContentSha256);
+    const sourceContentSha256IdentityValid = sourceContentContractReady
+      && sourceR2ObjectIdentityValid
+      && item?.sourceContentSha256IdentityValid === true
+      && sourceContentSha256ShapeValid;
     return {
       schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
       targetingIdentityValid: identityValid,
@@ -268,6 +288,10 @@
       sourceR2ObjectIdentityValid,
       sourceR2ObjectKey: sourceR2ObjectIdentityValid ? sourceR2ObjectKey : null,
       sourceR2ObjectObserved: sourceR2ObjectIdentityValid,
+      sourceContentSchemaVersion: sourceContentContractReady ? STORE_SOURCE_CONTENT_CONTRACT_VERSION : '',
+      sourceContentSha256IdentityValid,
+      sourceContentSha256: sourceContentSha256IdentityValid ? sourceContentSha256 : null,
+      sourceContentSha256Observed: sourceContentSha256IdentityValid,
     };
   }
 
@@ -284,6 +308,7 @@
       context.factLineageContractReady === true,
       context.sourceReportContractReady === true,
       context.sourceObjectContractReady === true,
+      context.sourceContentContractReady === true,
     );
     const currentBid = provenance.bidNullabilityPreserved && provenance.bidMicros !== null
       ? microsToAmount(provenance.bidMicros)
@@ -309,6 +334,7 @@
       sourceReportJobId: provenance.sourceReportJobId,
       sourceAmazonReportId: provenance.sourceAmazonReportId,
       sourceR2ObjectKey: provenance.sourceR2ObjectKey,
+      sourceContentSha256: provenance.sourceContentSha256,
       targetBid: null,
       bid: currentBid,
       impressions: number(item.impressions),
@@ -357,6 +383,10 @@
         sourceR2ObjectIdentityValid: provenance.sourceR2ObjectIdentityValid,
         sourceR2ObjectKey: provenance.sourceR2ObjectKey,
         sourceR2ObjectObserved: provenance.sourceR2ObjectObserved,
+        sourceContentSchemaVersion: provenance.sourceContentSchemaVersion,
+        sourceContentSha256IdentityValid: provenance.sourceContentSha256IdentityValid,
+        sourceContentSha256: provenance.sourceContentSha256,
+        sourceContentSha256Observed: provenance.sourceContentSha256Observed,
       },
       sourceCoverage: {
         backend: 'cloudflare-d1',
@@ -375,6 +405,7 @@
     factLineageContractReady,
     sourceReportContractReady,
     sourceObjectContractReady,
+    sourceContentContractReady,
   ) {
     const input = Array.isArray(rows) ? rows : [];
     const provenanceRows = input.map((row) => row?.sourceProvenance || {});
@@ -390,6 +421,8 @@
       sourceReportContractObserved: Boolean(sourceReportContractReady),
       sourceObjectSchemaVersion: sourceObjectContractReady ? STORE_SOURCE_OBJECT_CONTRACT_VERSION : '',
       sourceObjectContractObserved: Boolean(sourceObjectContractReady),
+      sourceContentSchemaVersion: sourceContentContractReady ? STORE_SOURCE_CONTENT_CONTRACT_VERSION : '',
+      sourceContentContractObserved: Boolean(sourceContentContractReady),
       targetingIdentityObserved: input.length > 0
         && provenanceRows.every((item) => item.targetingIdentityValid === true),
       bidSourceObserved: input.length > 0
@@ -419,6 +452,10 @@
         && provenanceRows.every((item) => item.sourceR2ObjectIdentityValid === true),
       sourceR2ObjectObserved: input.length > 0
         && provenanceRows.every((item) => item.sourceR2ObjectObserved === true),
+      sourceContentSha256IdentityObserved: input.length > 0
+        && provenanceRows.every((item) => item.sourceContentSha256IdentityValid === true),
+      sourceContentSha256Observed: input.length > 0
+        && provenanceRows.every((item) => item.sourceContentSha256Observed === true),
     };
   }
 
@@ -485,6 +522,7 @@
         factLineageContractReady: perStore.length > 0 && perStore.every((entry) => entry.factLineageContractReady),
         sourceReportContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceReportContractReady),
         sourceObjectContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceObjectContractReady),
+        sourceContentContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceContentContractReady),
       };
     });
 
@@ -497,6 +535,7 @@
       collected.factLineageContractReady,
       collected.sourceReportContractReady,
       collected.sourceObjectContractReady,
+      collected.sourceContentContractReady,
     );
     return {
       rows: page,

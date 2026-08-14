@@ -280,7 +280,7 @@ assert.match(apiSource, /contextRule:\s*'profile_ad_product_date_covered'/);
 assert.match(bridgeSource, /joinRule === 'validated_source_report_job_id'/);
 assert.match(bridgeSource, /sourceAmazonReportIdentityObserved/);
 assert.doesNotMatch(apiSource, /JOIN\s+report_jobs/i);
-assert.doesNotMatch(apiSource, /content_sha256|request_fingerprint|request_json|row_count AS report_job/i);
+assert.doesNotMatch(apiSource, /request_fingerprint|request_json|row_count AS report_job/i);
 assert.doesNotMatch(apiSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(bridgeSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(apiSource, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW/);
@@ -301,7 +301,7 @@ console.log(JSON.stringify({
     'missing-amazon-report-id-fails-closed',
     'source-report-contract-required-before-bridge-provenance',
     'gate16-lineage-query-preserved',
-    'report-job-metadata-not-expanded',
+    'gate17-source-report-contract-preserved',
     'no-freshness-threshold-introduced',
     'governance-readiness-remains-closed',
     'store-d1-read-only',

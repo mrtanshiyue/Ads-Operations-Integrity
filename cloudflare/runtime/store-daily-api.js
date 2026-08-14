@@ -7,6 +7,7 @@ const FACT_CONTRACT_VERSION = 'store-search-term-fact-v1';
 const FACT_LINEAGE_CONTRACT_VERSION = 'store-search-term-fact-lineage-v1';
 const SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1';
 const SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1';
+const SOURCE_CONTENT_CONTRACT_VERSION = 'store-search-term-source-content-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -126,6 +127,7 @@ async function listDailySearchTerms(request, db, url) {
     const reportJob = sourceReportJobs.get(lineage.jobId);
     const sourceReport = sourceAmazonReportIdentity(row, lineage, reportJob);
     const sourceObject = sourceR2ObjectIdentity(sourceReport, reportJob);
+    const sourceContent = sourceContentSha256Identity(sourceObject, reportJob);
     return {
       groupKey: row.group_key,
       reportDate: row.report_date,
@@ -157,6 +159,8 @@ async function listDailySearchTerms(request, db, url) {
       sourceAmazonReportIdentityValid: sourceReport.valid,
       sourceR2ObjectKey: sourceObject.r2ObjectKey,
       sourceR2ObjectIdentityValid: sourceObject.valid,
+      sourceContentSha256: sourceContent.sha256,
+      sourceContentSha256IdentityValid: sourceContent.valid,
       impressions: number(row.impressions),
       clicks: number(row.clicks),
       costMicros: number(row.cost_micros),
@@ -201,6 +205,12 @@ async function listDailySearchTerms(request, db, url) {
       r2ObjectKey: 'report_jobs.r2_object_key',
       storageBackend: 'r2',
       identityRule: 'validated_source_amazon_report_identity',
+    },
+    sourceContentContract: {
+      schemaVersion: SOURCE_CONTENT_CONTRACT_VERSION,
+      contentSha256: 'report_jobs.content_sha256',
+      digestAlgorithm: 'sha256',
+      identityRule: 'validated_source_r2_object_identity',
     },
     range: { startDate, endDate, days },
     grain: 'day',
@@ -282,7 +292,7 @@ async function loadSourceReportJobs(db, rows) {
   if (!jobIds.length) return new Map();
   const placeholders = jobIds.map((_, index) => `?${index + 1}`).join(',');
   const result = await db.prepare(`
-    SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key
+    SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key, content_sha256
     FROM report_jobs
     WHERE job_id IN (${placeholders})
   `).bind(...jobIds).all();
@@ -321,6 +331,13 @@ function sourceR2ObjectIdentity(sourceReport, reportJob) {
   const r2ObjectKey = nullableText(reportJob.r2_object_key);
   const valid = r2ObjectKey !== null;
   return { valid, r2ObjectKey: valid ? r2ObjectKey : null };
+}
+
+function sourceContentSha256Identity(sourceObject, reportJob) {
+  if (!sourceObject?.valid || !reportJob) return { valid: false, sha256: null };
+  const sha256 = nullableText(reportJob.content_sha256);
+  const valid = sha256 !== null && /^[0-9a-f]{64}$/i.test(sha256);
+  return { valid, sha256: valid ? sha256 : null };
 }
 
 function isoDate(value) {

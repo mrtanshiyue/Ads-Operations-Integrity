@@ -8,6 +8,7 @@ import { handleStoreDailyApiRoute } from '../cloudflare/runtime/store-daily-api.
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const apiSource = await readFile(path.join(repoRoot, 'cloudflare/runtime/store-daily-api.js'), 'utf8');
 const bridgeSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-query-bridge-v1.js'), 'utf8');
+const VALID_SHA256 = 'a'.repeat(64);
 
 function controlDb() {
   return {
@@ -81,7 +82,8 @@ function reportJob(overrides = {}) {
     ad_product: 'SPONSORED_PRODUCTS',
     start_date: '2026-08-12',
     end_date: '2026-08-12',
-    r2_object_key: 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz',
+    r2_object_key: 'raw/amazon-ads/DEV01/profile-1/SPONSORED_PRODUCTS/search-term/dt=2026-08-12/amazon-report-1.json.gz',
+    content_sha256: VALID_SHA256,
     ...overrides,
   };
 }
@@ -91,7 +93,7 @@ function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
     prepare(sql) {
       if (sql.includes('FROM report_jobs')) {
         assert.doesNotMatch(sql, /JOIN\s+report_jobs/i);
-        assert.match(sql, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key/);
+        assert.match(sql, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key, content_sha256/);
         assert.match(sql, /WHERE job_id IN \(\?1\)/);
         return {
           bind(...params) {
@@ -121,7 +123,7 @@ function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
 async function apiPayload(options = {}) {
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/search-terms-daily?startDate=2026-08-12&endDate=2026-08-12&limit=20', {
     method: 'GET',
-    headers: { 'cf-ray': 'gate18-read-ray' },
+    headers: { 'cf-ray': 'gate19-read-ray' },
   });
   const response = await handleStoreDailyApiRoute({
     request,
@@ -134,26 +136,31 @@ async function apiPayload(options = {}) {
 }
 
 const payload = await apiPayload();
-assert.deepEqual(payload.sourceObjectContract, {
-  schemaVersion: 'store-search-term-source-object-v1',
-  r2ObjectKey: 'report_jobs.r2_object_key',
-  storageBackend: 'r2',
-  identityRule: 'validated_source_amazon_report_identity',
+assert.deepEqual(payload.sourceContentContract, {
+  schemaVersion: 'store-search-term-source-content-v1',
+  contentSha256: 'report_jobs.content_sha256',
+  digestAlgorithm: 'sha256',
+  identityRule: 'validated_source_r2_object_identity',
 });
 assert.equal(payload.items[0].sourceReportJobIdentityValid, true);
 assert.equal(payload.items[0].sourceAmazonReportIdentityValid, true);
-assert.equal(payload.items[0].sourceAmazonReportId, 'amazon-report-1');
-assert.equal(payload.items[0].sourceR2ObjectKey, 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz');
 assert.equal(payload.items[0].sourceR2ObjectIdentityValid, true);
-assert.equal(payload.items[0].currentBidSyncedAt, '2026-08-14 09:35:29');
-assert.equal(payload.items[0].targetingSourceUpdatedAt, null);
-assert.equal(payload.items[0].factMirrorUpdatedAt, '2026-08-14 09:35:29');
+assert.equal(payload.items[0].sourceContentSha256, VALID_SHA256);
+assert.equal(payload.items[0].sourceContentSha256IdentityValid, true);
+
+for (const badDigest of [null, '', 'a'.repeat(63), 'g'.repeat(64)]) {
+  const invalid = await apiPayload({ report: { content_sha256: badDigest } });
+  assert.equal(invalid.items[0].sourceR2ObjectIdentityValid, true);
+  assert.notEqual(invalid.items[0].sourceR2ObjectKey, null);
+  assert.equal(invalid.items[0].sourceContentSha256, null);
+  assert.equal(invalid.items[0].sourceContentSha256IdentityValid, false);
+}
 
 const missingObject = await apiPayload({ report: { r2_object_key: null } });
-assert.equal(missingObject.items[0].sourceAmazonReportId, 'amazon-report-1');
 assert.equal(missingObject.items[0].sourceAmazonReportIdentityValid, true);
-assert.equal(missingObject.items[0].sourceR2ObjectKey, null);
 assert.equal(missingObject.items[0].sourceR2ObjectIdentityValid, false);
+assert.equal(missingObject.items[0].sourceContentSha256, null);
+assert.equal(missingObject.items[0].sourceContentSha256IdentityValid, false);
 
 for (const options of [
   { missingReport: true },
@@ -163,9 +170,8 @@ for (const options of [
   { report: { start_date: '2026-08-13', end_date: '2026-08-14' } },
 ]) {
   const invalid = await apiPayload(options);
-  assert.equal(invalid.items[0].sourceAmazonReportIdentityValid, false);
-  assert.equal(invalid.items[0].sourceR2ObjectKey, null);
-  assert.equal(invalid.items[0].sourceR2ObjectIdentityValid, false);
+  assert.equal(invalid.items[0].sourceContentSha256, null);
+  assert.equal(invalid.items[0].sourceContentSha256IdentityValid, false);
 }
 
 let bridgePayload = payload;
@@ -183,51 +189,51 @@ class CustomEvent {
   constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
 }
 vm.runInNewContext(bridgeSource, { window, CustomEvent, URL, console, setTimeout, clearTimeout });
+assert.equal(window.CloudflareNativeQueryBridge.version, '1.4.0');
 
 let bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
 let row = bridged.rows[0];
-assert.equal(row.sourceAmazonReportId, 'amazon-report-1');
-assert.equal(row.sourceR2ObjectKey, 'amazon-ads/reports/profile-1/2026-08-12/report-job-1.json.gz');
-assert.equal(row.sourceProvenance.sourceObjectSchemaVersion, 'store-search-term-source-object-v1');
-assert.equal(row.sourceProvenance.sourceR2ObjectIdentityValid, true);
-assert.equal(row.sourceProvenance.sourceR2ObjectObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceObjectContractObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceR2ObjectIdentityObserved, true);
-assert.equal(bridged.governance.sourceEvidence.sourceR2ObjectObserved, true);
+assert.equal(row.sourceR2ObjectKey, payload.items[0].sourceR2ObjectKey);
+assert.equal(row.sourceContentSha256, VALID_SHA256);
+assert.equal(row.sourceProvenance.sourceContentSchemaVersion, 'store-search-term-source-content-v1');
+assert.equal(row.sourceProvenance.sourceContentSha256IdentityValid, true);
+assert.equal(row.sourceProvenance.sourceContentSha256Observed, true);
+assert.equal(bridged.governance.sourceEvidence.sourceContentContractObserved, true);
+assert.equal(bridged.governance.sourceEvidence.sourceContentSha256IdentityObserved, true);
+assert.equal(bridged.governance.sourceEvidence.sourceContentSha256Observed, true);
 
 bridgePayload = {
   ...payload,
-  sourceObjectContract: { ...payload.sourceObjectContract, identityRule: 'any_report_object' },
+  sourceContentContract: { ...payload.sourceContentContract, identityRule: 'any_source_object' },
 };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
 row = bridged.rows[0];
-assert.equal(row.sourceAmazonReportId, 'amazon-report-1');
-assert.equal(row.sourceProvenance.sourceAmazonReportIdentityValid, true);
-assert.equal(row.sourceR2ObjectKey, null);
-assert.equal(row.sourceProvenance.sourceR2ObjectIdentityValid, false);
-assert.equal(bridged.governance.sourceEvidence.sourceObjectContractObserved, false);
+assert.equal(row.sourceR2ObjectKey, payload.items[0].sourceR2ObjectKey);
+assert.equal(row.sourceProvenance.sourceR2ObjectIdentityValid, true);
+assert.equal(row.sourceContentSha256, null);
+assert.equal(row.sourceProvenance.sourceContentSha256IdentityValid, false);
+assert.equal(bridged.governance.sourceEvidence.sourceContentContractObserved, false);
+
+bridgePayload = { ...payload, sourceContentContract: null };
+window.CloudflareNativeQueryBridge.clearCache();
+bridged = await window.CloudflareNativeQueryBridge.ads({
+  scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
+});
+assert.equal(bridged.rows[0].sourceR2ObjectKey, payload.items[0].sourceR2ObjectKey);
+assert.equal(bridged.rows[0].sourceContentSha256, null);
 
 bridgePayload = { ...payload, sourceObjectContract: null };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
   scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
 });
-assert.equal(bridged.rows[0].sourceAmazonReportId, 'amazon-report-1');
 assert.equal(bridged.rows[0].sourceR2ObjectKey, null);
-
-bridgePayload = { ...payload, sourceReportContract: null };
-window.CloudflareNativeQueryBridge.clearCache();
-bridged = await window.CloudflareNativeQueryBridge.ads({
-  scope: 'DEV01', from: '2026-08-12', to: '2026-08-12', limit: 20, offset: 0,
-});
-assert.equal(bridged.rows[0].sourceAmazonReportId, null);
-assert.equal(bridged.rows[0].sourceR2ObjectKey, null);
-assert.equal(bridged.rows[0].sourceProvenance.sourceR2ObjectIdentityValid, false);
+assert.equal(bridged.rows[0].sourceContentSha256, null);
 
 for (const key of [
   'targetingIdentityReady', 'bidSourceColumnReady', 'bidValueNullabilityTrusted', 'adProductReady',
@@ -238,33 +244,37 @@ for (const item of bridged.rows) {
   assert.equal(item.governanceReady, false);
 }
 
-assert.match(apiSource, /SOURCE_OBJECT_CONTRACT_VERSION = 'store-search-term-source-object-v1'/);
-assert.match(apiSource, /r2ObjectKey:\s*'report_jobs\.r2_object_key'/);
-assert.match(apiSource, /storageBackend:\s*'r2'/);
-assert.match(apiSource, /identityRule:\s*'validated_source_amazon_report_identity'/);
-assert.match(apiSource, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key/);
-assert.match(bridgeSource, /identityRule === 'validated_source_amazon_report_identity'/);
-assert.match(bridgeSource, /sourceR2ObjectIdentityObserved/);
+assert.match(apiSource, /SOURCE_CONTENT_CONTRACT_VERSION = 'store-search-term-source-content-v1'/);
+assert.match(apiSource, /contentSha256:\s*'report_jobs\.content_sha256'/);
+assert.match(apiSource, /digestAlgorithm:\s*'sha256'/);
+assert.match(apiSource, /identityRule:\s*'validated_source_r2_object_identity'/);
+assert.match(apiSource, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date, r2_object_key, content_sha256/);
+assert.match(apiSource, /\^\[0-9a-f\]\{64\}\$\/i/);
+assert.match(bridgeSource, /const VERSION = '1\.4\.0'/);
+assert.match(bridgeSource, /identityRule === 'validated_source_r2_object_identity'/);
+assert.match(bridgeSource, /sourceContentSha256IdentityObserved/);
 assert.doesNotMatch(apiSource, /JOIN\s+report_jobs/i);
-assert.doesNotMatch(apiSource, /content_bytes|request_fingerprint|request_json|row_count AS report_job|status AS report_job_status/i);
+assert.doesNotMatch(apiSource, /content_bytes|row_count AS report_job|status AS report_job_status|request_fingerprint|request_json/i);
 assert.doesNotMatch(apiSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(bridgeSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(apiSource, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW|DATA_BUCKET/);
+assert.doesNotMatch(bridgeSource, /DATA_BUCKET/);
 assert.match(bridgeSource, /bidValueTrusted:\s*false/);
 assert.match(bridgeSource, /bidGovernanceReady:\s*false/);
 assert.match(bridgeSource, /campaignStudioReady:\s*false/);
 
 console.log(JSON.stringify({
   ok: true,
-  gate: 18,
+  gate: 19,
   contracts: [
-    'r2-object-key-provenance-explicit',
-    'r2-object-provenance-after-amazon-report-identity',
-    'missing-r2-object-key-fails-closed',
-    'invalid-amazon-report-identity-blocks-r2-object-provenance',
-    'source-object-contract-required-before-bridge-provenance',
-    'gate17-amazon-report-identity-preserved',
-    'gate18-source-object-contract-preserved',
+    'source-content-sha256-provenance-explicit',
+    'sha256-provenance-after-r2-object-identity',
+    'missing-content-sha256-fails-closed',
+    'malformed-content-sha256-fails-closed',
+    'invalid-r2-object-identity-blocks-content-sha256',
+    'source-content-contract-required-before-bridge-provenance',
+    'gate18-r2-object-identity-preserved',
+    'report-content-metadata-not-expanded-beyond-sha256',
     'no-r2-object-read-introduced',
     'no-freshness-threshold-introduced',
     'governance-readiness-remains-closed',
