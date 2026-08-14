@@ -59,11 +59,13 @@ async function listDailySearchTerms(request, db, url) {
         k.match_type AS keyword_match_type,
         k.state AS keyword_state,
         k.bid_micros AS keyword_bid_micros,
+        k.synced_at AS keyword_synced_at,
         st.target_id,
         t.target_type,
         t.expression_text AS target_expression_text,
         t.state AS target_state,
         t.bid_micros AS target_bid_micros,
+        t.synced_at AS target_synced_at,
         MIN(st.search_term) AS search_term,
         st.normalized_search_term,
         MAX(st.match_type) AS report_match_type,
@@ -84,8 +86,8 @@ async function listDailySearchTerms(request, db, url) {
         AND (?5 IS NULL OR st.ad_group_id = ?5)
         AND (?6 IS NULL OR st.search_term LIKE ?6 ESCAPE '\\' OR st.normalized_search_term LIKE ?6 ESCAPE '\\')
       GROUP BY st.report_date, st.profile_id, st.ad_product, st.campaign_id, c.name,
-               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros,
-               st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, st.normalized_search_term
+               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros, k.synced_at,
+               st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, t.synced_at, st.normalized_search_term
     ), ranked AS (
       SELECT *, ${sortColumn} AS sort_value FROM aggregated
     )
@@ -125,6 +127,7 @@ async function listDailySearchTerms(request, db, url) {
       targetingIdentityValid: source.valid,
       targetingState: source.state,
       currentBidMicros: source.bidMicros,
+      currentBidSyncedAt: source.syncedAt,
       bidSource: source.bidSource,
       searchTerm: row.search_term,
       normalizedSearchTerm: row.normalized_search_term,
@@ -185,7 +188,7 @@ function targetingSource(row) {
   const keywordId = String(row.keyword_id || '').trim();
   const targetId = String(row.target_id || '').trim();
   if (Boolean(keywordId) === Boolean(targetId)) {
-    return { valid: false, kind: null, state: null, bidMicros: null, bidSource: null };
+    return { valid: false, kind: null, state: null, bidMicros: null, syncedAt: null, bidSource: null };
   }
   if (keywordId) {
     return {
@@ -193,6 +196,7 @@ function targetingSource(row) {
       kind: 'keyword',
       state: nullableText(row.keyword_state),
       bidMicros: nullableNonNegativeNumber(row.keyword_bid_micros),
+      syncedAt: nullableText(row.keyword_synced_at),
       bidSource: 'keyword',
     };
   }
@@ -201,6 +205,7 @@ function targetingSource(row) {
     kind: 'target',
     state: nullableText(row.target_state),
     bidMicros: nullableNonNegativeNumber(row.target_bid_micros),
+    syncedAt: nullableText(row.target_synced_at),
     bidSource: 'target',
   };
 }
