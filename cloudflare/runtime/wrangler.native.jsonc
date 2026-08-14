@@ -24,13 +24,13 @@
         {
           "binding": "CONTROL_DB",
           "database_name": "ads-ops-control-dev",
-          "database_id": "REPLACE_DEV_CONTROL_D1_ID",
+          "database_id": "2093b94f-27d5-4a4c-ada1-ff14af5c8de2",
           "migrations_dir": "../foundation/migrations/control"
         },
         {
           "binding": "STORE_01_DB",
           "database_name": "ads-ops-store-dev",
-          "database_id": "REPLACE_DEV_STORE_D1_ID",
+          "database_id": "123b2a32-d78b-4de9-8318-08e35cefb008",
           "migrations_dir": "../foundation/migrations/store"
         }
       ],
