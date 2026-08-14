@@ -7,6 +7,7 @@ It does not migrate or depend on TiDB.
 ## Runtime contract
 
 - Web Worker: `ads-operations-web-{env}`
+- Web entry: `cloudflare/runtime/web-entry.js`
 - Sync Worker: `ads-operations-sync-{env}`
 - Workflow: `ads-amazon-sync-{env}`
 - Static assets: `dist-cloudflare-native/`
@@ -14,20 +15,35 @@ It does not migrate or depend on TiDB.
 - Control D1 binding: `CONTROL_DB`
 - Store D1 bindings: `STORE_01_DB` ... `STORE_04_DB`
 - Object storage binding: `DATA_BUCKET`
-- Authentication: Cloudflare Access + in-Worker JWT validation
+- Authentication: Cloudflare Access + in-Worker JWT validation + Control D1 RBAC
 
-`run_worker_first` is scoped to `/api/*`. Normal HTML/JS/CSS asset requests are served by Workers Static Assets without invoking the application API router.
+`run_worker_first` is scoped to `/api/*`. Normal HTML/JS/CSS requests are served by Workers Static Assets without entering the application API router.
 
-D1 binding names are server-only implementation details. They are never returned by store-list or health APIs.
+The native build does not modify source `index.html`. In the deployment artifact it:
+
+1. replaces browser `connect-src` with `connect-src 'self'`;
+2. injects `assets/cloudflare-native-api-v1.js`;
+3. therefore makes `/api/*` the only browser data boundary for the Cloudflare-native deployment.
+
+D1 binding names are server-only implementation details. They are never returned by store-list, analytics, or health APIs.
 
 The web Worker binds to the Workflow class exported by the sync Worker. Deploy the sync Worker before the web Worker.
+
+## Package install
+
+There is currently no `package-lock.json`, so do not use `npm ci`.
+Wrangler is pinned exactly in `package.json` to keep local, CI, and Workers Builds behavior aligned.
+
+```bash
+npm install --no-audit --no-fund
+```
 
 ## Development provisioning
 
 The preferred path is the idempotent dev-only provisioner:
 
 ```bash
-npm ci
+npm install --no-audit --no-fund
 npm run provision:cf-native:dev:dry
 npm run provision:cf-native:dev
 ```
@@ -90,7 +106,7 @@ Execute the rendered file against `ads-ops-control-dev`; do not commit the rende
 ## Build and local validation
 
 ```bash
-npm ci
+npm install --no-audit --no-fund
 npm run test:cf-foundation
 npm run build:cf-native
 npm run check:cf-native
@@ -104,7 +120,37 @@ npm run dev:cf-sync
 npm run dev:cf-native
 ```
 
-The validator cross-checks both runtime configs. A web/sync D1 UUID mismatch, R2 mismatch, Workflow name mismatch, class mismatch, or cross-script binding mismatch fails validation.
+The validator cross-checks both runtime configs. A web/sync D1 UUID mismatch, R2 mismatch, Workflow name mismatch, class mismatch, script mismatch, wrong web entry, unresolved Access value, or prematurely enabled Amazon sync gate fails validation.
+
+GitHub Actions also runs the database foundation tests and native checks on this development branch and relevant pull requests. The CI workflow never deploys resources or reads Amazon credentials.
+
+## Implemented API layers
+
+### Control D1
+
+- `/api/v1/products`
+- `/api/v1/keywords`
+- `/api/v1/negative-keywords`
+
+Read access is permission-based. Central master-data writes require global governance permissions and are audited.
+
+### Store D1
+
+- `/api/v1/stores/:storeId/campaigns`
+- `/api/v1/stores/:storeId/ad-groups`
+- `/api/v1/stores/:storeId/keywords`
+- `/api/v1/stores/:storeId/targets`
+- `/api/v1/stores/:storeId/search-terms`
+
+Every route checks `user_id + store_id + ads.read` before resolving the internal Store D1 binding. Search-term analytics requires an explicit date range and currently caps one request at 93 days.
+
+### Cross-store Control D1 analytics
+
+- `/api/v1/analytics/overview`
+- `/api/v1/analytics/products`
+- `/api/v1/analytics/keywords`
+
+These endpoints read asynchronous Control D1 rollups. They do not fan out to all Store D1 databases during a dashboard request.
 
 ## Safety state before Amazon integration
 
@@ -121,7 +167,7 @@ This allows the sync Worker and Workflow definition to be deployed and inspected
 
 ## Dev deployment
 
-After provisioning, the D1 UUIDs are already populated. Configure the remaining web Access values under `env.dev`:
+After provisioning, the D1 UUIDs are populated by the provisioner. Configure the remaining Cloudflare Access values under `env.dev`:
 
 - `TEAM_DOMAIN`
 - `ACCESS_AUD`
@@ -142,29 +188,37 @@ Validate in this order:
 4. `GET /api/v1/stores`
 5. `GET /api/v1/capabilities`
 6. `GET /api/v1/stores/store-dev-01/health`
-7. `GET /api/v1/system/health` as owner
-8. current frontend asset loading
-9. confirm `POST /api/v1/stores/store-dev-01/sync` returns `sync_trigger_disabled`
+7. `GET /api/v1/products`
+8. `GET /api/v1/keywords`
+9. `GET /api/v1/negative-keywords`
+10. Store entity read endpoints with an authorized dev user
+11. Cross-store analytics endpoints after rollup seed data exists
+12. `GET /api/v1/system/health` as owner
+13. current frontend asset loading and `window.CloudflareNativeAPI`
+14. confirm the built CSP has `connect-src 'self'`
+15. confirm `POST /api/v1/stores/store-dev-01/sync` returns `sync_trigger_disabled`
 
 The store health route validates the complete routing chain: Access identity -> Control D1 app user -> store permission -> internal binding lookup -> Store D1 query.
 
-Keep `ACCESS_MODE=observe` until the Access application is confirmed to inject valid JWTs. Change development to `enforce` only after validation. Production is always `enforce`.
+Keep `ACCESS_MODE=observe` only while validating that the Access application injects valid JWTs. Move development to `enforce` before the environment is shared with users. Production is always `enforce`.
 
 ## Production gate
 
 Production provisioning is blocked until all of the following are true:
 
-1. Dev Control D1 migrations pass.
-2. Dev Store D1 migrations pass.
-3. `PRAGMA foreign_key_check` returns no rows.
-4. Duplicate-ingestion/UPSERT tests pass.
+1. Dev Control D1 migrations pass remotely.
+2. Dev Store D1 migrations pass remotely.
+3. `PRAGMA foreign_key_check` returns no rows remotely.
+4. Duplicate-ingestion/UPSERT tests pass remotely.
 5. Cloudflare Access identity maps to a pre-provisioned app user.
 6. Store authorization prevents a user from querying a store they do not belong to.
 7. Store APIs never return internal D1 binding identifiers.
-8. R2 raw-object path and retention rules are validated.
-9. Sync Worker and cross-script Workflow binding deploy with both kill switches disabled.
-10. Workers preview deployment passes browser regression testing.
-11. Amazon OAuth/secrets design passes review before either sync kill switch can be changed.
-12. `node scripts/validate-cloudflare-native.mjs --env production --require-ready` passes.
+8. Native browser requests are same-origin only.
+9. R2 raw-object path and retention rules are validated.
+10. Sync Worker and cross-script Workflow binding deploy with both kill switches disabled.
+11. Workers preview deployment passes browser regression testing.
+12. Control CRUD, Store reads, and Control rollup analytics pass dev integration tests.
+13. Amazon OAuth/secrets design passes review before either sync kill switch can be changed.
+14. `node scripts/validate-cloudflare-native.mjs --env production --require-ready` passes.
 
 Only then create `ads-ops-control-prod`, the four production store databases, and `ads-ops-data-prod`.
