@@ -99,6 +99,11 @@ async function checkAuthenticatedRuntime() {
   record('capabilities_status', capabilitiesResponse.status === 200, { status: capabilitiesResponse.status });
   record('capabilities_sync_disabled', capabilities?.syncTriggerEnabled === false);
 
+  const dataHealthResponse = await request('/api/v1/analytics/data-health', { acceptJson: true, auth: true });
+  const dataHealth = await jsonSafe(dataHealthResponse);
+  record('analytics_data_health_status', dataHealthResponse.status === 200, { status: dataHealthResponse.status });
+  record('analytics_data_health_contract', Array.isArray(dataHealth?.stores) && Array.isArray(dataHealth?.recentRollupFailures));
+
   if (isIsoDate(startDate) && isIsoDate(endDate) && endDate >= startDate) {
     const analyticsResponse = await request(`/api/v1/analytics/overview?startDate=${startDate}&endDate=${endDate}`, {
       acceptJson: true,
