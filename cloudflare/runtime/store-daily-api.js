@@ -98,34 +98,8 @@ async function listDailySearchTerms(request, db, url) {
       GROUP BY st.report_date, st.profile_id, st.ad_product, st.campaign_id, c.name,
                st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros, k.source_updated_at, k.synced_at,
                st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, t.source_updated_at, t.synced_at, st.normalized_search_term
-    ), lineage_validated AS (
-      SELECT
-        *,
-        CASE
-          WHEN fact_row_count > 0
-            AND source_report_job_non_null_count = fact_row_count
-            AND source_report_job_distinct_count = 1
-            AND source_report_job_id_candidate IS NOT NULL
-          THEN source_report_job_id_candidate
-          ELSE NULL
-        END AS validated_source_report_job_id
-      FROM aggregated
-    ), source_report_enriched AS (
-      SELECT
-        lv.*,
-        rj.job_id AS report_job_id,
-        rj.amazon_report_id AS source_amazon_report_id,
-        rj.profile_id AS report_job_profile_id,
-        rj.ad_product AS report_job_ad_product,
-        rj.start_date AS report_job_start_date,
-        rj.end_date AS report_job_end_date
-      FROM lineage_validated lv
-      LEFT JOIN (
-        SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date
-        FROM report_jobs
-      ) rj ON rj.job_id = lv.validated_source_report_job_id
     ), ranked AS (
-      SELECT *, ${sortColumn} AS sort_value FROM source_report_enriched
+      SELECT *, ${sortColumn} AS sort_value FROM aggregated
     )
     SELECT * FROM ranked
     WHERE (?7 IS NULL OR sort_value < ?7 OR (sort_value = ?7 AND group_key < ?8))
@@ -143,10 +117,12 @@ async function listDailySearchTerms(request, db, url) {
     limit + 1,
   ).all();
 
-  const rows = (result.results || []).map((row) => {
+  const resultRows = result.results || [];
+  const sourceReportJobs = await loadSourceReportJobs(db, resultRows);
+  const rows = resultRows.map((row) => {
     const source = targetingSource(row);
     const lineage = sourceReportJobLineage(row);
-    const sourceReport = sourceAmazonReportIdentity(row, lineage);
+    const sourceReport = sourceAmazonReportIdentity(row, lineage, sourceReportJobs.get(lineage.jobId));
     return {
       groupKey: row.group_key,
       reportDate: row.report_date,
@@ -287,14 +263,31 @@ function sourceReportJobLineage(row) {
   return { valid, jobId: valid ? candidate : null };
 }
 
-function sourceAmazonReportIdentity(row, lineage) {
-  if (!lineage?.valid || !lineage.jobId) return { valid: false, amazonReportId: null };
-  const reportJobId = nullableText(row.report_job_id);
-  const amazonReportId = nullableText(row.source_amazon_report_id);
-  const reportProfileId = nullableText(row.report_job_profile_id);
-  const reportAdProduct = nullableText(row.report_job_ad_product);
-  const reportStartDate = isoDate(row.report_job_start_date);
-  const reportEndDate = isoDate(row.report_job_end_date);
+async function loadSourceReportJobs(db, rows) {
+  const jobIds = [...new Set((rows || [])
+    .map((row) => sourceReportJobLineage(row))
+    .filter((lineage) => lineage.valid && lineage.jobId)
+    .map((lineage) => lineage.jobId))];
+  if (!jobIds.length) return new Map();
+  const placeholders = jobIds.map((_, index) => `?${index + 1}`).join(',');
+  const result = await db.prepare(`
+    SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date
+    FROM report_jobs
+    WHERE job_id IN (${placeholders})
+  `).bind(...jobIds).all();
+  return new Map((result.results || [])
+    .map((row) => [nullableText(row.job_id), row])
+    .filter(([jobId]) => jobId !== null));
+}
+
+function sourceAmazonReportIdentity(row, lineage, reportJob) {
+  if (!lineage?.valid || !lineage.jobId || !reportJob) return { valid: false, amazonReportId: null };
+  const reportJobId = nullableText(reportJob.job_id);
+  const amazonReportId = nullableText(reportJob.amazon_report_id);
+  const reportProfileId = nullableText(reportJob.profile_id);
+  const reportAdProduct = nullableText(reportJob.ad_product);
+  const reportStartDate = isoDate(reportJob.start_date);
+  const reportEndDate = isoDate(reportJob.end_date);
   const factProfileId = nullableText(row.profile_id);
   const factAdProduct = nullableText(row.ad_product);
   const reportDate = isoDate(row.report_date);

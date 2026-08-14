@@ -30,66 +30,90 @@ function controlDb() {
   };
 }
 
-function storeDb(overrides = {}) {
+function factRow(overrides = {}) {
+  return {
+    group_key: 'g-keyword',
+    report_date: '2026-08-12',
+    profile_id: 'profile-1',
+    ad_product: 'SPONSORED_PRODUCTS',
+    campaign_id: 'campaign-1',
+    campaign_name: 'Campaign 1',
+    ad_group_id: 'adgroup-1',
+    ad_group_name: 'Ad group 1',
+    keyword_id: 'keyword-1',
+    keyword_text: 'reading glasses',
+    keyword_match_type: 'EXACT',
+    keyword_state: 'ENABLED',
+    keyword_bid_micros: 2500000,
+    keyword_source_updated_at: null,
+    keyword_synced_at: '2026-08-14 09:35:29',
+    target_id: null,
+    target_type: null,
+    target_expression_text: null,
+    target_state: null,
+    target_bid_micros: null,
+    target_source_updated_at: null,
+    target_synced_at: null,
+    search_term: 'reading glasses',
+    normalized_search_term: 'reading glasses',
+    report_match_type: 'EXACT',
+    fact_mirror_updated_at: '2026-08-14 09:35:29',
+    fact_row_count: 1,
+    source_report_job_non_null_count: 1,
+    source_report_job_distinct_count: 1,
+    source_report_job_id_candidate: 'report-job-1',
+    impressions: 100,
+    clicks: 10,
+    cost_micros: 1000000,
+    purchases: 2,
+    units_sold: 2,
+    sales_micros: 5000000,
+    sort_value: 1000000,
+    ...overrides,
+  };
+}
+
+function reportJob(overrides = {}) {
+  return {
+    job_id: 'report-job-1',
+    amazon_report_id: 'amazon-report-1',
+    profile_id: 'profile-1',
+    ad_product: 'SPONSORED_PRODUCTS',
+    start_date: '2026-08-12',
+    end_date: '2026-08-12',
+    ...overrides,
+  };
+}
+
+function storeDb({ fact = {}, report = {}, missingReport = false } = {}) {
   return {
     prepare(sql) {
-      assert.match(sql, /lineage_validated AS/);
-      assert.match(sql, /validated_source_report_job_id/);
-      assert.match(sql, /LEFT JOIN \(\s*SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date\s*FROM report_jobs\s*\) rj ON rj\.job_id = lv\.validated_source_report_job_id/);
-      assert.match(sql, /rj\.amazon_report_id AS source_amazon_report_id/);
+      if (sql.includes('FROM report_jobs')) {
+        assert.doesNotMatch(sql, /JOIN\s+report_jobs/i);
+        assert.match(sql, /SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date/);
+        assert.match(sql, /WHERE job_id IN \(\?1\)/);
+        return {
+          bind(...params) {
+            assert.deepEqual(params, ['report-job-1']);
+            return {
+              async all() {
+                return { results: missingReport ? [] : [reportJob(report)] };
+              },
+            };
+          },
+        };
+      }
+      assert.match(sql, /MAX\(st\.updated_at\) AS fact_mirror_updated_at/);
+      assert.match(sql, /COUNT\(\*\) AS fact_row_count/);
+      assert.match(sql, /COUNT\(st\.source_report_job_id\) AS source_report_job_non_null_count/);
+      assert.match(sql, /COUNT\(DISTINCT st\.source_report_job_id\) AS source_report_job_distinct_count/);
+      assert.match(sql, /MIN\(st\.source_report_job_id\) AS source_report_job_id_candidate/);
+      assert.doesNotMatch(sql, /report_jobs/i);
       return {
         bind() {
           return {
             async all() {
-              return {
-                results: [{
-                  group_key: 'g-keyword',
-                  report_date: '2026-08-12',
-                  profile_id: 'profile-1',
-                  ad_product: 'SPONSORED_PRODUCTS',
-                  campaign_id: 'campaign-1',
-                  campaign_name: 'Campaign 1',
-                  ad_group_id: 'adgroup-1',
-                  ad_group_name: 'Ad group 1',
-                  keyword_id: 'keyword-1',
-                  keyword_text: 'reading glasses',
-                  keyword_match_type: 'EXACT',
-                  keyword_state: 'ENABLED',
-                  keyword_bid_micros: 2500000,
-                  keyword_source_updated_at: null,
-                  keyword_synced_at: '2026-08-14 09:35:29',
-                  target_id: null,
-                  target_type: null,
-                  target_expression_text: null,
-                  target_state: null,
-                  target_bid_micros: null,
-                  target_source_updated_at: null,
-                  target_synced_at: null,
-                  search_term: 'reading glasses',
-                  normalized_search_term: 'reading glasses',
-                  report_match_type: 'EXACT',
-                  fact_mirror_updated_at: '2026-08-14 09:35:29',
-                  fact_row_count: 1,
-                  source_report_job_non_null_count: 1,
-                  source_report_job_distinct_count: 1,
-                  source_report_job_id_candidate: 'report-job-1',
-                  validated_source_report_job_id: 'report-job-1',
-                  report_job_id: 'report-job-1',
-                  source_amazon_report_id: 'amazon-report-1',
-                  report_job_profile_id: 'profile-1',
-                  report_job_ad_product: 'SPONSORED_PRODUCTS',
-                  report_job_start_date: '2026-08-12',
-                  report_job_end_date: '2026-08-12',
-                  impressions: 100,
-                  clicks: 10,
-                  cost_micros: 1000000,
-                  purchases: 2,
-                  units_sold: 2,
-                  sales_micros: 5000000,
-                  sort_value: 1000000,
-                  ...overrides,
-                }],
-              };
+              return { results: [factRow(fact)] };
             },
           };
         },
@@ -98,14 +122,14 @@ function storeDb(overrides = {}) {
   };
 }
 
-async function apiPayload(overrides = {}) {
+async function apiPayload(options = {}) {
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/search-terms-daily?startDate=2026-08-12&endDate=2026-08-12&limit=20', {
     method: 'GET',
     headers: { 'cf-ray': 'gate17-read-ray' },
   });
   const response = await handleStoreDailyApiRoute({
     request,
-    env: { CONTROL_DB: controlDb(), STORE_01_DB: storeDb(overrides) },
+    env: { CONTROL_DB: controlDb(), STORE_01_DB: storeDb(options) },
     actor: { user_id: 'user-dev-owner' },
     url: new URL(request.url),
   });
@@ -134,23 +158,46 @@ assert.equal(payload.items[0].factMirrorUpdatedAt, '2026-08-14 09:35:29');
 assert.equal(payload.items[0].currentBidSyncedAt, '2026-08-14 09:35:29');
 assert.equal(payload.items[0].targetingSourceUpdatedAt, null);
 
-for (const overrides of [
-  { report_job_id: null },
-  { source_amazon_report_id: null },
-  { report_job_profile_id: 'profile-other' },
-  { report_job_ad_product: 'SPONSORED_BRANDS' },
-  { report_job_start_date: '2026-08-13', report_job_end_date: '2026-08-14' },
-  {
-    fact_row_count: 2,
-    source_report_job_non_null_count: 2,
-    source_report_job_distinct_count: 2,
-    source_report_job_id_candidate: 'report-job-1',
-  },
+for (const options of [
+  { missingReport: true },
+  { report: { amazon_report_id: null } },
+  { report: { profile_id: 'profile-other' } },
+  { report: { ad_product: 'SPONSORED_BRANDS' } },
+  { report: { start_date: '2026-08-13', end_date: '2026-08-14' } },
 ]) {
-  const invalid = await apiPayload(overrides);
+  const invalid = await apiPayload(options);
+  assert.equal(invalid.items[0].sourceReportJobId, 'report-job-1');
+  assert.equal(invalid.items[0].sourceReportJobIdentityValid, true);
   assert.equal(invalid.items[0].sourceAmazonReportId, null);
   assert.equal(invalid.items[0].sourceAmazonReportIdentityValid, false);
 }
+
+const ambiguousRequest = new Request('https://example.test/api/v1/stores/store-dev-01/search-terms-daily?startDate=2026-08-12&endDate=2026-08-12&limit=20');
+let reportLookupAttempted = false;
+const ambiguousDb = {
+  prepare(sql) {
+    if (sql.includes('FROM report_jobs')) reportLookupAttempted = true;
+    return storeDb({
+      fact: {
+        fact_row_count: 2,
+        source_report_job_non_null_count: 2,
+        source_report_job_distinct_count: 2,
+        source_report_job_id_candidate: 'report-job-1',
+      },
+    }).prepare(sql);
+  },
+};
+const ambiguousResponse = await handleStoreDailyApiRoute({
+  request: ambiguousRequest,
+  env: { CONTROL_DB: controlDb(), STORE_01_DB: ambiguousDb },
+  actor: { user_id: 'user-dev-owner' },
+  url: new URL(ambiguousRequest.url),
+});
+const ambiguous = await ambiguousResponse.json();
+assert.equal(reportLookupAttempted, false);
+assert.equal(ambiguous.items[0].sourceReportJobId, null);
+assert.equal(ambiguous.items[0].sourceAmazonReportId, null);
+assert.equal(ambiguous.items[0].sourceAmazonReportIdentityValid, false);
 
 let bridgePayload = payload;
 const window = {
@@ -184,10 +231,7 @@ assert.equal(bridged.governance.sourceEvidence.sourceAmazonReportObserved, true)
 
 bridgePayload = {
   ...payload,
-  sourceReportContract: {
-    ...payload.sourceReportContract,
-    joinRule: 'any_job_id',
-  },
+  sourceReportContract: { ...payload.sourceReportContract, joinRule: 'any_job_id' },
 };
 window.CloudflareNativeQueryBridge.clearCache();
 bridged = await window.CloudflareNativeQueryBridge.ads({
@@ -228,12 +272,14 @@ for (const item of bridged.rows) {
 }
 
 assert.match(apiSource, /SOURCE_REPORT_CONTRACT_VERSION = 'store-search-term-source-report-v1'/);
-assert.match(apiSource, /lineage_validated AS/);
-assert.match(apiSource, /LEFT JOIN \(\s*SELECT job_id, amazon_report_id, profile_id, ad_product, start_date, end_date\s*FROM report_jobs\s*\) rj ON rj\.job_id = lv\.validated_source_report_job_id/);
+assert.match(apiSource, /FROM report_jobs/);
+assert.match(apiSource, /WHERE job_id IN \(\$\{placeholders\}\)/);
 assert.match(apiSource, /amazonReportId:\s*'report_jobs\.amazon_report_id'/);
+assert.match(apiSource, /joinRule:\s*'validated_source_report_job_id'/);
 assert.match(apiSource, /contextRule:\s*'profile_ad_product_date_covered'/);
 assert.match(bridgeSource, /joinRule === 'validated_source_report_job_id'/);
 assert.match(bridgeSource, /sourceAmazonReportIdentityObserved/);
+assert.doesNotMatch(apiSource, /JOIN\s+report_jobs/i);
 assert.doesNotMatch(apiSource, /r2_object_key|content_sha256|request_fingerprint|request_json|row_count AS report_job/i);
 assert.doesNotMatch(apiSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
 assert.doesNotMatch(bridgeSource, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
@@ -247,13 +293,14 @@ console.log(JSON.stringify({
   gate: 17,
   contracts: [
     'amazon-report-id-provenance-explicit',
-    'report-job-join-after-lineage-validation',
+    'report-job-lookup-after-lineage-validation',
+    'ambiguous-lineage-skips-report-job-lookup',
     'report-job-context-profile-consistent',
     'report-job-context-ad-product-consistent',
     'report-job-date-coverage-consistent',
     'missing-amazon-report-id-fails-closed',
     'source-report-contract-required-before-bridge-provenance',
-    'gate16-lineage-preserved',
+    'gate16-lineage-query-preserved',
     'report-job-metadata-not-expanded',
     'no-freshness-threshold-introduced',
     'governance-readiness-remains-closed',
