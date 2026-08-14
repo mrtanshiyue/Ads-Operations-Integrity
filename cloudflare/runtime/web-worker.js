@@ -62,12 +62,18 @@ export default {
       }
 
       if (url.pathname === '/api/v1/capabilities' && request.method === 'GET') {
-        const permissions = await permissionsForActor(env.CONTROL_DB, actor.user_id);
-        return json({ permissions: [...permissions].sort() }, 200, request);
+        const [globalPermissions, storePermissions] = await Promise.all([
+          globalPermissionsForActor(env.CONTROL_DB, actor.user_id),
+          storePermissionsForActor(env.CONTROL_DB, actor.user_id),
+        ]);
+        return json({
+          globalPermissions: [...globalPermissions].sort(),
+          storePermissions,
+        }, 200, request);
       }
 
       if (url.pathname === '/api/v1/system/bindings' && request.method === 'GET') {
-        const permissions = await permissionsForActor(env.CONTROL_DB, actor.user_id);
+        const permissions = await globalPermissionsForActor(env.CONTROL_DB, actor.user_id);
         if (!permissions.has('system.manage')) {
           return json({ error: 'forbidden', permission: 'system.manage' }, 403, request);
         }
@@ -110,10 +116,11 @@ async function sessionResponse(request, env, access) {
   }
 
   await touchLastSeen(env.CONTROL_DB, actor.user_id);
-  const [globalRoles, storeMemberships, permissions] = await Promise.all([
+  const [globalRoles, accessibleStores, globalPermissions, storePermissions] = await Promise.all([
     globalRolesForActor(env.CONTROL_DB, actor.user_id),
-    storeMembershipsForActor(env.CONTROL_DB, actor.user_id),
-    permissionsForActor(env.CONTROL_DB, actor.user_id),
+    storesForActor(env.CONTROL_DB, actor.user_id),
+    globalPermissionsForActor(env.CONTROL_DB, actor.user_id),
+    storePermissionsForActor(env.CONTROL_DB, actor.user_id),
   ]);
 
   return json({
@@ -125,8 +132,11 @@ async function sessionResponse(request, env, access) {
       displayName: actor.display_name,
     },
     globalRoles,
-    stores: storeMemberships,
-    permissions: [...permissions].sort(),
+    stores: accessibleStores,
+    permissions: {
+      global: [...globalPermissions].sort(),
+      stores: storePermissions,
+    },
   }, 200, request);
 }
 
@@ -209,17 +219,51 @@ async function storesForActor(db, userId) {
   return storeMembershipsForActor(db, userId);
 }
 
-async function permissionsForActor(db, userId) {
+async function globalPermissionsForActor(db, userId) {
   const result = await db.prepare(`
     SELECT DISTINCT rp.permission_key
-    FROM role_permissions rp
-    JOIN (
-      SELECT role_key FROM user_global_roles WHERE user_id = ?1
-      UNION
-      SELECT role_key FROM store_members WHERE user_id = ?1
-    ) assigned ON assigned.role_key = rp.role_key
+    FROM user_global_roles ugr
+    JOIN role_permissions rp ON rp.role_key = ugr.role_key
+    WHERE ugr.user_id = ?1
   `).bind(userId).all();
   return new Set((result.results || []).map((row) => row.permission_key));
+}
+
+async function storePermissionsForActor(db, userId) {
+  const result = await db.prepare(`
+    SELECT sm.store_id, rp.permission_key
+    FROM store_members sm
+    JOIN role_permissions rp ON rp.role_key = sm.role_key
+    WHERE sm.user_id = ?1
+    ORDER BY sm.store_id, rp.permission_key
+  `).bind(userId).all();
+
+  const byStore = {};
+  for (const row of result.results || []) {
+    if (!byStore[row.store_id]) byStore[row.store_id] = [];
+    byStore[row.store_id].push(row.permission_key);
+  }
+  return byStore;
+}
+
+async function actorHasStorePermission(db, userId, storeId, permissionKey) {
+  const global = await db.prepare(`
+    SELECT 1 AS ok
+    FROM user_global_roles ugr
+    JOIN role_permissions rp ON rp.role_key = ugr.role_key
+    WHERE ugr.user_id = ?1 AND rp.permission_key = ?2
+    LIMIT 1
+  `).bind(userId, permissionKey).first();
+  if (global) return true;
+
+  const scoped = await db.prepare(`
+    SELECT 1 AS ok
+    FROM store_members sm
+    JOIN role_permissions rp ON rp.role_key = sm.role_key
+    WHERE sm.user_id = ?1 AND sm.store_id = ?2 AND rp.permission_key = ?3
+    LIMIT 1
+  `).bind(userId, storeId, permissionKey).first();
+  return Boolean(scoped);
 }
 
 function configuredStoreBindings(env) {
