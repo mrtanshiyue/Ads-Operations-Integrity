@@ -2,6 +2,16 @@ import { NonRetryableError, WorkflowEntrypoint } from 'cloudflare:workers';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const ALLOWED_TRIGGER_TYPES = new Set(['scheduled', 'manual', 'recovery', 'backfill']);
+const ALLOWED_DATASETS = new Set([
+  'campaign_daily',
+  'ad_group_daily',
+  'keyword_daily',
+  'target_daily',
+  'search_term_daily',
+  'advertised_product_daily',
+  'purchased_product_daily',
+  'placement_daily',
+]);
 
 export default {
   async fetch(request, env) {
@@ -121,7 +131,12 @@ function normalizeSyncInput(payload) {
     .map((value) => String(value || '').trim())
     .filter(Boolean))];
   if (!datasets.length) throw new NonRetryableError('sync_datasets_required');
-  if (datasets.length > 20) throw new NonRetryableError('sync_dataset_limit_exceeded');
+  if (datasets.length > ALLOWED_DATASETS.size) throw new NonRetryableError('sync_dataset_limit_exceeded');
+  for (const dataset of datasets) {
+    if (!ALLOWED_DATASETS.has(dataset)) {
+      throw new NonRetryableError(`sync_dataset_not_allowed:${dataset}`);
+    }
+  }
 
   return {
     storeId,
