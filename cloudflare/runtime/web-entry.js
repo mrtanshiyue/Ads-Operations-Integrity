@@ -5,6 +5,7 @@ import { handleStoreDailyApiRoute } from './store-daily-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
+import { enforceStrictAccessActorBinding } from '../../src/access-actor.js';
 
 const CONTROL_ROUTE_PATTERNS = [
   /^\/api\/v1\/products(?:\/[^/]+)?$/,
@@ -17,6 +18,12 @@ const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywo
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    if (shouldApplyStrictAccessGuard(url.pathname, request.method, env)) {
+      const guard = await strictAccessGuard(request, env);
+      if (guard) return guard;
+    }
+
     const modularRoute = isControlRoute(url.pathname)
       || STORE_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname);
@@ -74,6 +81,27 @@ export default {
 
 function isControlRoute(pathname) {
   return CONTROL_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));
+}
+
+function shouldApplyStrictAccessGuard(pathname, method, env) {
+  return String(env.ACCESS_MODE || '').toLowerCase() === 'enforce'
+    && pathname.startsWith('/api/')
+    && pathname !== '/api/health'
+    && method !== 'OPTIONS';
+}
+
+async function strictAccessGuard(request, env) {
+  if (!env.CONTROL_DB) {
+    return json(request, { error: 'control_db_not_bound' }, 503);
+  }
+
+  const access = await evaluateAccessIdentity(request, env);
+  const result = await enforceStrictAccessActorBinding(env.CONTROL_DB, access);
+  if (result.ok) return null;
+
+  const payload = { error: result.error };
+  if (result.reason) payload.reason = result.reason;
+  return json(request, payload, result.status);
 }
 
 async function resolveActor(db, access) {

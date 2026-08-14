@@ -6,6 +6,8 @@ on:
       - cloudflare-foundation-v1
     paths:
       - 'cloudflare/**'
+      - 'src/access.js'
+      - 'src/access-actor.js'
       - 'scripts/build-cloudflare-native.mjs'
       - 'scripts/provision-cloudflare-dev.mjs'
       - 'scripts/bootstrap-cloudflare-dev.mjs'
@@ -16,6 +18,7 @@ on:
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-native-ui-contract.mjs'
       - 'scripts/test-gate6-browser-acceptance.mjs'
+      - 'scripts/test-gate7-browser-acceptance.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -27,6 +30,8 @@ on:
   pull_request:
     paths:
       - 'cloudflare/**'
+      - 'src/access.js'
+      - 'src/access-actor.js'
       - 'scripts/build-cloudflare-native.mjs'
       - 'scripts/provision-cloudflare-dev.mjs'
       - 'scripts/bootstrap-cloudflare-dev.mjs'
@@ -37,6 +42,7 @@ on:
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-native-ui-contract.mjs'
       - 'scripts/test-gate6-browser-acceptance.mjs'
+      - 'scripts/test-gate7-browser-acceptance.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
