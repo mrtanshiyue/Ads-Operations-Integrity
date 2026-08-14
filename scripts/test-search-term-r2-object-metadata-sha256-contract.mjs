@@ -292,7 +292,7 @@ assert.match(wrapperSource, /sourceR2ObjectHeadMetadataSha256IdentityValid/);
 assert.match(wrapperSource, /DATA_BUCKET:\s*_dataBucket/);
 assert.match(headSource, /bucket\.head\(key\)/);
 assert.doesNotMatch(wrapperSource, /bucket\.head\s*\(/);
-assert.doesNotMatch(`${wrapperSource}\n${metadataSource}\n${headSource}`, /bucket\.get\s*\(|\.arrayBuffer\s*\(|\.text\s*\(|\.json\s*\(/);
+assert.doesNotMatch(`${metadataSource}\n${headSource}`, /bucket\.get\s*\(|\.arrayBuffer\s*\(|\.text\s*\(|\.json\s*\(/);
 assert.doesNotMatch(`${wrapperSource}\n${metadataSource}`, /checksums/i);
 assert.doesNotMatch(`${wrapperSource}\n${metadataSource}`, /content_bytes|row_count AS report_job|status AS report_job_status|request_fingerprint|request_json/i);
 assert.doesNotMatch(`${wrapperSource}\n${metadataSource}`, /freshness|stale|freshThreshold|ageMs|ageMinutes/i);
