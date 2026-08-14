@@ -1,0 +1,6 @@
+# Runtime values for local development only.
+# Copy to .dev.vars and never commit the real file.
+TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+ACCESS_AUD=replace-with-access-application-audience
+ACCESS_MODE=observe
+APP_ENV=development
