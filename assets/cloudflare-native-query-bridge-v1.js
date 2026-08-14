@@ -1,7 +1,8 @@
 (function initCloudflareNativeQueryBridge(global) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
+  const STORE_SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1';
   const CACHE_TTL_MS = 30000;
   const MAX_ROWS_PER_STORE = 2000;
   const PAGE_LIMIT = 200;
@@ -23,6 +24,12 @@
   function number(value) {
     const parsed = Number(value || 0);
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function nullableNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   function microsToAmount(value) {
@@ -92,6 +99,7 @@
   async function collectStoreSearchTerms(store, options) {
     const rows = [];
     let cursor = null;
+    let sourceContractReady = true;
     do {
       const payload = await api().searchTermsDaily(store.storeId, {
         startDate: options.from,
@@ -100,26 +108,68 @@
         limit: PAGE_LIMIT,
         cursor,
       });
+      const pageContractReady = validStoreSourceContract(payload?.sourceContract);
+      sourceContractReady = sourceContractReady && pageContractReady;
       const items = Array.isArray(payload?.items) ? payload.items : [];
       for (const item of items) {
-        rows.push(toLegacyAdRow(store, item, options));
+        rows.push(toLegacyAdRow(store, item, options, { sourceContractReady: pageContractReady }));
         if (rows.length >= MAX_ROWS_PER_STORE) break;
       }
       cursor = payload?.nextCursor || null;
       if (!items.length || rows.length >= MAX_ROWS_PER_STORE) break;
     } while (cursor);
-    return { rows, truncated: Boolean(cursor) };
+    return { rows, truncated: Boolean(cursor), sourceContractReady };
   }
 
-  function toLegacyAdRow(store, item, options) {
+  function validStoreSourceContract(contract) {
+    return contract?.schemaVersion === STORE_SOURCE_CONTRACT_VERSION
+      && contract?.identityRule === 'keyword_xor_target'
+      && contract?.bidUnit === 'micros'
+      && contract?.bidNullability === 'preserved';
+  }
+
+  function sourceProvenance(item, sourceContractReady) {
+    const keywordId = text(item?.keywordId);
+    const targetId = text(item?.targetId);
+    const xorIdentity = Boolean(keywordId) !== Boolean(targetId);
+    const expectedKind = keywordId ? 'keyword' : targetId ? 'target' : null;
+    const kindMatches = xorIdentity && text(item?.targetingKind).toLowerCase() === expectedKind;
+    const identityValid = sourceContractReady
+      && item?.targetingIdentityValid === true
+      && xorIdentity
+      && kindMatches;
+    const bidSource = identityValid ? text(item?.bidSource).toLowerCase() : '';
+    const bidSourceMatches = bidSource === expectedKind;
+    const bidMicros = identityValid && bidSourceMatches ? nullableNumber(item?.currentBidMicros) : null;
+    const bidValueShapeValid = item?.currentBidMicros === null
+      || item?.currentBidMicros === undefined
+      || (Number.isFinite(Number(item.currentBidMicros)) && Number(item.currentBidMicros) >= 0);
+    const bidNullabilityPreserved = identityValid && bidSourceMatches && bidValueShapeValid;
+    const adProduct = sourceContractReady ? text(item?.adProduct) : '';
+    return {
+      schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
+      targetingIdentityValid: identityValid,
+      targetingKind: identityValid ? expectedKind : null,
+      bidSource: bidSourceMatches ? bidSource : null,
+      bidNullabilityPreserved,
+      bidMicros,
+      adProductPresent: Boolean(adProduct),
+      adProduct,
+    };
+  }
+
+  function toLegacyAdRow(store, item, options, context = {}) {
     const keywordId = text(item.keywordId);
     const targetId = text(item.targetId);
     const targetingId = keywordId || targetId;
     const targeting = text(item.keywordText) || text(item.targetExpressionText) || targetId;
-    const searchTerm = text(item.searchTerm);
     const reportDate = canonicalDate(item.reportDate);
+    const provenance = sourceProvenance(item, context.sourceContractReady === true);
+    const currentBid = provenance.bidNullabilityPreserved && provenance.bidMicros !== null
+      ? microsToAmount(provenance.bidMicros)
+      : null;
     return {
-      id: [store.storeId, reportDate, item.profileId, item.campaignId, item.adGroupId, targetingId, searchTerm].map(text).join('|'),
+      id: [store.storeId, reportDate, item.profileId, item.campaignId, item.adGroupId, targetingId, item.searchTerm].map(text).join('|'),
       storeId: store.storeCode || store.storeId.toUpperCase(),
       date: reportDate,
       campaignId: text(item.campaignId),
@@ -129,19 +179,19 @@
       targetingId,
       targeting,
       targetingType: text(item.targetType) || (keywordId ? 'KEYWORD' : (targetId ? 'PRODUCT_TARGET' : '')),
-      targetingState: '',
-      searchTerm,
+      targetingState: provenance.targetingIdentityValid ? text(item.targetingState) : '',
+      searchTerm: text(item.searchTerm),
       matchType: text(item.matchType),
-      currentBid: null,
+      currentBid,
       targetBid: null,
-      bid: null,
+      bid: currentBid,
       impressions: number(item.impressions),
       clicks: number(item.clicks),
       spend: microsToAmount(item.costMicros),
       orders: number(item.purchases),
       units: number(item.unitsSold),
       sales: microsToAmount(item.salesMicros),
-      adProduct: null,
+      adProduct: provenance.adProduct || null,
       advertisedAsin: null,
       advertisedSku: null,
       purchasedAsin: null,
@@ -151,6 +201,15 @@
       attributionWindowDays: null,
       bidValueTrusted: false,
       governanceReady: false,
+      sourceProvenance: {
+        schemaVersion: provenance.schemaVersion,
+        targetingIdentityValid: provenance.targetingIdentityValid,
+        targetingKind: provenance.targetingKind,
+        bidSource: provenance.bidSource,
+        bidNullabilityPreserved: provenance.bidNullabilityPreserved,
+        bidMicros: provenance.bidMicros,
+        adProductPresent: provenance.adProductPresent,
+      },
       sourceCoverage: {
         backend: 'cloudflare-d1',
         startDate: options.from,
@@ -161,7 +220,25 @@
     };
   }
 
-  function adsGovernance(scope, selectedStores, options, truncated) {
+  function summarizeSourceEvidence(rows, sourceContractReady) {
+    const input = Array.isArray(rows) ? rows : [];
+    const provenanceRows = input.map((row) => row?.sourceProvenance || {});
+    return {
+      schemaVersion: sourceContractReady ? STORE_SOURCE_CONTRACT_VERSION : '',
+      rowCount: input.length,
+      sourceContractObserved: Boolean(sourceContractReady),
+      targetingIdentityObserved: input.length > 0
+        && provenanceRows.every((item) => item.targetingIdentityValid === true),
+      bidSourceObserved: input.length > 0
+        && provenanceRows.every((item) => item.bidSource === 'keyword' || item.bidSource === 'target'),
+      bidNullabilityPreserved: input.length > 0
+        && provenanceRows.every((item) => item.bidNullabilityPreserved === true),
+      adProductObserved: input.length > 0
+        && provenanceRows.every((item) => item.adProductPresent === true),
+    };
+  }
+
+  function adsGovernance(scope, selectedStores, options, truncated, sourceEvidence) {
     return {
       schemaVersion: 'ads-query-governance-v2',
       sourceBackend: 'cloudflare-d1',
@@ -176,10 +253,11 @@
         adGroup: true,
         searchTerm: true,
         date: true,
-        keywordOrTargetIdentity: 'partial',
-        adProduct: false,
-        currentBid: false,
+        keywordOrTargetIdentity: sourceEvidence.targetingIdentityObserved ? 'source-observed' : 'partial',
+        adProduct: sourceEvidence.adProductObserved,
+        currentBid: sourceEvidence.bidSourceObserved && sourceEvidence.bidNullabilityPreserved,
       },
+      sourceEvidence,
       readiness: {
         searchTermReady: true,
         targetingIdentityReady: false,
@@ -217,16 +295,18 @@
       return {
         rows,
         truncated: perStore.some((entry) => entry.truncated),
+        sourceContractReady: perStore.length > 0 && perStore.every((entry) => entry.sourceContractReady),
       };
     });
 
     const page = collected.rows.slice(offset, offset + limit);
     const nextOffset = offset + page.length < collected.rows.length ? offset + page.length : null;
+    const sourceEvidence = summarizeSourceEvidence(collected.rows, collected.sourceContractReady);
     return {
       rows: page,
       nextOffset,
       source: 'query-cloudflare-d1',
-      governance: adsGovernance(scope, selectedStores, { from, to }, collected.truncated),
+      governance: adsGovernance(scope, selectedStores, { from, to }, collected.truncated, sourceEvidence),
     };
   }
 

@@ -2,6 +2,7 @@ const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'ST
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 const MAX_DAYS = 93;
+const SOURCE_CONTRACT_VERSION = 'store-targeting-source-v1';
 
 export async function handleStoreDailyApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-terms-daily$/);
@@ -48,6 +49,7 @@ async function listDailySearchTerms(request, db, url) {
         MIN(st.row_key) AS group_key,
         st.report_date,
         st.profile_id,
+        st.ad_product,
         st.campaign_id,
         c.name AS campaign_name,
         st.ad_group_id,
@@ -55,9 +57,13 @@ async function listDailySearchTerms(request, db, url) {
         st.keyword_id,
         k.keyword_text,
         k.match_type AS keyword_match_type,
+        k.state AS keyword_state,
+        k.bid_micros AS keyword_bid_micros,
         st.target_id,
         t.target_type,
         t.expression_text AS target_expression_text,
+        t.state AS target_state,
+        t.bid_micros AS target_bid_micros,
         MIN(st.search_term) AS search_term,
         st.normalized_search_term,
         MAX(st.match_type) AS report_match_type,
@@ -77,9 +83,9 @@ async function listDailySearchTerms(request, db, url) {
         AND (?4 IS NULL OR st.campaign_id = ?4)
         AND (?5 IS NULL OR st.ad_group_id = ?5)
         AND (?6 IS NULL OR st.search_term LIKE ?6 ESCAPE '\\' OR st.normalized_search_term LIKE ?6 ESCAPE '\\')
-      GROUP BY st.report_date, st.profile_id, st.campaign_id, c.name,
-               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type,
-               st.target_id, t.target_type, t.expression_text, st.normalized_search_term
+      GROUP BY st.report_date, st.profile_id, st.ad_product, st.campaign_id, c.name,
+               st.ad_group_id, ag.name, st.keyword_id, k.keyword_text, k.match_type, k.state, k.bid_micros,
+               st.target_id, t.target_type, t.expression_text, t.state, t.bid_micros, st.normalized_search_term
     ), ranked AS (
       SELECT *, ${sortColumn} AS sort_value FROM aggregated
     )
@@ -99,35 +105,50 @@ async function listDailySearchTerms(request, db, url) {
     limit + 1,
   ).all();
 
-  const rows = (result.results || []).map((row) => ({
-    groupKey: row.group_key,
-    reportDate: row.report_date,
-    profileId: row.profile_id,
-    campaignId: row.campaign_id,
-    campaignName: row.campaign_name,
-    adGroupId: row.ad_group_id,
-    adGroupName: row.ad_group_name,
-    keywordId: row.keyword_id,
-    keywordText: row.keyword_text,
-    targetId: row.target_id,
-    targetType: row.target_type,
-    targetExpressionText: row.target_expression_text,
-    searchTerm: row.search_term,
-    normalizedSearchTerm: row.normalized_search_term,
-    matchType: row.keyword_match_type || row.report_match_type || null,
-    impressions: number(row.impressions),
-    clicks: number(row.clicks),
-    costMicros: number(row.cost_micros),
-    purchases: number(row.purchases),
-    unitsSold: number(row.units_sold),
-    salesMicros: number(row.sales_micros),
-    sortValue: number(row.sort_value),
-  }));
+  const rows = (result.results || []).map((row) => {
+    const source = targetingSource(row);
+    return {
+      groupKey: row.group_key,
+      reportDate: row.report_date,
+      profileId: row.profile_id,
+      adProduct: row.ad_product,
+      campaignId: row.campaign_id,
+      campaignName: row.campaign_name,
+      adGroupId: row.ad_group_id,
+      adGroupName: row.ad_group_name,
+      keywordId: row.keyword_id,
+      keywordText: row.keyword_text,
+      targetId: row.target_id,
+      targetType: row.target_type,
+      targetExpressionText: row.target_expression_text,
+      targetingKind: source.kind,
+      targetingIdentityValid: source.valid,
+      targetingState: source.state,
+      currentBidMicros: source.bidMicros,
+      bidSource: source.bidSource,
+      searchTerm: row.search_term,
+      normalizedSearchTerm: row.normalized_search_term,
+      matchType: row.keyword_match_type || row.report_match_type || null,
+      impressions: number(row.impressions),
+      clicks: number(row.clicks),
+      costMicros: number(row.cost_micros),
+      purchases: number(row.purchases),
+      unitsSold: number(row.units_sold),
+      salesMicros: number(row.sales_micros),
+      sortValue: number(row.sort_value),
+    };
+  });
 
   const hasMore = rows.length > limit;
   const items = hasMore ? rows.slice(0, limit) : rows;
   const last = items.at(-1);
   return json(request, {
+    sourceContract: {
+      schemaVersion: SOURCE_CONTRACT_VERSION,
+      identityRule: 'keyword_xor_target',
+      bidUnit: 'micros',
+      bidNullability: 'preserved',
+    },
     range: { startDate, endDate, days },
     grain: 'day',
     sort,
@@ -160,6 +181,30 @@ async function authorizedStoreRoute(env, userId, storeId, permission) {
   return { store, storeDb };
 }
 
+function targetingSource(row) {
+  const keywordId = String(row.keyword_id || '').trim();
+  const targetId = String(row.target_id || '').trim();
+  if (Boolean(keywordId) === Boolean(targetId)) {
+    return { valid: false, kind: null, state: null, bidMicros: null, bidSource: null };
+  }
+  if (keywordId) {
+    return {
+      valid: true,
+      kind: 'keyword',
+      state: nullableText(row.keyword_state),
+      bidMicros: nullableNonNegativeNumber(row.keyword_bid_micros),
+      bidSource: 'keyword',
+    };
+  }
+  return {
+    valid: true,
+    kind: 'target',
+    state: nullableText(row.target_state),
+    bidMicros: nullableNonNegativeNumber(row.target_bid_micros),
+    bidSource: 'target',
+  };
+}
+
 function isoDate(value) {
   const text = String(value || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
@@ -174,6 +219,11 @@ function optionalText(value, maxLength) {
   if (!text) return null;
   return text.length <= maxLength ? text : null;
 }
+function nullableText(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
 function normalizeSearch(value) {
   const text = String(value || '').trim();
   return text.length > 200 ? text.slice(0, 200) : text;
@@ -184,6 +234,11 @@ function escapeLike(value) {
 function number(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+function nullableNonNegativeNumber(value) {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 function encodeCursor(value) {
   return btoa(JSON.stringify(value));
