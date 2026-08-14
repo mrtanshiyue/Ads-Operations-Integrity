@@ -1,0 +1,75 @@
+-- Development-only Control D1 bootstrap.
+-- Replace REPLACE_OWNER_EMAIL and REPLACE_OWNER_NAME before execution.
+-- Safe to re-run: records are upserted by stable IDs/keys.
+
+PRAGMA foreign_keys = ON;
+BEGIN TRANSACTION;
+
+INSERT INTO users (
+  user_id,
+  cf_access_sub,
+  email,
+  email_norm,
+  display_name,
+  status,
+  created_at,
+  updated_at
+) VALUES (
+  'user-dev-owner',
+  NULL,
+  'REPLACE_OWNER_EMAIL',
+  lower('REPLACE_OWNER_EMAIL'),
+  'REPLACE_OWNER_NAME',
+  'active',
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+)
+ON CONFLICT(user_id) DO UPDATE SET
+  email = excluded.email,
+  email_norm = excluded.email_norm,
+  display_name = excluded.display_name,
+  status = 'active',
+  updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO user_global_roles (user_id, role_key, granted_by)
+VALUES ('user-dev-owner', 'owner', 'user-dev-owner')
+ON CONFLICT(user_id, role_key) DO NOTHING;
+
+INSERT INTO stores (
+  store_id,
+  store_code,
+  display_name,
+  marketplace_code,
+  amazon_region,
+  d1_binding_key,
+  status,
+  sort_order,
+  created_at,
+  updated_at
+) VALUES (
+  'store-dev-01',
+  'DEV01',
+  'Development Store',
+  'US',
+  'NA',
+  'STORE_01_DB',
+  'active',
+  10,
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+)
+ON CONFLICT(store_id) DO UPDATE SET
+  store_code = excluded.store_code,
+  display_name = excluded.display_name,
+  marketplace_code = excluded.marketplace_code,
+  amazon_region = excluded.amazon_region,
+  d1_binding_key = excluded.d1_binding_key,
+  status = excluded.status,
+  sort_order = excluded.sort_order,
+  updated_at = CURRENT_TIMESTAMP;
+
+COMMIT;
+
+SELECT user_id, email, status FROM users WHERE user_id = 'user-dev-owner';
+SELECT role_key FROM user_global_roles WHERE user_id = 'user-dev-owner';
+SELECT store_id, store_code, display_name, status FROM stores WHERE store_id = 'store-dev-01';
