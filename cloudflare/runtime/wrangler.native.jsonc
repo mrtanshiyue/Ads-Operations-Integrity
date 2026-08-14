@@ -1,0 +1,91 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ads-operations-web",
+  "main": "./web-worker.js",
+  "compatibility_date": "2026-08-14",
+  "preview_urls": true,
+  "assets": {
+    "directory": "../../dist-cloudflare-native",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "env": {
+    "dev": {
+      "name": "ads-operations-web-dev",
+      "vars": {
+        "APP_ENV": "development",
+        "ACCESS_MODE": "observe",
+        "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
+        "ACCESS_AUD": "REPLACE_ME"
+      },
+      "d1_databases": [
+        {
+          "binding": "CONTROL_DB",
+          "database_name": "ads-ops-control-dev",
+          "database_id": "REPLACE_DEV_CONTROL_D1_ID",
+          "migrations_dir": "../foundation/migrations/control"
+        },
+        {
+          "binding": "STORE_01_DB",
+          "database_name": "ads-ops-store-dev",
+          "database_id": "REPLACE_DEV_STORE_D1_ID",
+          "migrations_dir": "../foundation/migrations/store"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "DATA_BUCKET",
+          "bucket_name": "ads-ops-data-dev"
+        }
+      ]
+    },
+    "production": {
+      "name": "ads-operations-web-prod",
+      "vars": {
+        "APP_ENV": "production",
+        "ACCESS_MODE": "enforce",
+        "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
+        "ACCESS_AUD": "REPLACE_ME"
+      },
+      "d1_databases": [
+        {
+          "binding": "CONTROL_DB",
+          "database_name": "ads-ops-control-prod",
+          "database_id": "REPLACE_PROD_CONTROL_D1_ID",
+          "migrations_dir": "../foundation/migrations/control"
+        },
+        {
+          "binding": "STORE_01_DB",
+          "database_name": "ads-ops-store-01-prod",
+          "database_id": "REPLACE_PROD_STORE_01_D1_ID",
+          "migrations_dir": "../foundation/migrations/store"
+        },
+        {
+          "binding": "STORE_02_DB",
+          "database_name": "ads-ops-store-02-prod",
+          "database_id": "REPLACE_PROD_STORE_02_D1_ID",
+          "migrations_dir": "../foundation/migrations/store"
+        },
+        {
+          "binding": "STORE_03_DB",
+          "database_name": "ads-ops-store-03-prod",
+          "database_id": "REPLACE_PROD_STORE_03_D1_ID",
+          "migrations_dir": "../foundation/migrations/store"
+        },
+        {
+          "binding": "STORE_04_DB",
+          "database_name": "ads-ops-store-04-prod",
+          "database_id": "REPLACE_PROD_STORE_04_D1_ID",
+          "migrations_dir": "../foundation/migrations/store"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "DATA_BUCKET",
+          "bucket_name": "ads-ops-data-prod"
+        }
+      ]
+    }
+  }
+}
