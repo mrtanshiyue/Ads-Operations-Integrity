@@ -30,6 +30,8 @@ const expectedStoreBindings = envName === 'production'
   ? ['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']
   : ['STORE_01_DB'];
 const expectedD1Count = envName === 'production' ? 5 : 2;
+const expectedWorkflowName = envName === 'production' ? 'ads-amazon-sync-prod' : 'ads-amazon-sync-dev';
+const expectedSyncScriptName = envName === 'production' ? 'ads-operations-sync-prod' : 'ads-operations-sync-dev';
 
 validateWebRuntime();
 validateSyncRuntime();
@@ -54,6 +56,8 @@ console.log(JSON.stringify({
   web: {
     d1Bindings: bindingNames(webEnv.d1_databases),
     r2Bindings: bindingNames(webEnv.r2_buckets),
+    workflows: bindingNames(webEnv.workflows),
+    syncTriggerEnabled: webEnv.vars?.SYNC_TRIGGER_ENABLED,
   },
   sync: {
     d1Bindings: bindingNames(syncEnv.d1_databases),
@@ -85,6 +89,20 @@ function validateWebRuntime() {
   if (envName === 'dev' && !['observe', 'enforce'].includes(webEnv.vars?.ACCESS_MODE)) {
     errors.push('dev web ACCESS_MODE must be observe or enforce');
   }
+  if (webEnv.vars?.SYNC_TRIGGER_ENABLED !== 'false') {
+    errors.push('SYNC_TRIGGER_ENABLED must remain false until the Amazon Ads adapter is complete and explicitly approved');
+  }
+
+  const workflows = Array.isArray(webEnv.workflows) ? webEnv.workflows : [];
+  if (workflows.length !== 1) {
+    errors.push(`${envName} web runtime must define exactly one cross-script Workflow binding`);
+  } else {
+    const workflow = workflows[0];
+    if (workflow.binding !== 'AMAZON_SYNC_WORKFLOW') errors.push('web Workflow binding must be AMAZON_SYNC_WORKFLOW');
+    if (workflow.class_name !== 'AmazonAdsSyncWorkflow') errors.push('web Workflow class_name must be AmazonAdsSyncWorkflow');
+    if (workflow.name !== expectedWorkflowName) errors.push(`web Workflow name must be ${expectedWorkflowName}`);
+    if (workflow.script_name !== expectedSyncScriptName) errors.push(`web Workflow script_name must be ${expectedSyncScriptName}`);
+  }
 }
 
 function validateSyncRuntime() {
@@ -99,15 +117,14 @@ function validateSyncRuntime() {
     const workflow = workflows[0];
     if (workflow.binding !== 'AMAZON_SYNC_WORKFLOW') errors.push('sync Workflow binding must be AMAZON_SYNC_WORKFLOW');
     if (workflow.class_name !== 'AmazonAdsSyncWorkflow') errors.push('sync Workflow class_name must be AmazonAdsSyncWorkflow');
-    const expectedName = envName === 'production' ? 'ads-amazon-sync-prod' : 'ads-amazon-sync-dev';
-    if (workflow.name !== expectedName) errors.push(`sync Workflow name must be ${expectedName}`);
+    if (workflow.name !== expectedWorkflowName) errors.push(`sync Workflow name must be ${expectedWorkflowName}`);
     if (Array.isArray(workflow.schedules) && workflow.schedules.length) {
       errors.push('sync Workflow schedules must remain disabled until Amazon Ads OAuth/adapter is production-ready');
     }
   }
 
   if (syncEnv.vars?.AMAZON_ADS_ENABLED !== 'false') {
-    errors.push('AMAZON_ADS_ENABLED must remain false until the Amazon Ads adapter implementation is complete');
+    errors.push('AMAZON_ADS_ENABLED must remain false until the Amazon Ads adapter implementation is complete and explicitly approved');
   }
 }
 
@@ -153,6 +170,18 @@ function validateSharedResources() {
   const syncBucket = syncEnv.r2_buckets?.[0];
   if (webBucket?.bucket_name !== syncBucket?.bucket_name) {
     errors.push('DATA_BUCKET bucket_name differs between web and sync runtimes');
+  }
+
+  const webWorkflow = webEnv.workflows?.[0];
+  const syncWorkflow = syncEnv.workflows?.[0];
+  if (webWorkflow?.name !== syncWorkflow?.name) {
+    errors.push('web and sync Workflow names do not match');
+  }
+  if (webWorkflow?.class_name !== syncWorkflow?.class_name) {
+    errors.push('web and sync Workflow class names do not match');
+  }
+  if (webWorkflow?.script_name !== syncEnv.name) {
+    errors.push('web Workflow script_name does not match the sync Worker environment name');
   }
 }
 
