@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc');
 const syncConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.sync.jsonc');
+const syncWorkerPath = path.join(repoRoot, 'cloudflare/runtime/sync-worker.js');
 const args = new Set(process.argv.slice(2));
 const envArgIndex = process.argv.indexOf('--env');
 const envName = envArgIndex >= 0 ? process.argv[envArgIndex + 1] : 'dev';
@@ -14,9 +15,10 @@ if (!['dev', 'production'].includes(envName)) {
   throw new Error(`Unsupported environment: ${envName}`);
 }
 
-const [webConfig, syncConfig] = await Promise.all([
+const [webConfig, syncConfig, syncWorkerSource] = await Promise.all([
   readConfig(webConfigPath),
   readConfig(syncConfigPath),
+  readFile(syncWorkerPath, 'utf8'),
 ]);
 const webEnv = webConfig.env?.[envName];
 const syncEnv = syncConfig.env?.[envName];
@@ -110,6 +112,13 @@ function validateSyncRuntime() {
   if (syncConfig.main !== './sync-worker.js') errors.push('sync main must be ./sync-worker.js');
   if (syncConfig.observability?.enabled !== true) errors.push('sync observability must be enabled');
   validateDataBindings('sync', syncEnv);
+
+  if (!/import\s*\{\s*NonRetryableError\s*\}\s*from\s*['"]cloudflare:workflows['"]/.test(syncWorkerSource)) {
+    errors.push('sync Worker must import NonRetryableError from cloudflare:workflows');
+  }
+  if (/import\s*\{[^}]*NonRetryableError[^}]*\}\s*from\s*['"]cloudflare:workers['"]/.test(syncWorkerSource)) {
+    errors.push('sync Worker must not import NonRetryableError from cloudflare:workers');
+  }
 
   const workflows = Array.isArray(syncEnv.workflows) ? syncEnv.workflows : [];
   if (workflows.length !== 1) {
