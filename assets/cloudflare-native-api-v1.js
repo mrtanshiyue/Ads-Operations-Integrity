@@ -83,6 +83,7 @@
     analyticsOverview: (params) => request(query('/api/v1/analytics/overview', params)),
     analyticsProducts: (params) => request(query('/api/v1/analytics/products', params)),
     analyticsKeywords: (params) => request(query('/api/v1/analytics/keywords', params)),
+    analyticsDataHealth: (params) => request(query('/api/v1/analytics/data-health', params)),
 
     startSync: (storeId, body, idempotencyKey) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/sync`, {
       method: 'POST',
