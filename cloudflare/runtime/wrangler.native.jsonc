@@ -17,8 +17,8 @@
         "APP_ENV": "development",
         "ACCESS_MODE": "observe",
         "SYNC_TRIGGER_ENABLED": "false",
-        "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
-        "ACCESS_AUD": "REPLACE_ME"
+        "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
+        "ACCESS_AUD": "37435e34dd56c73c5c8d64a9bac3319f27389d8a953379cdab2ccaa4965cdaee"
       },
       "d1_databases": [
         {
