@@ -78,8 +78,9 @@ class D1RestDatabase {
       }
 
       const apiCode = Number(body?.errors?.[0]?.code || 0);
+      const detail = safeErrorDetail(body?.errors?.[0]?.message);
       const error = Object.assign(
-        new Error(`d1_rest_query_failed:${apiCode || response.status || 'unknown'}`),
+        new Error(`d1_rest_query_failed:${apiCode || response.status || 'unknown'}${detail ? `:${detail}` : ''}`),
         { httpStatus: response.status, apiCode },
       );
       if (!retryable || !isTransientFailure(response.status, apiCode) || attempt === attempts) throw error;
@@ -142,6 +143,14 @@ function isReadOnlySql(sql) {
 
 function isTransientFailure(httpStatus, apiCode) {
   return httpStatus === 429 || httpStatus >= 500 || TRANSIENT_API_CODES.has(Number(apiCode));
+}
+
+function safeErrorDetail(value) {
+  return String(value || '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[^\x20-\x7E]/g, '')
+    .trim()
+    .slice(0, 180);
 }
 
 async function retryDelay(attempt, sleepImpl) {
