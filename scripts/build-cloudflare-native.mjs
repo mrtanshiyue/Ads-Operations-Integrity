@@ -1,4 +1,4 @@
-import { access, cp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,20 @@ for (const entry of required) {
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 
-await cp(path.join(repoRoot, 'index.html'), path.join(outputDir, 'index.html'));
+const sourceIndex = await readFile(path.join(repoRoot, 'index.html'), 'utf8');
+const connectSrcPattern = /connect-src\s+[^;]+;/i;
+if (!connectSrcPattern.test(sourceIndex)) {
+  throw new Error('index.html CSP is missing connect-src; refusing to build without an explicit network boundary');
+}
+
+// The Cloudflare-native runtime exposes all browser APIs on the same origin under /api/*.
+// Remove legacy external API origins from the deployment artifact without mutating source index.html.
+const nativeIndex = sourceIndex.replace(connectSrcPattern, "connect-src 'self';");
+if (!/connect-src\s+'self';/i.test(nativeIndex)) {
+  throw new Error('Failed to enforce same-origin connect-src in native build');
+}
+await writeFile(path.join(outputDir, 'index.html'), nativeIndex, 'utf8');
+
 await cp(path.join(repoRoot, 'assets'), path.join(outputDir, 'assets'), {
   recursive: true,
   filter(source) {
@@ -32,4 +45,5 @@ console.log(JSON.stringify({
   ok: true,
   output: path.relative(repoRoot, outputDir),
   indexBytes: indexStat.size,
+  browserConnectPolicy: "'self'",
 }, null, 2));
