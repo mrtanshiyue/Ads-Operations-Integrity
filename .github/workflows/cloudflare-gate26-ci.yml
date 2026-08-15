@@ -12,6 +12,7 @@ on:
       - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
       - '.github/workflows/cloudflare-foundation-ci.yml'
       - '.github/workflows/cloudflare-gate26-ci.yml'
   pull_request:
@@ -23,6 +24,7 @@ on:
       - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
       - '.github/workflows/cloudflare-foundation-ci.yml'
       - '.github/workflows/cloudflare-gate26-ci.yml'
 

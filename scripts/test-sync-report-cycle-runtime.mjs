@@ -183,7 +183,7 @@ for (const [status, directive, key] of [
   assert.equal(repo.calls, 1);
 }
 
-// Snapshot errors are causally isolated from execution adapters.
+// Snapshot errors are causally isolated from execution adapters and preserve the nested loader cause.
 {
   const repo = snapshotRepository({ jobRow:job('queued'), error:new Error('d1 snapshot failed') });
   const a = adapters();
@@ -197,7 +197,8 @@ for (const [status, directive, key] of [
     () => runtime.advance('run-router'),
     (error) => error instanceof ReportCycleRuntimeError
       && error.code === 'REPORT_CYCLE_RUNTIME_SNAPSHOT_FAILED'
-      && error.cause?.message === 'd1 snapshot failed',
+      && error.cause?.code === 'REPORT_CYCLE_SNAPSHOT_LOAD_FAILED'
+      && error.cause?.cause?.message === 'd1 snapshot failed',
   );
   assert.deepEqual(a.calls, { create:0, poll:0, materialize:0, ingest:0, finalize:0 });
 }
