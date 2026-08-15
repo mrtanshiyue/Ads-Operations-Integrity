@@ -45,11 +45,13 @@ on:
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
       - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-sync-completion-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
       - 'scripts/test-sync-producer-capability.mjs'
       - 'scripts/test-sync-producer-bootstrap.mjs'
       - 'scripts/test-sync-report-plan-bootstrap.mjs'
+      - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -114,11 +116,13 @@ on:
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
       - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-sync-completion-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
       - 'scripts/test-sync-producer-capability.mjs'
       - 'scripts/test-sync-producer-bootstrap.mjs'
       - 'scripts/test-sync-report-plan-bootstrap.mjs'
+      - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -180,6 +184,7 @@ jobs:
           node --check cloudflare/runtime/sync-intent-contract.js
           node --check cloudflare/runtime/sync-producer-capability.js
           node --check cloudflare/runtime/sync-producer-bootstrap.js
+          node --check cloudflare/runtime/sync-run-completion.js
           node --check cloudflare/runtime/amazon-numeric.js
           node --check cloudflare/runtime/amazon-profile-contract.js
           node --check cloudflare/runtime/amazon-report-contract.js
@@ -201,6 +206,7 @@ jobs:
           node scripts/test-sync-producer-capability.mjs
           node scripts/test-sync-producer-bootstrap.mjs
           node scripts/test-sync-report-plan-bootstrap.mjs
+          node scripts/test-sync-run-completion.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
           node scripts/test-amazon-report-acquisition.mjs
@@ -215,6 +221,7 @@ jobs:
           python3 scripts/test-phase-e-report-receipt-migrations.py
           python3 scripts/test-phase-e-report-plan-migrations.py
           python3 scripts/test-phase-e-report-plan-membership-migrations.py
+          python3 scripts/test-phase-e-sync-completion-migrations.py
           python3 scripts/test-phase-e-entity-migrations.py
 
       - name: Database foundation tests
