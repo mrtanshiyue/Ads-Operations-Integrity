@@ -11,6 +11,8 @@ import {
   planReportJobs,
   computeReportPlanReceipt,
   assertRunReportPlanReceipt,
+  assertCompatibleReportPlanMembershipSubset,
+  assertExactReportPlanMembership,
   assertCompatibleReportJobSubset,
   assertExactReportJobSet,
   reserveReportJob,
@@ -133,7 +135,7 @@ export async function ensureEntityMirror({ execution, store, profile, repository
 
 export async function reserveProducerReportJobs({ execution, profile, repository }) {
   requireRepository(repository, [
-    'persistRunPlanReceipt', 'loadRunPlanReceipt', 'listByRunId',
+    'persistRunPlanReceipt', 'loadRunPlanReceipt', 'listRunPlanMembership', 'listByRunId',
     'insertQueued', 'loadByIdempotencyKey',
   ], 'REPORT_REPOSITORY_INVALID');
   const runId = requiredText(execution?.instanceId, 'WORKFLOW_INSTANCE_ID_REQUIRED');
@@ -144,20 +146,30 @@ export async function reserveProducerReportJobs({ execution, profile, repository
     profile,
   });
   const planReceipt = await computeReportPlanReceipt(plans);
-
-  // Whole-plan authority is durable before any report_jobs INSERT. A same-plan race is safe;
-  // a different plan (for example after code/chunking changes) fails on the receipt comparison.
-  await repository.persistRunPlanReceipt(runId, profileId, planReceipt.fingerprint, planReceipt.jobCount);
-  const durablePlan = await repository.loadRunPlanReceipt(runId);
-  assertRunReportPlanReceipt(durablePlan, {
+  const expectedReceipt = {
     runId,
     profileId,
     fingerprint: planReceipt.fingerprint,
     jobCount: planReceipt.jobCount,
-  });
+  };
 
-  // Existing legacy/crash rows may be a valid subset. Extras or conflicting identities fail
-  // before this callback inserts any new report job.
+  const before = await repository.loadRunPlanReceipt(runId);
+  const alreadyFrozen = before?.report_plan_fingerprint != null || before?.report_plan_job_count != null;
+  if (alreadyFrozen) {
+    assertRunReportPlanReceipt(before, expectedReceipt);
+  } else {
+    const stagedMembership = await repository.listRunPlanMembership(runId);
+    assertCompatibleReportPlanMembershipSubset(stagedMembership, plans, planReceipt.fingerprint);
+    await repository.persistRunPlanReceipt(runId, profileId, planReceipt, plans);
+  }
+
+  const durablePlan = await repository.loadRunPlanReceipt(runId);
+  assertRunReportPlanReceipt(durablePlan, expectedReceipt);
+  const membership = await repository.listRunPlanMembership(runId);
+  assertExactReportPlanMembership(membership, plans, planReceipt.fingerprint);
+
+  // Existing legacy/crash report_jobs may be a valid subset. Extras or conflicting identities
+  // fail before this callback adds a new job. Storage also enforces membership on every INSERT.
   const existing = await repository.listByRunId(runId);
   assertCompatibleReportJobSubset(existing, plans);
 

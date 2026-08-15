@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { canonicalizeEntitySnapshot } from '../cloudflare/runtime/amazon-entity-contract.js';
+import { buildReportPlanMembershipRows } from '../cloudflare/runtime/amazon-report-producer.js';
 import { prepareProducerBootstrap } from '../cloudflare/runtime/sync-producer-bootstrap.js';
 
 const now = '2026-08-15T11:45:00Z';
@@ -24,6 +25,17 @@ function execution(run, datasets=['search_term_daily']) {
   };
 }
 
+function membershipRow(plan, fingerprint) {
+  const item = buildReportPlanMembershipRows([plan], fingerprint)[0];
+  return {
+    run_id:item.runId, job_id:item.jobId, profile_id:item.profileId,
+    report_plan_fingerprint:item.reportPlanFingerprint, dataset_key:item.datasetKey,
+    contract_id:item.contractId, ad_product:item.adProduct, report_type:item.reportType,
+    start_date:item.startDate, end_date:item.endDate, idempotency_key:item.idempotencyKey,
+    request_fingerprint:item.requestFingerprint, request_json:item.requestJson,
+  };
+}
+
 class SharedState {
   constructor(run) {
     this.run = { report_plan_fingerprint:null, report_plan_job_count:null, ...run };
@@ -32,6 +44,7 @@ class SharedState {
     this.entityFinalReceipt = null;
     this.entitySummary = null;
     this.entityPublishCalls = 0;
+    this.reportPlanRows = new Map();
     this.reportRows = new Map();
   }
 }
@@ -90,16 +103,22 @@ function entityRepository(state) {
 
 function reportRepository(state) {
   return {
-    async persistRunPlanReceipt(runId, profileId, fingerprint, jobCount) {
+    async loadRunPlanReceipt() { return { ...state.run }; },
+    async listRunPlanMembership(runId) {
+      return [...state.reportPlanRows.values()].filter((row) => row.run_id === runId).map((row) => ({ ...row }));
+    },
+    async persistRunPlanReceipt(runId, profileId, receipt, plans) {
       if (state.run.run_id === runId && state.run.profile_id === profileId && state.run.status === 'running'
           && state.run.report_plan_fingerprint == null && state.run.report_plan_job_count == null) {
-        state.run.report_plan_fingerprint = fingerprint;
-        state.run.report_plan_job_count = jobCount;
+        for (const plan of plans) {
+          if (!state.reportPlanRows.has(plan.jobId)) state.reportPlanRows.set(plan.jobId, membershipRow(plan, receipt.fingerprint));
+        }
+        state.run.report_plan_fingerprint = receipt.fingerprint;
+        state.run.report_plan_job_count = receipt.jobCount;
         return true;
       }
       return false;
     },
-    async loadRunPlanReceipt() { return { ...state.run }; },
     async listByRunId(runId) {
       return [...state.reportRows.values()].filter((row) => row.run_id === runId).map((row) => ({ ...row }));
     },
@@ -123,7 +142,6 @@ function repositories(state) {
   return { profile:profileRepository(state), entity:entityRepository(state), report:reportRepository(state) };
 }
 
-// First execution: adapters are called only for missing durable authorities.
 {
   const state = new SharedState({ run_id:'run-1', status:'queued', profile_id:null });
   let profileCalls = 0;
@@ -142,11 +160,11 @@ function repositories(state) {
   assert.equal(state.entityPublishCalls, 1);
   assert.equal(result.profile.accountType, 'seller');
   assert.equal(result.reportJobs.length, 1);
+  assert.equal(state.reportPlanRows.size, 1);
   assert.equal(state.reportRows.size, 1);
   assert.match(state.run.report_plan_fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(state.run.report_plan_job_count, 1);
 
-  // Restart: running profile + final entity + report-plan receipts eliminate both Amazon adapter reads.
   const retry = await prepareProducerBootstrap({
     execution:execution(state.run), store, repositories:repositories(state), now:'2026-08-15T11:46:00Z',
     adapters:{
@@ -157,10 +175,10 @@ function repositories(state) {
   assert.equal(retry.profile.profileId, 'profile-1');
   assert.equal(retry.reportJobs.length, 1);
   assert.equal(state.entityPublishCalls, 1);
+  assert.equal(state.reportPlanRows.size, 1);
   assert.equal(state.reportRows.size, 1);
 }
 
-// Crash after entity stage receipt: bootstrap publishes durable stage without fetching Amazon again.
 {
   const state = new SharedState({ run_id:'run-1', status:'running', profile_id:'profile-1' });
   state.profileRow = {
@@ -186,10 +204,10 @@ function repositories(state) {
   assert.equal(state.entityPublishCalls, 1);
   assert.equal(result.entityReceipt.snapshot_sha256, snapshot.snapshotHash);
   assert.equal(result.reportJobs.length, 1);
+  assert.equal(state.reportPlanRows.size, 1);
   assert.match(state.run.report_plan_fingerprint, /^[0-9a-f]{64}$/);
 }
 
-// Unsupported durable intent fails before profile/entity adapters or producer writes.
 {
   const state = new SharedState({ run_id:'run-1', status:'queued', profile_id:null });
   let calls = 0;
@@ -207,6 +225,7 @@ function repositories(state) {
   assert.equal(state.run.status, 'queued');
   assert.equal(state.profileRow, null);
   assert.equal(state.entityFinalReceipt, null);
+  assert.equal(state.reportPlanRows.size, 0);
   assert.equal(state.reportRows.size, 0);
   assert.equal(state.run.report_plan_fingerprint, null);
 }
@@ -216,7 +235,7 @@ console.log(JSON.stringify({
   durableProfileRetryAvoidsAmazonProfiles:true,
   durableEntityFinalRetryAvoidsAmazonEntityFetch:true,
   durableEntityStageCrashRecoveryAvoidsAmazonEntityFetch:true,
-  reportPlanReceiptDurableBeforeJobs:true,
+  reportPlanMembershipDurableBeforeJobs:true,
   reportsReservedOnlyAfterEntityReceipt:true,
   unsupportedCapabilityHasZeroProducerSideEffects:true,
 }, null, 2));

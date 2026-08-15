@@ -57,19 +57,22 @@ export async function planReportJobs({ workflowInstanceId, intent, profile }) {
 }
 
 export async function computeReportPlanReceipt(plans) {
-  if (!Array.isArray(plans) || plans.length < 1) {
-    throw new ReportProducerError('REPORT_PLAN_EMPTY');
-  }
-  const identities = plans.map(reportPlanIdentity).sort((left, right) => left.jobId.localeCompare(right.jobId));
-  const jobIds = new Set(identities.map((item) => item.jobId));
-  const idempotencyKeys = new Set(identities.map((item) => item.idempotencyKey));
-  if (jobIds.size !== identities.length) throw new ReportProducerError('REPORT_PLAN_DUPLICATE_JOB_ID');
-  if (idempotencyKeys.size !== identities.length) throw new ReportProducerError('REPORT_PLAN_DUPLICATE_IDEMPOTENCY_KEY');
+  const identities = reportPlanIdentities(plans);
   const fingerprint = await sha256Hex(canonicalJson({
     schemaVersion: 'amazon-report-plan-v1',
     jobs: identities,
   }));
   return Object.freeze({ fingerprint, jobCount: identities.length });
+}
+
+export function buildReportPlanMembershipRows(plans, fingerprint) {
+  if (!/^[0-9a-f]{64}$/.test(String(fingerprint || ''))) {
+    throw new ReportProducerError('REPORT_PLAN_FINGERPRINT_INVALID');
+  }
+  return Object.freeze(reportPlanIdentities(plans).map((identity) => Object.freeze({
+    ...identity,
+    reportPlanFingerprint: fingerprint,
+  })));
 }
 
 export function assertRunReportPlanReceipt(row, expected) {
@@ -89,6 +92,29 @@ export function assertRunReportPlanReceipt(row, expected) {
   if (row.report_plan_job_count !== expected.jobCount) {
     throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:job_count');
   }
+  return true;
+}
+
+export function assertCompatibleReportPlanMembershipSubset(rows, plans, fingerprint) {
+  if (!Array.isArray(rows)) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_SET_INVALID');
+  const expected = buildReportPlanMembershipRows(plans, fingerprint);
+  if (rows.length > expected.length) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:count');
+  const byJobId = new Map(expected.map((item) => [item.jobId, item]));
+  const seen = new Set();
+  for (const row of rows) {
+    const jobId = String(row?.job_id || '');
+    const plan = byJobId.get(jobId);
+    if (!plan) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:extra_job');
+    if (seen.has(jobId)) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:duplicate_job');
+    seen.add(jobId);
+    assertReportPlanMembershipRow(row, plan);
+  }
+  return true;
+}
+
+export function assertExactReportPlanMembership(rows, plans, fingerprint) {
+  assertCompatibleReportPlanMembershipSubset(rows, plans, fingerprint);
+  if (rows.length !== plans.length) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:count');
   return true;
 }
 
@@ -158,13 +184,9 @@ export async function createAmazonReportOnce({ repository, jobId, createReport }
   if (initialDecision === 'REUSE_AMAZON_REPORT' || initialDecision === 'TERMINAL') return job;
   if (initialDecision !== 'ARM_AND_CREATE_ONCE') throw new ReportProducerError('AMAZON_REPORT_CREATE_DECISION_INVALID');
 
-  // Only the callback that wins queued -> requested CAS owns the one POST authority.
   const armedByThisCallback = await repository.armCreate(jobId);
   job = await repository.loadByJobId(jobId);
-  if (!armedByThisCallback) {
-    // Another callback may have armed or completed it. Never assume ownership of POST authority.
-    return resolveLostCreateArmRace(job);
-  }
+  if (!armedByThisCallback) return resolveLostCreateArmRace(job);
   if (job?.status !== 'requested' || job?.amazon_report_id != null) {
     throw new ReportProducerError('AMAZON_REPORT_CREATE_ARM_RECEIPT_INVALID');
   }
@@ -173,12 +195,10 @@ export async function createAmazonReportOnce({ repository, jobId, createReport }
   try {
     response = await createReport(JSON.parse(job.request_json));
   } catch (error) {
-    // Keep requested + NULL report id. A retry will fail closed as ambiguous and MUST NOT POST again.
     throw new ReportProducerError('AMAZON_REPORT_CREATE_OUTCOME_UNKNOWN', error);
   }
 
   const amazonReportId = requiredText(response?.reportId, 'AMAZON_REPORT_ID_INVALID');
-  // amazon_created_at is source provenance. Never replace a missing Amazon timestamp with local time.
   const amazonCreatedAt = requiredText(response?.createdAt, 'AMAZON_REPORT_CREATED_AT_REQUIRED');
   await repository.persistAmazonReportReceipt(jobId, amazonReportId, amazonCreatedAt);
   job = await repository.loadByJobId(jobId);
@@ -191,7 +211,6 @@ export async function createAmazonReportOnce({ repository, jobId, createReport }
 function resolveLostCreateArmRace(job) {
   const decision = amazonCreateDecision(job);
   if (decision === 'REUSE_AMAZON_REPORT' || decision === 'TERMINAL') return job;
-  // requested + NULL throws AMAZON_REPORT_CREATE_AMBIGUOUS here by design.
   throw new ReportProducerError('AMAZON_REPORT_CREATE_ARM_NOT_OWNED');
 }
 
@@ -206,8 +225,39 @@ export function createD1ReportJobRepository(db) {
       `).bind(runId).first();
     },
 
-    async persistRunPlanReceipt(runId, profileId, fingerprint, jobCount) {
+    async listRunPlanMembership(runId) {
       const result = await db.prepare(`
+        SELECT run_id, job_id, profile_id, report_plan_fingerprint, dataset_key, contract_id,
+               ad_product, report_type, start_date, end_date, idempotency_key,
+               request_fingerprint, request_json
+        FROM sync_report_plan_jobs
+        WHERE run_id = ?1
+        ORDER BY job_id
+      `).bind(runId).all();
+      return result.results || [];
+    },
+
+    async persistRunPlanReceipt(runId, profileId, planReceipt, plans) {
+      const current = await db.prepare(`
+        SELECT report_plan_fingerprint, report_plan_job_count
+        FROM sync_runs WHERE run_id = ?1 LIMIT 1
+      `).bind(runId).first();
+      if (current?.report_plan_fingerprint != null || current?.report_plan_job_count != null) return false;
+
+      const membership = buildReportPlanMembershipRows(plans, planReceipt.fingerprint);
+      const statements = membership.map((item) => db.prepare(`
+        INSERT OR IGNORE INTO sync_report_plan_jobs(
+          run_id, job_id, profile_id, report_plan_fingerprint, dataset_key, contract_id,
+          ad_product, report_type, start_date, end_date, idempotency_key,
+          request_fingerprint, request_json
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+      `).bind(
+        item.runId, item.jobId, item.profileId, item.reportPlanFingerprint,
+        item.datasetKey, item.contractId, item.adProduct, item.reportType,
+        item.startDate, item.endDate, item.idempotencyKey,
+        item.requestFingerprint, item.requestJson,
+      ));
+      statements.push(db.prepare(`
         UPDATE sync_runs
         SET report_plan_fingerprint = ?3,
             report_plan_job_count = ?4
@@ -216,8 +266,19 @@ export function createD1ReportJobRepository(db) {
           AND status = 'running'
           AND report_plan_fingerprint IS NULL
           AND report_plan_job_count IS NULL
-      `).bind(runId, profileId, fingerprint, jobCount).run();
-      return Number(result?.meta?.changes || 0) === 1;
+      `).bind(runId, profileId, planReceipt.fingerprint, planReceipt.jobCount));
+
+      try {
+        await db.batch(statements);
+        return true;
+      } catch (error) {
+        const raced = await db.prepare(`
+          SELECT report_plan_fingerprint, report_plan_job_count
+          FROM sync_runs WHERE run_id = ?1 LIMIT 1
+        `).bind(runId).first();
+        if (raced?.report_plan_fingerprint != null || raced?.report_plan_job_count != null) return false;
+        throw error;
+      }
     },
 
     async listByRunId(runId) {
@@ -278,10 +339,7 @@ export function createD1ReportJobRepository(db) {
     async markFailed(jobId, errorCode, errorMessage = null) {
       await db.prepare(`
         UPDATE report_jobs
-        SET status = 'failed',
-            error_code = ?2,
-            error_message = ?3,
-            updated_at = CURRENT_TIMESTAMP
+        SET status = 'failed', error_code = ?2, error_message = ?3, updated_at = CURRENT_TIMESTAMP
         WHERE job_id = ?1 AND status = 'processing' AND amazon_report_id IS NOT NULL
       `).bind(jobId, errorCode, errorMessage).run();
       return this.loadByJobId(jobId);
@@ -290,10 +348,7 @@ export function createD1ReportJobRepository(db) {
     async persistRawExpectedAuthority(jobId, { r2ObjectKey, contentSha256, contentBytes }) {
       await db.prepare(`
         UPDATE report_jobs
-        SET r2_object_key = ?2,
-            content_sha256 = ?3,
-            content_bytes = ?4,
-            updated_at = CURRENT_TIMESTAMP
+        SET r2_object_key = ?2, content_sha256 = ?3, content_bytes = ?4, updated_at = CURRENT_TIMESTAMP
         WHERE job_id = ?1
           AND status = 'ready'
           AND (r2_object_key IS NULL OR r2_object_key = ?2)
@@ -306,11 +361,8 @@ export function createD1ReportJobRepository(db) {
     async persistInitialR2Receipt(jobId, { r2InitialVersion, r2InitialEtag, downloadedAt }) {
       await db.prepare(`
         UPDATE report_jobs
-        SET r2_initial_version = ?2,
-            r2_initial_etag = ?3,
-            downloaded_at = ?4,
-            status = 'downloaded',
-            updated_at = CURRENT_TIMESTAMP
+        SET r2_initial_version = ?2, r2_initial_etag = ?3, downloaded_at = ?4,
+            status = 'downloaded', updated_at = CURRENT_TIMESTAMP
         WHERE job_id = ?1
           AND status = 'ready'
           AND r2_object_key IS NOT NULL
@@ -342,6 +394,18 @@ const REPORT_JOB_SELECT = `
   FROM report_jobs
 `;
 
+function reportPlanIdentities(plans) {
+  if (!Array.isArray(plans) || plans.length < 1) throw new ReportProducerError('REPORT_PLAN_EMPTY');
+  const identities = plans.map(reportPlanIdentity).sort((left, right) => left.jobId.localeCompare(right.jobId));
+  if (new Set(identities.map((item) => item.jobId)).size !== identities.length) {
+    throw new ReportProducerError('REPORT_PLAN_DUPLICATE_JOB_ID');
+  }
+  if (new Set(identities.map((item) => item.idempotencyKey)).size !== identities.length) {
+    throw new ReportProducerError('REPORT_PLAN_DUPLICATE_IDEMPOTENCY_KEY');
+  }
+  return identities;
+}
+
 function reportPlanIdentity(plan) {
   return Object.freeze({
     jobId: requiredText(plan?.jobId, 'REPORT_PLAN_JOB_ID_REQUIRED'),
@@ -357,6 +421,22 @@ function reportPlanIdentity(plan) {
     requestJson: requiredText(plan?.requestJson, 'REPORT_PLAN_REQUEST_JSON_REQUIRED'),
     contractId: requiredText(plan?.contractId, 'REPORT_PLAN_CONTRACT_ID_REQUIRED'),
   });
+}
+
+function assertReportPlanMembershipRow(row, plan) {
+  const fields = [
+    ['run_id','runId'], ['job_id','jobId'], ['profile_id','profileId'],
+    ['report_plan_fingerprint','reportPlanFingerprint'], ['dataset_key','datasetKey'],
+    ['contract_id','contractId'], ['ad_product','adProduct'], ['report_type','reportType'],
+    ['start_date','startDate'], ['end_date','endDate'], ['idempotency_key','idempotencyKey'],
+    ['request_fingerprint','requestFingerprint'], ['request_json','requestJson'],
+  ];
+  for (const [dbField, planField] of fields) {
+    if (row?.[dbField] !== plan[planField]) {
+      throw new ReportProducerError(`REPORT_PLAN_MEMBERSHIP_CONFLICT:${dbField}`);
+    }
+  }
+  return true;
 }
 
 async function sha256Hex(value) {

@@ -44,6 +44,7 @@ on:
       - 'scripts/test-phase-e-migrations.py'
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
+      - 'scripts/test-phase-e-report-plan-membership-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
       - 'scripts/test-sync-producer-capability.mjs'
@@ -112,6 +113,7 @@ on:
       - 'scripts/test-phase-e-migrations.py'
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
+      - 'scripts/test-phase-e-report-plan-membership-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
       - 'scripts/test-sync-producer-capability.mjs'
@@ -212,6 +214,7 @@ jobs:
           python3 scripts/test-phase-e-migrations.py
           python3 scripts/test-phase-e-report-receipt-migrations.py
           python3 scripts/test-phase-e-report-plan-migrations.py
+          python3 scripts/test-phase-e-report-plan-membership-migrations.py
           python3 scripts/test-phase-e-entity-migrations.py
 
       - name: Database foundation tests

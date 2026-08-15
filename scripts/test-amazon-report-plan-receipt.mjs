@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import {
   planReportJobs,
   computeReportPlanReceipt,
+  buildReportPlanMembershipRows,
   assertRunReportPlanReceipt,
+  assertCompatibleReportPlanMembershipSubset,
+  assertExactReportPlanMembership,
   assertCompatibleReportJobSubset,
   assertExactReportJobSet,
 } from '../cloudflare/runtime/amazon-report-producer.js';
@@ -37,6 +40,20 @@ assert.equal(assertRunReportPlanReceipt({
   report_plan_fingerprint:receiptA.fingerprint, report_plan_job_count:2,
 }, { runId:'run-plan', profileId:'profile-1', fingerprint:receiptA.fingerprint, jobCount:2 }), true);
 
+const membership = buildReportPlanMembershipRows(plans, receiptA.fingerprint).map((item) => ({
+  run_id:item.runId, job_id:item.jobId, profile_id:item.profileId,
+  report_plan_fingerprint:item.reportPlanFingerprint, dataset_key:item.datasetKey,
+  contract_id:item.contractId, ad_product:item.adProduct, report_type:item.reportType,
+  start_date:item.startDate, end_date:item.endDate, idempotency_key:item.idempotencyKey,
+  request_fingerprint:item.requestFingerprint, request_json:item.requestJson,
+}));
+assert.equal(assertCompatibleReportPlanMembershipSubset([membership[0]], plans, receiptA.fingerprint), true);
+assert.equal(assertExactReportPlanMembership([...membership].reverse(), plans, receiptA.fingerprint), true);
+assert.throws(
+  () => assertCompatibleReportPlanMembershipSubset([{ ...membership[0], dataset_key:'wrong' }], plans, receiptA.fingerprint),
+  (error) => error.code === 'REPORT_PLAN_MEMBERSHIP_CONFLICT:dataset_key',
+);
+
 function row(plan) {
   return {
     job_id:plan.jobId, run_id:plan.runId, profile_id:plan.profileId, ad_product:plan.adProduct,
@@ -63,6 +80,7 @@ console.log(JSON.stringify({
   wholePlanFingerprintDeterministic:true,
   planOrderIndependent:true,
   contractDriftChangesFingerprint:true,
+  immutableMembershipAttested:true,
   compatibleSubsetAllowedForCrashRecovery:true,
   exactCommittedJobSetAttested:true,
 }, null, 2));
