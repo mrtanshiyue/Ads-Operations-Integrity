@@ -56,6 +56,72 @@ export async function planReportJobs({ workflowInstanceId, intent, profile }) {
   return Object.freeze(jobs);
 }
 
+export async function computeReportPlanReceipt(plans) {
+  if (!Array.isArray(plans) || plans.length < 1) {
+    throw new ReportProducerError('REPORT_PLAN_EMPTY');
+  }
+  const identities = plans.map(reportPlanIdentity).sort((left, right) => left.jobId.localeCompare(right.jobId));
+  const jobIds = new Set(identities.map((item) => item.jobId));
+  const idempotencyKeys = new Set(identities.map((item) => item.idempotencyKey));
+  if (jobIds.size !== identities.length) throw new ReportProducerError('REPORT_PLAN_DUPLICATE_JOB_ID');
+  if (idempotencyKeys.size !== identities.length) throw new ReportProducerError('REPORT_PLAN_DUPLICATE_IDEMPOTENCY_KEY');
+  const fingerprint = await sha256Hex(canonicalJson({
+    schemaVersion: 'amazon-report-plan-v1',
+    jobs: identities,
+  }));
+  return Object.freeze({ fingerprint, jobCount: identities.length });
+}
+
+export function assertRunReportPlanReceipt(row, expected) {
+  if (!row) throw new ReportProducerError('REPORT_PLAN_RECEIPT_MISSING');
+  if (row.run_id !== expected.runId) throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:run_id');
+  if (row.profile_id !== expected.profileId) throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:profile_id');
+  if (row.status !== 'running') throw new ReportProducerError('REPORT_PLAN_RECEIPT_RUN_NOT_RUNNING');
+  if (!/^[0-9a-f]{64}$/.test(String(row.report_plan_fingerprint || ''))) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_FINGERPRINT_INVALID');
+  }
+  if (!Number.isSafeInteger(row.report_plan_job_count) || row.report_plan_job_count < 1) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_JOB_COUNT_INVALID');
+  }
+  if (row.report_plan_fingerprint !== expected.fingerprint) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:fingerprint');
+  }
+  if (row.report_plan_job_count !== expected.jobCount) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:job_count');
+  }
+  return true;
+}
+
+export function assertCompatibleReportJobSubset(rows, plans) {
+  if (!Array.isArray(rows)) throw new ReportProducerError('REPORT_PLAN_JOB_SET_INVALID');
+  if (!Array.isArray(plans) || plans.length < 1) throw new ReportProducerError('REPORT_PLAN_EMPTY');
+  if (rows.length > plans.length) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:count');
+  const planByKey = new Map(plans.map((plan) => [plan.idempotencyKey, plan]));
+  const seen = new Set();
+  for (const row of rows) {
+    const key = String(row?.idempotency_key || '');
+    const plan = planByKey.get(key);
+    if (!plan) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:extra_job');
+    if (seen.has(key)) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:duplicate_job');
+    seen.add(key);
+    assertReservedReportJob(row, plan);
+  }
+  return true;
+}
+
+export function assertExactReportJobSet(rows, plans) {
+  assertCompatibleReportJobSubset(rows, plans);
+  if (rows.length !== plans.length) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:count');
+  const rowByKey = new Map(rows.map((row) => [row.idempotency_key, row]));
+  const ordered = [];
+  for (const plan of plans) {
+    const row = rowByKey.get(plan.idempotencyKey);
+    if (!row) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:missing_job');
+    ordered.push(row);
+  }
+  return Object.freeze(ordered);
+}
+
 export async function reserveReportJob(repository, plan) {
   await repository.insertQueued(plan);
   const row = await repository.loadByIdempotencyKey(plan.idempotencyKey);
@@ -131,6 +197,34 @@ function resolveLostCreateArmRace(job) {
 
 export function createD1ReportJobRepository(db) {
   return {
+    async loadRunPlanReceipt(runId) {
+      return db.prepare(`
+        SELECT run_id, profile_id, status, report_plan_fingerprint, report_plan_job_count
+        FROM sync_runs
+        WHERE run_id = ?1
+        LIMIT 1
+      `).bind(runId).first();
+    },
+
+    async persistRunPlanReceipt(runId, profileId, fingerprint, jobCount) {
+      const result = await db.prepare(`
+        UPDATE sync_runs
+        SET report_plan_fingerprint = ?3,
+            report_plan_job_count = ?4
+        WHERE run_id = ?1
+          AND profile_id = ?2
+          AND status = 'running'
+          AND report_plan_fingerprint IS NULL
+          AND report_plan_job_count IS NULL
+      `).bind(runId, profileId, fingerprint, jobCount).run();
+      return Number(result?.meta?.changes || 0) === 1;
+    },
+
+    async listByRunId(runId) {
+      const result = await db.prepare(`${REPORT_JOB_SELECT} WHERE run_id = ?1 ORDER BY job_id`).bind(runId).all();
+      return result.results || [];
+    },
+
     async insertQueued(plan) {
       await db.prepare(`
         INSERT INTO report_jobs(
@@ -247,6 +341,28 @@ const REPORT_JOB_SELECT = `
          error_code, error_message, created_at, updated_at
   FROM report_jobs
 `;
+
+function reportPlanIdentity(plan) {
+  return Object.freeze({
+    jobId: requiredText(plan?.jobId, 'REPORT_PLAN_JOB_ID_REQUIRED'),
+    runId: requiredText(plan?.runId, 'REPORT_PLAN_RUN_ID_REQUIRED'),
+    datasetKey: requiredText(plan?.datasetKey, 'REPORT_PLAN_DATASET_REQUIRED'),
+    profileId: requiredText(plan?.profileId, 'REPORT_PLAN_PROFILE_ID_REQUIRED'),
+    adProduct: requiredText(plan?.adProduct, 'REPORT_PLAN_AD_PRODUCT_REQUIRED'),
+    reportType: requiredText(plan?.reportType, 'REPORT_PLAN_REPORT_TYPE_REQUIRED'),
+    startDate: requiredText(plan?.startDate, 'REPORT_PLAN_START_DATE_REQUIRED'),
+    endDate: requiredText(plan?.endDate, 'REPORT_PLAN_END_DATE_REQUIRED'),
+    idempotencyKey: requiredText(plan?.idempotencyKey, 'REPORT_PLAN_IDEMPOTENCY_KEY_REQUIRED'),
+    requestFingerprint: requiredText(plan?.requestFingerprint, 'REPORT_PLAN_REQUEST_FINGERPRINT_REQUIRED'),
+    requestJson: requiredText(plan?.requestJson, 'REPORT_PLAN_REQUEST_JSON_REQUIRED'),
+    contractId: requiredText(plan?.contractId, 'REPORT_PLAN_CONTRACT_ID_REQUIRED'),
+  });
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 function requiredText(value, code) {
   const text = String(value ?? '').trim();

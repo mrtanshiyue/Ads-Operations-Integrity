@@ -7,7 +7,14 @@ import {
   stageEntityMirrorSnapshot,
   publishDurableEntityMirrorStage,
 } from './amazon-entity-mirror-producer.js';
-import { planReportJobs, reserveReportJob } from './amazon-report-producer.js';
+import {
+  planReportJobs,
+  computeReportPlanReceipt,
+  assertRunReportPlanReceipt,
+  assertCompatibleReportJobSubset,
+  assertExactReportJobSet,
+  reserveReportJob,
+} from './amazon-report-producer.js';
 
 export class ProducerBootstrapError extends Error {
   constructor(code, cause = null) {
@@ -125,15 +132,38 @@ export async function ensureEntityMirror({ execution, store, profile, repository
 }
 
 export async function reserveProducerReportJobs({ execution, profile, repository }) {
-  requireRepository(repository, ['insertQueued', 'loadByIdempotencyKey'], 'REPORT_REPOSITORY_INVALID');
+  requireRepository(repository, [
+    'persistRunPlanReceipt', 'loadRunPlanReceipt', 'listByRunId',
+    'insertQueued', 'loadByIdempotencyKey',
+  ], 'REPORT_REPOSITORY_INVALID');
+  const runId = requiredText(execution?.instanceId, 'WORKFLOW_INSTANCE_ID_REQUIRED');
+  const profileId = requiredText(profile?.profileId, 'PROFILE_ID_REQUIRED');
   const plans = await planReportJobs({
-    workflowInstanceId: execution?.instanceId,
+    workflowInstanceId: runId,
     intent: execution?.intent,
     profile,
   });
-  const receipts = [];
-  for (const plan of plans) receipts.push(await reserveReportJob(repository, plan));
-  return receipts;
+  const planReceipt = await computeReportPlanReceipt(plans);
+
+  // Whole-plan authority is durable before any report_jobs INSERT. A same-plan race is safe;
+  // a different plan (for example after code/chunking changes) fails on the receipt comparison.
+  await repository.persistRunPlanReceipt(runId, profileId, planReceipt.fingerprint, planReceipt.jobCount);
+  const durablePlan = await repository.loadRunPlanReceipt(runId);
+  assertRunReportPlanReceipt(durablePlan, {
+    runId,
+    profileId,
+    fingerprint: planReceipt.fingerprint,
+    jobCount: planReceipt.jobCount,
+  });
+
+  // Existing legacy/crash rows may be a valid subset. Extras or conflicting identities fail
+  // before this callback inserts any new report job.
+  const existing = await repository.listByRunId(runId);
+  assertCompatibleReportJobSubset(existing, plans);
+
+  for (const plan of plans) await reserveReportJob(repository, plan);
+  const committed = await repository.listByRunId(runId);
+  return assertExactReportJobSet(committed, plans);
 }
 
 function requireRepository(repository, methods, code) {

@@ -26,7 +26,7 @@ function execution(run, datasets=['search_term_daily']) {
 
 class SharedState {
   constructor(run) {
-    this.run = { ...run };
+    this.run = { report_plan_fingerprint:null, report_plan_job_count:null, ...run };
     this.profileRow = null;
     this.entityStageReceipt = null;
     this.entityFinalReceipt = null;
@@ -90,6 +90,19 @@ function entityRepository(state) {
 
 function reportRepository(state) {
   return {
+    async persistRunPlanReceipt(runId, profileId, fingerprint, jobCount) {
+      if (state.run.run_id === runId && state.run.profile_id === profileId && state.run.status === 'running'
+          && state.run.report_plan_fingerprint == null && state.run.report_plan_job_count == null) {
+        state.run.report_plan_fingerprint = fingerprint;
+        state.run.report_plan_job_count = jobCount;
+        return true;
+      }
+      return false;
+    },
+    async loadRunPlanReceipt() { return { ...state.run }; },
+    async listByRunId(runId) {
+      return [...state.reportRows.values()].filter((row) => row.run_id === runId).map((row) => ({ ...row }));
+    },
     async insertQueued(plan) {
       if (!state.reportRows.has(plan.idempotencyKey)) {
         state.reportRows.set(plan.idempotencyKey, {
@@ -130,8 +143,10 @@ function repositories(state) {
   assert.equal(result.profile.accountType, 'seller');
   assert.equal(result.reportJobs.length, 1);
   assert.equal(state.reportRows.size, 1);
+  assert.match(state.run.report_plan_fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal(state.run.report_plan_job_count, 1);
 
-  // Restart: running profile + final entity receipt eliminate both Amazon adapter reads.
+  // Restart: running profile + final entity + report-plan receipts eliminate both Amazon adapter reads.
   const retry = await prepareProducerBootstrap({
     execution:execution(state.run), store, repositories:repositories(state), now:'2026-08-15T11:46:00Z',
     adapters:{
@@ -171,6 +186,7 @@ function repositories(state) {
   assert.equal(state.entityPublishCalls, 1);
   assert.equal(result.entityReceipt.snapshot_sha256, snapshot.snapshotHash);
   assert.equal(result.reportJobs.length, 1);
+  assert.match(state.run.report_plan_fingerprint, /^[0-9a-f]{64}$/);
 }
 
 // Unsupported durable intent fails before profile/entity adapters or producer writes.
@@ -192,6 +208,7 @@ function repositories(state) {
   assert.equal(state.profileRow, null);
   assert.equal(state.entityFinalReceipt, null);
   assert.equal(state.reportRows.size, 0);
+  assert.equal(state.run.report_plan_fingerprint, null);
 }
 
 console.log(JSON.stringify({
@@ -199,6 +216,7 @@ console.log(JSON.stringify({
   durableProfileRetryAvoidsAmazonProfiles:true,
   durableEntityFinalRetryAvoidsAmazonEntityFetch:true,
   durableEntityStageCrashRecoveryAvoidsAmazonEntityFetch:true,
+  reportPlanReceiptDurableBeforeJobs:true,
   reportsReservedOnlyAfterEntityReceipt:true,
   unsupportedCapabilityHasZeroProducerSideEffects:true,
 }, null, 2));
