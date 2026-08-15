@@ -66,6 +66,7 @@ on:
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
       - 'scripts/test-search-term-fact-stage-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-repository.mjs'
       - 'scripts/test-search-term-fact-publisher.mjs'
       - 'scripts/test-amazon-entity-contract.mjs'
       - 'scripts/test-amazon-entity-mirror-producer.mjs'
@@ -144,6 +145,7 @@ on:
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
       - 'scripts/test-search-term-fact-stage-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-repository.mjs'
       - 'scripts/test-search-term-fact-publisher.mjs'
       - 'scripts/test-amazon-entity-contract.mjs'
       - 'scripts/test-amazon-entity-mirror-producer.mjs'
@@ -217,6 +219,7 @@ jobs:
           node --check cloudflare/runtime/amazon-profile-producer.js
           node --check cloudflare/runtime/amazon-report-producer.js
           node --check cloudflare/runtime/search-term-fact-stage-producer.js
+          node --check cloudflare/runtime/search-term-fact-stage-repository.js
           node --check cloudflare/runtime/search-term-fact-publisher.js
           node --check cloudflare/runtime/amazon-entity-contract.js
           node --check cloudflare/runtime/amazon-entity-mirror-producer.js
@@ -239,6 +242,7 @@ jobs:
           node scripts/test-amazon-profile-producer.mjs
           node scripts/test-amazon-report-producer.mjs
           node scripts/test-search-term-fact-stage-producer.mjs
+          node scripts/test-search-term-fact-stage-repository.mjs
           node scripts/test-search-term-fact-publisher.mjs
           node scripts/test-amazon-entity-contract.mjs
           node scripts/test-amazon-entity-mirror-producer.mjs
