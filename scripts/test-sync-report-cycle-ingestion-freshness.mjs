@@ -6,6 +6,7 @@ import {
 
 const FP = 'a'.repeat(64);
 const SHA = 'b'.repeat(64);
+const DEFAULT_INGESTION_RESULT = Symbol('default-ingestion-result');
 
 function run(count = 1, status = 'running') {
   return {
@@ -99,14 +100,15 @@ function snapshotRepository({ runRow = run(), jobs = [job()], membershipRows = n
   };
 }
 
-function ingestionRuntime(result = null, error = null) {
+function ingestionRuntime(result = DEFAULT_INGESTION_RESULT, error = null) {
   return {
     calls:0,
     async advance(jobId) {
       this.calls += 1;
       assert.equal(jobId, 'job-1');
       if (error) throw error;
-      return result || {
+      if (result !== DEFAULT_INGESTION_RESULT) return result;
+      return {
         action:'search_term_stage_ready',
         reused:false,
         waiting:true,
