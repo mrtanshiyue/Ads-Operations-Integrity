@@ -40,6 +40,12 @@ on:
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
       - 'scripts/test-search-term-r2-object-etag-contract.mjs'
+      - 'scripts/test-phase-e-contracts.mjs'
+      - 'scripts/test-phase-e-migrations.py'
+      - 'scripts/test-web-sync-orchestration.mjs'
+      - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-amazon-search-term-parser.mjs'
+      - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -88,6 +94,12 @@ on:
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
       - 'scripts/test-search-term-r2-object-etag-contract.mjs'
+      - 'scripts/test-phase-e-contracts.mjs'
+      - 'scripts/test-phase-e-migrations.py'
+      - 'scripts/test-web-sync-orchestration.mjs'
+      - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-amazon-search-term-parser.mjs'
+      - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -131,6 +143,25 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Phase E producer contract tests
+        run: |
+          node --check cloudflare/runtime/canonical-json.js
+          node --check cloudflare/runtime/sync-intent-contract.js
+          node --check cloudflare/runtime/amazon-numeric.js
+          node --check cloudflare/runtime/amazon-profile-contract.js
+          node --check cloudflare/runtime/amazon-report-contract.js
+          node --check cloudflare/runtime/amazon-producer-state.js
+          node --check cloudflare/runtime/amazon-search-term-parser.js
+          node --check cloudflare/runtime/amazon-raw-object-contract.js
+          node --check cloudflare/runtime/web-sync-orchestration.js
+          node --check cloudflare/runtime/sync-workflow-orchestration.js
+          node scripts/test-phase-e-contracts.mjs
+          node scripts/test-web-sync-orchestration.mjs
+          node scripts/test-sync-workflow-orchestration.mjs
+          node scripts/test-amazon-search-term-parser.mjs
+          node scripts/test-amazon-raw-object-contract.mjs
+          python3 scripts/test-phase-e-migrations.py
 
       - name: Database foundation tests
         run: npm run test:cf-foundation
