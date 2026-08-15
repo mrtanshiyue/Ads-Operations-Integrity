@@ -46,6 +46,37 @@ def canonical(entity_type, entity_id, synced_at='t1'):
     return json.dumps(base, separators=(',',':'), sort_keys=True)
 
 
+def insert_stage(conn, rows, run_id='run1', profile='p1'):
+    conn.executemany("""
+      INSERT INTO amazon_entity_stage(run_id,profile_id,entity_type,source_row_ordinal,entity_id,canonical_entity_json)
+      VALUES(?,?,?, ?,?,?)
+    """, [(run_id, profile, *row) for row in rows])
+
+
+def insert_stage_receipt(conn, counts, snapshot_hash='a'*64, run_id='run1', profile='p1', synced_at='t1'):
+    conn.execute("""
+      INSERT INTO amazon_entity_stage_receipts(
+        run_id,profile_id,snapshot_synced_at,snapshot_sha256,
+        campaign_count,ad_group_count,keyword_count,target_count,staged_at
+      ) VALUES(?,?,?,?,?,?,?,?, 't2')
+    """, (
+        run_id, profile, synced_at, snapshot_hash,
+        counts.get('campaign', 0), counts.get('ad_group', 0),
+        counts.get('keyword', 0), counts.get('target', 0),
+    ))
+
+
+def expect_stage_receipt_failure(conn, rows, counts, code):
+    insert_stage(conn, rows)
+    try:
+        insert_stage_receipt(conn, counts)
+    except sqlite3.IntegrityError as exc:
+        assert code in str(exc), (code, str(exc))
+    else:
+        raise AssertionError(f'expected IntegrityError: {code}')
+    conn.execute("DELETE FROM amazon_entity_stage WHERE run_id='run1'")
+
+
 def test_new_invariants():
     conn = sqlite3.connect(':memory:')
     conn.execute('PRAGMA foreign_keys=ON')
@@ -70,10 +101,7 @@ def test_new_invariants():
         ('keyword',0,'k1',canonical('keyword','k1')),
         ('target',0,'t1',canonical('target','t1')),
     ]
-    conn.executemany("""
-      INSERT INTO amazon_entity_stage(run_id,profile_id,entity_type,source_row_ordinal,entity_id,canonical_entity_json)
-      VALUES('run1','p1',?,?,?,?)
-    """, rows)
+    insert_stage(conn, rows)
 
     expect_integrity(conn, """
       INSERT INTO amazon_entity_stage_receipts(
@@ -81,11 +109,7 @@ def test_new_invariants():
       ) VALUES('run1','p1','t1',?,1,1,2,1,'t2')
     """, ('a'*64,), code='ENTITY_STAGE_RECEIPT_COUNTS_MISMATCH')
 
-    conn.execute("""
-      INSERT INTO amazon_entity_stage_receipts(
-        run_id,profile_id,snapshot_synced_at,snapshot_sha256,campaign_count,ad_group_count,keyword_count,target_count,staged_at
-      ) VALUES('run1','p1','t1',?,1,1,1,1,'t2')
-    """, ('b'*64,))
+    insert_stage_receipt(conn, {'campaign':1,'ad_group':1,'keyword':1,'target':1}, snapshot_hash='b'*64)
 
     expect_integrity(conn, "INSERT INTO amazon_entity_stage(run_id,profile_id,entity_type,source_row_ordinal,entity_id,canonical_entity_json) VALUES('run1','p1','campaign',1,'c-new','{}')", code='ENTITY_STAGE_FROZEN')
     expect_integrity(conn, "UPDATE amazon_entity_stage SET canonical_entity_json='{}' WHERE run_id='run1' AND entity_type='campaign'", code='ENTITY_STAGE_FROZEN')
@@ -98,6 +122,12 @@ def test_new_invariants():
         run_id,profile_id,snapshot_synced_at,campaign_count,ad_group_count,keyword_count,target_count,published_at,snapshot_sha256
       ) VALUES('run1','p1','t1',1,1,1,1,'t3',NULL)
     """, code='ENTITY_SNAPSHOT_HASH_REQUIRED')
+
+    expect_integrity(conn, """
+      INSERT INTO amazon_entity_snapshot_receipts(
+        run_id,profile_id,snapshot_synced_at,campaign_count,ad_group_count,keyword_count,target_count,published_at,snapshot_sha256
+      ) VALUES('run1','p1','t1',1,1,1,1,'t3',?)
+    """, ('c'*64,), code='ENTITY_SNAPSHOT_STAGE_RECEIPT_REQUIRED')
 
     conn.execute("""
       INSERT INTO amazon_entity_snapshot_receipts(
@@ -114,6 +144,74 @@ def test_new_invariants():
     conn.close()
 
 
+def test_existing_entity_identity_conflicts_fail_closed():
+    conn = sqlite3.connect(':memory:')
+    conn.execute('PRAGMA foreign_keys=ON')
+    apply(conn)
+    seed_running(conn)
+    conn.execute("INSERT INTO amazon_profiles(profile_id,status) VALUES('p2','active')")
+    conn.execute("INSERT INTO campaigns(campaign_id,profile_id,ad_product,name,state) VALUES('c1','p1','SPONSORED_PRODUCTS','C1','ENABLED')")
+    conn.execute("INSERT INTO campaigns(campaign_id,profile_id,ad_product,name,state) VALUES('c2','p2','SPONSORED_PRODUCTS','C2','ENABLED')")
+    conn.execute("INSERT INTO ad_groups(ad_group_id,profile_id,campaign_id,name,state) VALUES('a1','p1','c1','A1','ENABLED')")
+    conn.execute("INSERT INTO ad_groups(ad_group_id,profile_id,campaign_id,name,state) VALUES('a2','p2','c2','A2','ENABLED')")
+    conn.execute("INSERT INTO keywords(keyword_id,profile_id,campaign_id,ad_group_id,keyword_text,normalized_keyword,match_type,state) VALUES('k2','p2','c2','a2','x','x','BROAD','ENABLED')")
+    conn.execute("INSERT INTO targets(target_id,profile_id,campaign_id,ad_group_id,expression_json,state) VALUES('t2','p2','c2','a2','[]','ENABLED')")
+
+    expect_stage_receipt_failure(
+        conn,
+        [('campaign',0,'c2',canonical('campaign','c2'))],
+        {'campaign':1},
+        'ENTITY_STAGE_CAMPAIGN_IDENTITY_CONFLICT',
+    )
+
+    expect_stage_receipt_failure(
+        conn,
+        [
+            ('campaign',0,'c1',canonical('campaign','c1')),
+            ('ad_group',0,'a2',canonical('ad_group','a2')),
+        ],
+        {'campaign':1,'ad_group':1},
+        'ENTITY_STAGE_AD_GROUP_IDENTITY_CONFLICT',
+    )
+
+    expect_stage_receipt_failure(
+        conn,
+        [
+            ('campaign',0,'c1',canonical('campaign','c1')),
+            ('ad_group',0,'a1',canonical('ad_group','a1')),
+            ('keyword',0,'k2',canonical('keyword','k2')),
+        ],
+        {'campaign':1,'ad_group':1,'keyword':1},
+        'ENTITY_STAGE_KEYWORD_IDENTITY_CONFLICT',
+    )
+
+    expect_stage_receipt_failure(
+        conn,
+        [
+            ('campaign',0,'c1',canonical('campaign','c1')),
+            ('ad_group',0,'a1',canonical('ad_group','a1')),
+            ('target',0,'t2',canonical('target','t2')),
+        ],
+        {'campaign':1,'ad_group':1,'target':1},
+        'ENTITY_STAGE_TARGET_IDENTITY_CONFLICT',
+    )
+
+    bad_ad_group = json.loads(canonical('ad_group','a-bad'))
+    bad_ad_group['campaignId'] = 'missing-campaign'
+    expect_stage_receipt_failure(
+        conn,
+        [
+            ('campaign',0,'c1',canonical('campaign','c1')),
+            ('ad_group',0,'a-bad',json.dumps(bad_ad_group, separators=(',',':'), sort_keys=True)),
+        ],
+        {'campaign':1,'ad_group':1},
+        'ENTITY_STAGE_AD_GROUP_HIERARCHY_INVALID',
+    )
+
+    assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+    conn.close()
+
+
 def test_legacy_final_receipt_cannot_be_backfilled():
     conn = sqlite3.connect(':memory:')
     conn.execute('PRAGMA foreign_keys=ON')
@@ -124,7 +222,12 @@ def test_legacy_final_receipt_cannot_be_backfilled():
         run_id,profile_id,snapshot_synced_at,campaign_count,ad_group_count,keyword_count,target_count,published_at
       ) VALUES('legacy-run','p1','legacy-time',0,0,0,0,'legacy-published')
     """)
-    conn.executescript((STORE / '0007_store_entity_mirror_invariants.sql').read_text(encoding='utf-8'))
+    for migration_name in (
+        '0007_store_entity_mirror_invariants.sql',
+        '0008_store_entity_mirror_hardening.sql',
+        '0009_store_entity_stage_identity_guard.sql',
+    ):
+        conn.executescript((STORE / migration_name).read_text(encoding='utf-8'))
     row = conn.execute("SELECT snapshot_sha256 FROM amazon_entity_snapshot_receipts WHERE run_id='legacy-run'").fetchone()
     assert row == (None,)
     expect_integrity(conn, "UPDATE amazon_entity_snapshot_receipts SET snapshot_sha256=? WHERE run_id='legacy-run'", ('d'*64,), code='ENTITY_SNAPSHOT_RECEIPT_IMMUTABLE')
@@ -133,6 +236,7 @@ def test_legacy_final_receipt_cannot_be_backfilled():
 
 def main():
     test_new_invariants()
+    test_existing_entity_identity_conflicts_fail_closed()
     test_legacy_final_receipt_cannot_be_backfilled()
     print('phase-e entity migration invariants: PASS')
 
