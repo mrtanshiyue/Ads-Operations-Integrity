@@ -1,6 +1,7 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { prepareWorkflowExecution } from './sync-workflow-orchestration.js';
+import { assertProducerIntentSupported } from './sync-producer-capability.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 
@@ -90,8 +91,7 @@ export class AmazonAdsSyncWorkflow extends WorkflowEntrypoint {
       };
     }
 
-    // Phase E runtime integration intentionally stops before any Amazon or Store D1 producer side effect.
-    // The durable intent receipt is verified first; the external producer remains kill-switched.
+    // Kill switch remains ahead of every producer capability check and producer-side mutation.
     if (this.env.AMAZON_ADS_ENABLED !== 'true') {
       return {
         ok: true,
@@ -101,6 +101,14 @@ export class AmazonAdsSyncWorkflow extends WorkflowEntrypoint {
         profileStage: execution.profileStage,
         message: 'Amazon Ads producer is intentionally disabled; no Amazon API, R2, or Store D1 producer mutation was performed.',
       };
+    }
+
+    // Fail closed before profile/entity/report/R2/fact production when the durable intent
+    // contains a dataset for which this producer has no complete contract yet.
+    try {
+      assertProducerIntentSupported(execution.intent);
+    } catch (error) {
+      throw new NonRetryableError(String(error?.code || error?.message || 'producer_capability_invalid'));
     }
 
     if (execution.profileStage === 'RESOLVE_CANONICAL_PROFILE') {

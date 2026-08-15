@@ -44,6 +44,7 @@ on:
       - 'scripts/test-phase-e-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-sync-producer-capability.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
@@ -105,6 +106,7 @@ on:
       - 'scripts/test-phase-e-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-sync-producer-capability.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
@@ -162,6 +164,7 @@ jobs:
         run: |
           node --check cloudflare/runtime/canonical-json.js
           node --check cloudflare/runtime/sync-intent-contract.js
+          node --check cloudflare/runtime/sync-producer-capability.js
           node --check cloudflare/runtime/amazon-numeric.js
           node --check cloudflare/runtime/amazon-profile-contract.js
           node --check cloudflare/runtime/amazon-report-contract.js
@@ -179,6 +182,7 @@ jobs:
           node scripts/test-phase-e-contracts.mjs
           node scripts/test-web-sync-orchestration.mjs
           node scripts/test-sync-workflow-orchestration.mjs
+          node scripts/test-sync-producer-capability.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
           node scripts/test-phase-e-runtime-integration.mjs
