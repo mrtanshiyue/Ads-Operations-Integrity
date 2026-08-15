@@ -47,6 +47,9 @@ on:
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
+      - 'scripts/test-amazon-profile-producer.mjs'
+      - 'scripts/test-amazon-report-producer.mjs'
+      - 'scripts/test-search-term-fact-publisher.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -102,6 +105,9 @@ on:
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
+      - 'scripts/test-amazon-profile-producer.mjs'
+      - 'scripts/test-amazon-report-producer.mjs'
+      - 'scripts/test-search-term-fact-publisher.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -159,12 +165,18 @@ jobs:
           node --check cloudflare/runtime/web-sync-orchestration.js
           node --check cloudflare/runtime/sync-workflow-orchestration.js
           node --check cloudflare/runtime/sync-api.js
+          node --check cloudflare/runtime/amazon-profile-producer.js
+          node --check cloudflare/runtime/amazon-report-producer.js
+          node --check cloudflare/runtime/search-term-fact-publisher.js
           node scripts/test-phase-e-contracts.mjs
           node scripts/test-web-sync-orchestration.mjs
           node scripts/test-sync-workflow-orchestration.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
           node scripts/test-phase-e-runtime-integration.mjs
+          node scripts/test-amazon-profile-producer.mjs
+          node scripts/test-amazon-report-producer.mjs
+          node scripts/test-search-term-fact-publisher.mjs
           python3 scripts/test-phase-e-migrations.py
 
       - name: Database foundation tests
