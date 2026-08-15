@@ -13,24 +13,20 @@ export class ReportCycleAcquisitionCapabilityError extends Error {
   }
 }
 
+// Acquisition executes inside the sync Worker runtime. Its independent kill switch is
+// AMAZON_ADS_ENABLED. SYNC_TRIGGER_ENABLED belongs to the web registration boundary and
+// must not be treated as a second in-process execution grant.
 export function inspectReportCycleAcquisitionCapability(env) {
   const source = env && typeof env === 'object' && !Array.isArray(env) ? env : {};
-  const syncTriggerEnabled = source.SYNC_TRIGGER_ENABLED === 'true';
   const amazonAdsEnabled = source.AMAZON_ADS_ENABLED === 'true';
   return Object.freeze({
-    syncTriggerEnabled,
     amazonAdsEnabled,
-    enabled:syncTriggerEnabled && amazonAdsEnabled,
+    enabled:amazonAdsEnabled,
   });
 }
 
 export function assertReportCycleAcquisitionCapability(env) {
   const capability = inspectReportCycleAcquisitionCapability(env);
-  if (!capability.syncTriggerEnabled) {
-    throw new ReportCycleAcquisitionCapabilityError(
-      'REPORT_CYCLE_ACQUISITION_DISABLED:SYNC_TRIGGER_ENABLED',
-    );
-  }
   if (!capability.amazonAdsEnabled) {
     throw new ReportCycleAcquisitionCapabilityError(
       'REPORT_CYCLE_ACQUISITION_DISABLED:AMAZON_ADS_ENABLED',
@@ -40,8 +36,8 @@ export function assertReportCycleAcquisitionCapability(env) {
 }
 
 // Wrap only explicitly supplied acquisition adapters. Missing adapters remain missing,
-// preserving the executor's existing fail-closed behavior. The two runtime kill switches
-// are re-evaluated immediately before every external acquisition side effect.
+// preserving the executor's existing fail-closed behavior. The sync-runtime Amazon kill
+// switch is re-evaluated immediately before every external acquisition side effect.
 export function createReportCycleAcquisitionCapabilityGate({ env, adapters = {} } = {}) {
   if (!adapters || typeof adapters !== 'object' || Array.isArray(adapters)) {
     throw new ReportCycleAcquisitionCapabilityError(

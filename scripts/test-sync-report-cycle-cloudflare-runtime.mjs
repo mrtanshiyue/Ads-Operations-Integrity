@@ -191,13 +191,12 @@ assert.throws(
   assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
 }
 
-// Even when a concrete acquisition delegate is injected, the runtime kill switches are
-// authoritative. Current Dev semantics (SYNC_TRIGGER_ENABLED=false; AMAZON flag absent)
-// block before the injected delegate and before any R2/D1 mutation path can run.
+// Even with a concrete acquisition delegate injected, the sync-runtime Amazon kill switch
+// is authoritative. Current sync Dev config is AMAZON_ADS_ENABLED=false, so delegate stays untouched.
 {
   let delegateCalls = 0;
   const h = build('queued', {
-    envOverrides:{ SYNC_TRIGGER_ENABLED:'false' },
+    envOverrides:{ AMAZON_ADS_ENABLED:'false' },
     acquisitionAdapters:{
       createAmazonReport:async () => { delegateCalls += 1; return { action:'should-not-run' }; },
     },
@@ -207,22 +206,19 @@ assert.throws(
   assert.ok(caught);
   assert.equal(caught.code, 'REPORT_CYCLE_RUNTIME_EXECUTION_FAILED:CREATE_AMAZON_REPORT');
   assert.equal(caught.cause?.code, 'REPORT_CYCLE_EXECUTION_FAILED:CREATE_AMAZON_REPORT');
-  assert.equal(
-    caught.cause?.cause?.code,
-    'REPORT_CYCLE_ACQUISITION_DISABLED:SYNC_TRIGGER_ENABLED',
-  );
+  assert.equal(caught.cause?.cause?.code, 'REPORT_CYCLE_ACQUISITION_DISABLED:AMAZON_ADS_ENABLED');
   assert.equal(delegateCalls, 0);
   assert.equal(h.db.calls.snapshotBatch, 1);
   assert.equal(h.db.calls.mutationBatch, 0);
   assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
 }
 
-// Both exact grants are required before an injected delegate becomes reachable. This is
-// a contract-only fixture; repository deployment config remains disabled and unchanged.
+// Trigger registration and acquisition execution are separate domains. An already-running
+// sync runtime ignores the web-only SYNC_TRIGGER_ENABLED value and honors AMAZON_ADS_ENABLED.
 {
   let delegateCalls = 0;
   const h = build('queued', {
-    envOverrides:{ SYNC_TRIGGER_ENABLED:'true', AMAZON_ADS_ENABLED:'true' },
+    envOverrides:{ SYNC_TRIGGER_ENABLED:'false', AMAZON_ADS_ENABLED:'true' },
     acquisitionAdapters:{
       createAmazonReport:async (input) => {
         delegateCalls += 1;

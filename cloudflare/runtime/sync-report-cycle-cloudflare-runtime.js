@@ -16,8 +16,8 @@ export class CloudflareReportCycleRuntimeFactoryError extends Error {
 
 // Compose the verified Cloudflare read/ingestion/finalization boundaries without
 // introducing any Amazon or R2 write transport. Acquisition remains explicitly
-// adapter-injected and is additionally guarded by both runtime kill switches before
-// every delegate call. Missing adapters remain missing and therefore fail closed.
+// adapter-injected and is guarded by the sync-runtime AMAZON_ADS_ENABLED kill switch
+// before every delegate call. Missing adapters remain missing and fail closed.
 export function createCloudflareReportCycleRuntime(options = {}) {
   const {
     env,
