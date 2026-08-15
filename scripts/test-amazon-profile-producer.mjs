@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { hydrateCanonicalProfileReceipt } from '../cloudflare/runtime/amazon-profile-contract.js';
 import { persistCanonicalProfileReceipt } from '../cloudflare/runtime/amazon-profile-producer.js';
 
 const store = { marketplace_code: 'US', amazon_region: 'NA' };
@@ -104,10 +105,35 @@ class FakeRepository {
   }
 }
 
+const durableRow = {
+  profile_id:'profile-1', marketplace_id:'ATVPDKIKX0DER', country_code:'US', currency_code:'USD',
+  timezone:'America/Los_Angeles', account_name:'Seller Account', account_type:'seller', status:'active',
+  synced_at:'2026-08-15T11:20:00Z',
+};
+{
+  const hydrated = hydrateCanonicalProfileReceipt(store, durableRow, 'profile-1');
+  assert.equal(hydrated.profileId, 'profile-1');
+  assert.equal(hydrated.accountType, 'seller');
+  assert.equal(hydrated.apiHost, 'advertising-api.amazon.com');
+  assert.equal(hydrated.region, 'NA');
+}
+for (const [patch, code] of [
+  [{ status:'disabled' }, 'CANONICAL_PROFILE_DURABLE_RECEIPT_INACTIVE'],
+  [{ marketplace_id:'wrong' }, 'CANONICAL_PROFILE_DURABLE_RECEIPT_MARKETPLACE_MISMATCH'],
+  [{ account_type:'agency' }, 'CANONICAL_PROFILE_DURABLE_RECEIPT_ACCOUNT_TYPE_INVALID'],
+  [{ synced_at:null }, 'CANONICAL_PROFILE_DURABLE_RECEIPT_SYNCED_AT_MISSING'],
+]) {
+  assert.throws(
+    () => hydrateCanonicalProfileReceipt(store, { ...durableRow, ...patch }, 'profile-1'),
+    (error) => error.code === code,
+  );
+}
+
 console.log(JSON.stringify({
   ok: true,
   canonicalProfileWriteOnce: true,
   runningReceiptReused: true,
   sameProfileRaceRecovered: true,
   conflictingProfileRaceFailsClosed: true,
+  durableProfileReceiptHydratedWithoutAmazonRefetch: true,
 }, null, 2));

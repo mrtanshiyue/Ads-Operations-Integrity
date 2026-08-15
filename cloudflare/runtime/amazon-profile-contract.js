@@ -64,6 +64,44 @@ export function resolveCanonicalProfile(store, profiles) {
   });
 }
 
+// Reconstruct canonical producer authority from the durable Store D1 mirror.
+// A running Workflow retry must use this receipt instead of re-querying Amazon Profiles.
+export function hydrateCanonicalProfileReceipt(store, row, expectedProfileId = null) {
+  if (!row) throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_MISSING');
+  const contract = marketplaceContractForStore(store);
+  const profileId = parseAmazonId(row.profile_id);
+  if (expectedProfileId != null && profileId !== parseAmazonId(expectedProfileId)) {
+    throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_ID_MISMATCH');
+  }
+  if (String(row.status ?? '').trim().toLowerCase() !== 'active') {
+    throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_INACTIVE');
+  }
+  if (String(row.marketplace_id ?? '') !== contract.marketplaceStringId
+      || String(row.country_code ?? '').toUpperCase() !== contract.countryCode
+      || String(row.currency_code ?? '').toUpperCase() !== contract.currencyCode) {
+    throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_MARKETPLACE_MISMATCH');
+  }
+  const type = String(row.account_type ?? '').trim().toLowerCase();
+  if (type !== 'seller' && type !== 'vendor') {
+    throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_ACCOUNT_TYPE_INVALID');
+  }
+  if (!String(row.synced_at ?? '').trim()) {
+    throw new ProfileContractError('CANONICAL_PROFILE_DURABLE_RECEIPT_SYNCED_AT_MISSING');
+  }
+
+  return Object.freeze({
+    profileId,
+    marketplaceId: contract.marketplaceStringId,
+    countryCode: contract.countryCode,
+    currencyCode: contract.currencyCode,
+    region: contract.region,
+    apiHost: contract.apiHost,
+    accountType: type,
+    timezone: row.timezone == null ? null : String(row.timezone),
+    accountName: row.account_name == null ? null : String(row.account_name),
+  });
+}
+
 function accountType(profile) {
   return String(profile?.accountInfo?.type ?? profile?.accountType ?? '').trim().toLowerCase();
 }

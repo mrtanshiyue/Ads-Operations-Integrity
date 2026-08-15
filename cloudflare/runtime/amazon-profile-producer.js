@@ -53,6 +53,16 @@ export function createD1ProfileProducerRepository(db) {
       `).bind(runId).first();
     },
 
+    async loadCanonicalProfile(profileId) {
+      return db.prepare(`
+        SELECT profile_id, marketplace_id, country_code, currency_code, timezone,
+               account_name, account_type, status, source_updated_at, synced_at
+        FROM amazon_profiles
+        WHERE profile_id = ?1
+        LIMIT 1
+      `).bind(profileId).first();
+    },
+
     async upsertCanonicalProfile(profile, syncedAt) {
       await db.prepare(`
         INSERT INTO amazon_profiles(
