@@ -58,6 +58,7 @@ on:
       - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -138,6 +139,7 @@ on:
       - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -208,6 +210,7 @@ jobs:
           node --check cloudflare/runtime/sync-report-cycle-executor.js
           node --check cloudflare/runtime/sync-report-cycle-acquisition-adapter.js
           node --check cloudflare/runtime/sync-report-cycle-finalize-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-ingestion-adapter.js
           node --check cloudflare/runtime/amazon-numeric.js
           node --check cloudflare/runtime/amazon-profile-contract.js
           node --check cloudflare/runtime/amazon-report-contract.js
@@ -237,6 +240,7 @@ jobs:
           node scripts/test-sync-report-cycle-executor.mjs
           node scripts/test-sync-report-cycle-acquisition-freshness.mjs
           node scripts/test-sync-report-cycle-finalize-freshness.mjs
+          node scripts/test-sync-report-cycle-ingestion-freshness.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
           node scripts/test-amazon-report-acquisition.mjs
