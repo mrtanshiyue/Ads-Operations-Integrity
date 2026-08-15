@@ -45,6 +45,7 @@ on:
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
       - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-report-plan-duplicate-guard-migrations.py'
       - 'scripts/test-phase-e-sync-completion-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
@@ -116,6 +117,7 @@ on:
       - 'scripts/test-phase-e-report-receipt-migrations.py'
       - 'scripts/test-phase-e-report-plan-migrations.py'
       - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-report-plan-duplicate-guard-migrations.py'
       - 'scripts/test-phase-e-sync-completion-migrations.py'
       - 'scripts/test-web-sync-orchestration.mjs'
       - 'scripts/test-sync-workflow-orchestration.mjs'
@@ -221,6 +223,7 @@ jobs:
           python3 scripts/test-phase-e-report-receipt-migrations.py
           python3 scripts/test-phase-e-report-plan-migrations.py
           python3 scripts/test-phase-e-report-plan-membership-migrations.py
+          python3 scripts/test-phase-e-report-plan-duplicate-guard-migrations.py
           python3 scripts/test-phase-e-sync-completion-migrations.py
           python3 scripts/test-phase-e-entity-migrations.py
 
