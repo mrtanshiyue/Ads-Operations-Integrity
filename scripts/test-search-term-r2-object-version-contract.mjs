@@ -183,7 +183,8 @@ assert.match(webEntry, /const gate24Layer = createStoreDailySourceObjectByteSize
 assert.match(webEntry, /createStoreDailySourceObjectOperationalMetadataLayer\(\{ env: gate24Layer\.env, url \}\)/);
 assert.match(webEntry, /const gate25Layer = createStoreDailySourceObjectUploadTimestampLayer\(\{ env: gate23Layer\.env \}\)/);
 assert.match(webEntry, /const gate26Layer = createStoreDailySourceObjectVersionLayer\(\{ env: gate25Layer\.env \}\)/);
-assert.match(webEntry, /handleStoreDailySourceObjectChecksumApiRoute\(\{ request, env: gate26Layer\.env, actor, url \}\)/);
+assert.match(webEntry, /const gate27Layer = createStoreDailySourceObjectEtagLayer\(\{ env: gate26Layer\.env \}\)/);
+assert.match(webEntry, /handleStoreDailySourceObjectChecksumApiRoute\(\{ request, env: gate27Layer\.env, actor, url \}\)/);
 assert.match(webEntry, /return gate23Layer\.enrich\(response\)/);
 assert.match(webEntry, /return gate24Layer\.enrich\(gate23Response\)/);
 assert.match(webEntry, /return gate25Layer\.enrich\(gate24Response\)/);

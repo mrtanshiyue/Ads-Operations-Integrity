@@ -7,6 +7,7 @@ import { createStoreDailySourceObjectOperationalMetadataLayer } from './store-da
 import { createStoreDailySourceObjectByteSizeLayer } from './store-daily-source-object-byte-size-api.js';
 import { createStoreDailySourceObjectUploadTimestampLayer } from './store-daily-source-object-upload-timestamp-api.js';
 import { createStoreDailySourceObjectVersionLayer } from './store-daily-source-object-version-api.js';
+import { createStoreDailySourceObjectEtagLayer } from './store-daily-source-object-etag-api.js';
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
@@ -75,7 +76,8 @@ export default {
           const gate23Layer = createStoreDailySourceObjectOperationalMetadataLayer({ env: gate24Layer.env, url });
           const gate25Layer = createStoreDailySourceObjectUploadTimestampLayer({ env: gate23Layer.env });
           const gate26Layer = createStoreDailySourceObjectVersionLayer({ env: gate25Layer.env });
-          const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env: gate26Layer.env, actor, url });
+          const gate27Layer = createStoreDailySourceObjectEtagLayer({ env: gate26Layer.env });
+          const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env: gate27Layer.env, actor, url });
           if (response) {
             const gate23Response = await (async () => {
               return gate23Layer.enrich(response);
@@ -86,7 +88,10 @@ export default {
             const gate25Response = await (async () => {
               return gate25Layer.enrich(gate24Response);
             })();
-            return gate26Layer.enrich(gate25Response);
+            const gate26Response = await (async () => {
+              return gate26Layer.enrich(gate25Response);
+            })();
+            return gate27Layer.enrich(gate26Response);
           }
         }
         const response = await handleStoreApiRoute({ request, env, actor, url });
