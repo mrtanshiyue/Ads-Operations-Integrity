@@ -4,6 +4,7 @@ import { handleStoreApiRoute } from './store-api.js';
 import { handleStoreDailySourceObjectMetadataApiRoute } from './store-daily-source-object-metadata-api.js';
 import { handleStoreDailySourceObjectChecksumApiRoute } from './store-daily-source-object-checksum-api.js';
 import { createStoreDailySourceObjectOperationalMetadataLayer } from './store-daily-source-object-operational-metadata-api.js';
+import { createStoreDailySourceObjectByteSizeLayer } from './store-daily-source-object-byte-size-api.js';
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
@@ -68,9 +69,15 @@ export default {
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {
         if (url.pathname.endsWith('/search-terms-daily')) {
-          const gate23Layer = createStoreDailySourceObjectOperationalMetadataLayer({ env, url });
+          const gate24Layer = createStoreDailySourceObjectByteSizeLayer({ env, url });
+          const gate23Layer = createStoreDailySourceObjectOperationalMetadataLayer({ env: gate24Layer.env, url });
           const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env: gate23Layer.env, actor, url });
-          if (response) return gate23Layer.enrich(response);
+          if (response) {
+            const gate23Response = await (async () => {
+              return gate23Layer.enrich(response);
+            })();
+            return gate24Layer.enrich(gate23Response);
+          }
         }
         const response = await handleStoreApiRoute({ request, env, actor, url });
         if (response) return response;
