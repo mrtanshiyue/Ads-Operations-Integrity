@@ -36,6 +36,8 @@ on:
       - 'scripts/test-search-term-r2-object-metadata-sha256-contract.mjs'
       - 'scripts/test-search-term-r2-object-native-sha256-contract.mjs'
       - 'scripts/test-search-term-r2-object-operational-metadata-contract.mjs'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -43,6 +45,8 @@ on:
       - 'package.json'
       - 'index.html'
       - 'assets/**'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+      - '.github/workflows/cloudflare-gate25-ci.yml'
       - '.github/workflows/cloudflare-foundation-ci.yml'
   pull_request:
     paths:
@@ -76,6 +80,8 @@ on:
       - 'scripts/test-search-term-r2-object-metadata-sha256-contract.mjs'
       - 'scripts/test-search-term-r2-object-native-sha256-contract.mjs'
       - 'scripts/test-search-term-r2-object-operational-metadata-contract.mjs'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -83,6 +89,8 @@ on:
       - 'package.json'
       - 'index.html'
       - 'assets/**'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+      - '.github/workflows/cloudflare-gate25-ci.yml'
       - '.github/workflows/cloudflare-foundation-ci.yml'
 
 permissions:
