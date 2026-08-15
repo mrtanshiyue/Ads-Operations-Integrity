@@ -1,6 +1,7 @@
 import { createD1ReportCycleSnapshotRepository } from './sync-report-cycle-snapshot.js';
 import { createCloudflareReportCycleIngestionAdapter } from './sync-report-cycle-ingestion-runtime.js';
 import { createCloudflareReportCycleFinalizeAdapter } from './sync-report-cycle-finalize-runtime.js';
+import { createCloudflareReportCycleAcquisitionAdapters } from './sync-report-cycle-acquisition-runtime.js';
 import { createReportCycleRuntime } from './sync-report-cycle-runtime.js';
 import { createReportCycleAcquisitionCapabilityGate } from './sync-report-cycle-acquisition-capability.js';
 import { SEARCH_TERM_INGESTION_BINDINGS } from './search-term-ingestion-runtime.js';
@@ -14,14 +15,17 @@ export class CloudflareReportCycleRuntimeFactoryError extends Error {
   }
 }
 
-// Compose the verified Cloudflare read/ingestion/finalization boundaries without
-// introducing any Amazon or R2 write transport. Acquisition remains explicitly
-// adapter-injected and is guarded by the sync-runtime AMAZON_ADS_ENABLED kill switch
-// before every delegate call. Missing adapters remain missing and fail closed.
+// Compose the verified Cloudflare snapshot/ingestion/finalization boundaries. Acquisition
+// may be supplied either as already-built executor adapters OR as raw transport adapters
+// that are converted here into the concrete D1/freshness acquisition boundary. The two
+// sources are mutually exclusive. In both cases AMAZON_ADS_ENABLED remains the final
+// per-invocation execution capability gate before any acquisition delegate is reachable.
 export function createCloudflareReportCycleRuntime(options = {}) {
   const {
     env,
-    acquisitionAdapters = {},
+    acquisitionAdapters,
+    acquisitionTransportAdapters,
+    storeCode,
     maxCompressedBytes,
     maxDecompressedBytes,
     now,
@@ -34,8 +38,21 @@ export function createCloudflareReportCycleRuntime(options = {}) {
   if (!db || typeof db.prepare !== 'function' || typeof db.batch !== 'function') {
     throw new CloudflareReportCycleRuntimeFactoryError('CLOUDFLARE_REPORT_CYCLE_STORE_DB_BINDING_INVALID');
   }
-  if (!acquisitionAdapters || typeof acquisitionAdapters !== 'object' || Array.isArray(acquisitionAdapters)) {
-    throw new CloudflareReportCycleRuntimeFactoryError('CLOUDFLARE_REPORT_CYCLE_ACQUISITION_ADAPTERS_INVALID');
+
+  const hasBuiltAdapters = acquisitionAdapters !== undefined && acquisitionAdapters !== null;
+  const hasTransportAdapters = acquisitionTransportAdapters !== undefined
+    && acquisitionTransportAdapters !== null;
+  if (hasBuiltAdapters && hasTransportAdapters) {
+    throw new CloudflareReportCycleRuntimeFactoryError(
+      'CLOUDFLARE_REPORT_CYCLE_ACQUISITION_SOURCE_CONFLICT',
+    );
+  }
+  if (hasBuiltAdapters
+      && (!acquisitionAdapters || typeof acquisitionAdapters !== 'object'
+        || Array.isArray(acquisitionAdapters))) {
+    throw new CloudflareReportCycleRuntimeFactoryError(
+      'CLOUDFLARE_REPORT_CYCLE_ACQUISITION_ADAPTERS_INVALID',
+    );
   }
 
   let snapshotRepository;
@@ -51,9 +68,20 @@ export function createCloudflareReportCycleRuntime(options = {}) {
       now,
     });
     finalizeRun = createCloudflareReportCycleFinalizeAdapter({ env, now });
+
+    let resolvedAcquisitionAdapters = hasBuiltAdapters ? acquisitionAdapters : {};
+    if (hasTransportAdapters) {
+      resolvedAcquisitionAdapters = createCloudflareReportCycleAcquisitionAdapters({
+        env,
+        storeCode,
+        transportAdapters:acquisitionTransportAdapters,
+        maxCompressedBytes,
+        now,
+      });
+    }
     guardedAcquisitionAdapters = createReportCycleAcquisitionCapabilityGate({
       env,
-      adapters:acquisitionAdapters,
+      adapters:resolvedAcquisitionAdapters,
     });
   } catch (error) {
     throw new CloudflareReportCycleRuntimeFactoryError(
