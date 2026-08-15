@@ -3,6 +3,7 @@ import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
 import { handleStoreDailySourceObjectMetadataApiRoute } from './store-daily-source-object-metadata-api.js';
 import { handleStoreDailySourceObjectChecksumApiRoute } from './store-daily-source-object-checksum-api.js';
+import { createStoreDailySourceObjectOperationalMetadataLayer } from './store-daily-source-object-operational-metadata-api.js';
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
@@ -67,8 +68,9 @@ export default {
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {
         if (url.pathname.endsWith('/search-terms-daily')) {
-          const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env, actor, url });
-          if (response) return response;
+          const gate23Layer = createStoreDailySourceObjectOperationalMetadataLayer({ env, url });
+          const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env: gate23Layer.env, actor, url });
+          if (response) return gate23Layer.enrich(response);
         }
         const response = await handleStoreApiRoute({ request, env, actor, url });
         if (response) return response;
