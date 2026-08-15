@@ -3,8 +3,11 @@ import { canonicalizeEntitySnapshot } from '../cloudflare/runtime/amazon-entity-
 import {
   stageEntityMirrorSnapshot,
   publishEntityMirrorSnapshot,
+  publishDurableEntityMirrorStage,
+  stageAuthorityFromReceipt,
   assertStageReceipt,
   assertSnapshotReceipt,
+  assertFinalMatchesStageReceipt,
 } from '../cloudflare/runtime/amazon-entity-mirror-producer.js';
 
 const syncedAt = '2026-08-15T11:40:00Z';
@@ -103,6 +106,31 @@ class FakeRepository {
   assert.equal(repository.publishCalls, 1);
 }
 
+// Crash after stage receipt: publish must use durable stage authority and must not need Amazon again.
+{
+  const repository = new FakeRepository();
+  await stageEntityMirrorSnapshot({ repository, runId:'run1', snapshot, stagedAt:'t1' });
+  const authority = stageAuthorityFromReceipt(repository.stageReceipt, 'run1', 'p1');
+  assert.equal(authority.snapshotHash, snapshot.snapshotHash);
+  assert.deepEqual(authority.counts, snapshot.counts);
+
+  const published = await publishDurableEntityMirrorStage({
+    repository,
+    runId:'run1',
+    profileId:'p1',
+    publishedAt:'t2',
+  });
+  assert.equal(published.reused, false);
+  assert.equal(repository.publishCalls, 1);
+  assert.equal(assertFinalMatchesStageReceipt(repository.finalReceipt, repository.stageReceipt, 'run1', 'p1'), true);
+
+  // Even if Amazon would now return a different snapshot, recovery is already complete from durable stage.
+  assert.notEqual(changedSnapshot.snapshotHash, snapshot.snapshotHash);
+  const replay = await publishDurableEntityMirrorStage({ repository, runId:'run1', profileId:'p1', publishedAt:'ignored' });
+  assert.equal(replay.reused, true);
+  assert.equal(repository.publishCalls, 1);
+}
+
 {
   const repository = new FakeRepository();
   await stageEntityMirrorSnapshot({ repository, runId:'run1', snapshot, stagedAt:'t1' });
@@ -122,8 +150,8 @@ class FakeRepository {
     campaign_count:1, ad_group_count:1, keyword_count:1, target_count:1, invalid_rows:0,
   };
   try {
-    await publishEntityMirrorSnapshot({ repository, runId:'run1', snapshot, publishedAt:'t' });
-    assert.fail('publish without stage receipt accepted');
+    await publishDurableEntityMirrorStage({ repository, runId:'run1', profileId:'p1', publishedAt:'t' });
+    assert.fail('durable publish without stage receipt accepted');
   } catch (error) {
     assert.equal(error.code, 'ENTITY_STAGE_RECEIPT_REQUIRED');
   }
@@ -132,7 +160,7 @@ class FakeRepository {
 {
   const repository = new FakeRepository({ publishRace:true });
   await stageEntityMirrorSnapshot({ repository, runId:'run1', snapshot, stagedAt:'t1' });
-  const result = await publishEntityMirrorSnapshot({ repository, runId:'run1', snapshot, publishedAt:'t2' });
+  const result = await publishDurableEntityMirrorStage({ repository, runId:'run1', profileId:'p1', publishedAt:'t2' });
   assert.equal(result.reused, true, 'lost publish response should recover from durable final receipt');
   assert.equal(repository.publishCalls, 1);
 }
@@ -142,7 +170,7 @@ class FakeRepository {
   const staged = await stageEntityMirrorSnapshot({ repository, runId:'run1', snapshot:emptySnapshot, stagedAt:'t1' });
   assert.equal(staged.reused, false);
   assert.equal(repository.stageRows.length, 0);
-  const published = await publishEntityMirrorSnapshot({ repository, runId:'run1', snapshot:emptySnapshot, publishedAt:'t2' });
+  const published = await publishDurableEntityMirrorStage({ repository, runId:'run1', profileId:'p1', publishedAt:'t2' });
   assert.equal(published.reused, false);
   assert.equal(repository.finalReceipt.campaign_count, 0);
 }
@@ -168,12 +196,23 @@ class FakeRepository {
   }
 }
 
+{
+  const bad = receiptFromSnapshot('run1', snapshot, 'stage');
+  bad.snapshot_sha256 = 'not-a-sha';
+  assert.throws(
+    () => stageAuthorityFromReceipt(bad, 'run1', 'p1'),
+    (error) => error.code === 'ENTITY_STAGE_RECEIPT_INVALID:snapshot_sha256',
+  );
+}
+
 console.log(JSON.stringify({
   ok:true,
   stageDurableReceipt:true,
   stageFrozenBySnapshotHash:true,
   publishDurableReceipt:true,
+  crashRecoveryUsesDurableStageWithoutAmazonRefetch:true,
   lostPublishResponseRecovered:true,
   zeroEntitySnapshot:true,
   nullCountRejected:true,
+  malformedReceiptHashRejected:true,
 }, null, 2));

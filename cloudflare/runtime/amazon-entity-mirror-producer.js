@@ -115,6 +115,95 @@ export async function publishEntityMirrorSnapshot({ repository, runId, snapshot,
   return { reused: false, receipt: finalReceipt };
 }
 
+// Crash-recovery path: once a stage receipt exists, it is the durable producer authority.
+// Publishing must not depend on re-fetching Amazon or reproducing the original source snapshot.
+export async function publishDurableEntityMirrorStage({ repository, runId, profileId, publishedAt }) {
+  const canonicalRunId = requiredText(runId, 'SYNC_RUN_ID_REQUIRED');
+  const canonicalProfileId = requiredText(profileId, 'PROFILE_ID_REQUIRED');
+  const run = await repository.loadRun(canonicalRunId);
+  let finalReceipt = await repository.loadReceipt(canonicalRunId);
+  const stageReceipt = await repository.loadStageReceipt(canonicalRunId);
+  const decision = inspectEntityMirrorReceipt({
+    run,
+    finalReceipt,
+    stageReceipt,
+    profileId: canonicalProfileId,
+  });
+
+  if (decision === 'REUSE_ENTITY_MIRROR_RECEIPT') {
+    if (stageReceipt) assertFinalMatchesStageReceipt(finalReceipt, stageReceipt, canonicalRunId, canonicalProfileId);
+    return { reused: true, receipt: finalReceipt };
+  }
+  if (decision !== 'REUSE_ENTITY_STAGE_RECEIPT') {
+    throw new EntityMirrorProducerError('ENTITY_STAGE_RECEIPT_REQUIRED');
+  }
+
+  const authority = stageAuthorityFromReceipt(stageReceipt, canonicalRunId, canonicalProfileId);
+  const summary = await repository.loadStageSummary(canonicalRunId);
+  assertStageSummary(summary, authority);
+
+  try {
+    await repository.publishStage({
+      runId: canonicalRunId,
+      profileId: authority.profileId,
+      syncedAt: authority.syncedAt,
+      snapshotHash: authority.snapshotHash,
+      counts: authority.counts,
+      publishedAt: requiredText(publishedAt, 'ENTITY_SNAPSHOT_PUBLISHED_AT_REQUIRED'),
+    });
+  } catch (error) {
+    finalReceipt = await repository.loadReceipt(canonicalRunId);
+    if (finalReceipt) {
+      assertFinalMatchesStageReceipt(finalReceipt, stageReceipt, canonicalRunId, canonicalProfileId);
+      return { reused: true, receipt: finalReceipt };
+    }
+    throw new EntityMirrorProducerError('ENTITY_MIRROR_PUBLISH_FAILED', error);
+  }
+
+  finalReceipt = await repository.loadReceipt(canonicalRunId);
+  assertFinalMatchesStageReceipt(finalReceipt, stageReceipt, canonicalRunId, canonicalProfileId);
+  return { reused: false, receipt: finalReceipt };
+}
+
+export function stageAuthorityFromReceipt(receipt, runId, profileId) {
+  assertReceiptBase(receipt, runId, profileId, 'ENTITY_STAGE');
+  if (!receipt.staged_at) throw new EntityMirrorProducerError('ENTITY_STAGE_RECEIPT_INCOMPLETE');
+  return Object.freeze({
+    profileId,
+    syncedAt: receipt.snapshot_synced_at,
+    snapshotHash: receipt.snapshot_sha256,
+    counts: Object.freeze({
+      campaign: receipt.campaign_count,
+      ad_group: receipt.ad_group_count,
+      keyword: receipt.keyword_count,
+      target: receipt.target_count,
+    }),
+  });
+}
+
+export function assertFinalMatchesStageReceipt(finalReceipt, stageReceipt, runId, profileId) {
+  assertReceiptBase(finalReceipt, runId, profileId, 'ENTITY_SNAPSHOT');
+  if (!finalReceipt.published_at) throw new EntityMirrorProducerError('ENTITY_SNAPSHOT_RECEIPT_INCOMPLETE');
+  const authority = stageAuthorityFromReceipt(stageReceipt, runId, profileId);
+  if (finalReceipt.snapshot_synced_at !== authority.syncedAt) {
+    throw new EntityMirrorProducerError('ENTITY_SNAPSHOT_STAGE_CONFLICT:snapshot_synced_at');
+  }
+  if (finalReceipt.snapshot_sha256 !== authority.snapshotHash) {
+    throw new EntityMirrorProducerError('ENTITY_SNAPSHOT_STAGE_CONFLICT:snapshot_sha256');
+  }
+  for (const [type, field] of [
+    ['campaign', 'campaign_count'],
+    ['ad_group', 'ad_group_count'],
+    ['keyword', 'keyword_count'],
+    ['target', 'target_count'],
+  ]) {
+    if (finalReceipt[field] !== authority.counts[type]) {
+      throw new EntityMirrorProducerError(`ENTITY_SNAPSHOT_STAGE_CONFLICT:${field}`);
+    }
+  }
+  return true;
+}
+
 export function assertStageSummary(summary, snapshot) {
   if (!summary) throw new EntityMirrorProducerError('ENTITY_STAGE_SUMMARY_MISSING');
   if (summary.profile_id !== snapshot.profileId) throw new EntityMirrorProducerError('ENTITY_STAGE_PROFILE_MISMATCH');
@@ -459,6 +548,9 @@ function assertReceiptBase(receipt, runId, profileId, prefix) {
   }
   if (!receipt.snapshot_synced_at || !receipt.snapshot_sha256) {
     throw new EntityMirrorProducerError(`${prefix}_RECEIPT_INCOMPLETE`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(receipt.snapshot_sha256))) {
+    throw new EntityMirrorProducerError(`${prefix}_RECEIPT_INVALID:snapshot_sha256`);
   }
 }
 
