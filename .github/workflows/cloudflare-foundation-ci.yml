@@ -50,6 +50,9 @@ on:
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
       - 'scripts/test-search-term-fact-publisher.mjs'
+      - 'scripts/test-amazon-entity-contract.mjs'
+      - 'scripts/test-amazon-entity-mirror-producer.mjs'
+      - 'scripts/test-phase-e-entity-migrations.py'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -108,6 +111,9 @@ on:
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
       - 'scripts/test-search-term-fact-publisher.mjs'
+      - 'scripts/test-amazon-entity-contract.mjs'
+      - 'scripts/test-amazon-entity-mirror-producer.mjs'
+      - 'scripts/test-phase-e-entity-migrations.py'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -168,6 +174,8 @@ jobs:
           node --check cloudflare/runtime/amazon-profile-producer.js
           node --check cloudflare/runtime/amazon-report-producer.js
           node --check cloudflare/runtime/search-term-fact-publisher.js
+          node --check cloudflare/runtime/amazon-entity-contract.js
+          node --check cloudflare/runtime/amazon-entity-mirror-producer.js
           node scripts/test-phase-e-contracts.mjs
           node scripts/test-web-sync-orchestration.mjs
           node scripts/test-sync-workflow-orchestration.mjs
@@ -177,7 +185,10 @@ jobs:
           node scripts/test-amazon-profile-producer.mjs
           node scripts/test-amazon-report-producer.mjs
           node scripts/test-search-term-fact-publisher.mjs
+          node scripts/test-amazon-entity-contract.mjs
+          node scripts/test-amazon-entity-mirror-producer.mjs
           python3 scripts/test-phase-e-migrations.py
+          python3 scripts/test-phase-e-entity-migrations.py
 
       - name: Database foundation tests
         run: npm run test:cf-foundation
