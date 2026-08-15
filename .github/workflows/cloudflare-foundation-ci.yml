@@ -54,6 +54,7 @@ on:
       - 'scripts/test-sync-report-plan-bootstrap.mjs'
       - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-sync-report-cycle.mjs'
+      - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -127,6 +128,7 @@ on:
       - 'scripts/test-sync-report-plan-bootstrap.mjs'
       - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-sync-report-cycle.mjs'
+      - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
       - 'scripts/test-amazon-report-acquisition.mjs'
@@ -191,6 +193,7 @@ jobs:
           node --check cloudflare/runtime/sync-run-completion.js
           node --check cloudflare/runtime/sync-report-cycle.js
           node --check cloudflare/runtime/sync-report-cycle-snapshot.js
+          node --check cloudflare/runtime/sync-report-cycle-executor.js
           node --check cloudflare/runtime/amazon-numeric.js
           node --check cloudflare/runtime/amazon-profile-contract.js
           node --check cloudflare/runtime/amazon-report-contract.js
@@ -214,6 +217,7 @@ jobs:
           node scripts/test-sync-report-plan-bootstrap.mjs
           node scripts/test-sync-run-completion.mjs
           node scripts/test-sync-report-cycle.mjs
+          node scripts/test-sync-report-cycle-executor.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
           node scripts/test-amazon-report-acquisition.mjs
