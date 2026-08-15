@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 // Sync acquisition capability and web trigger registration intentionally remain separate domains.
 import './test-sync-report-cycle-acquisition-capability.mjs';
+import './test-sync-report-cycle-acquisition-runtime.mjs';
 import './test-sync-report-cycle-cloudflare-runtime.mjs';
 import { createReportCycleRuntime, ReportCycleRuntimeError } from '../cloudflare/runtime/sync-report-cycle-runtime.js';
 
