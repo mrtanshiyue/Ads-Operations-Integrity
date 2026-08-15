@@ -186,8 +186,7 @@ assert.doesNotMatch(`${gate27}\n${helper}`, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET
 assert.doesNotMatch(`${gate27}\n${helper}`, /targetingIdentityReady|bidSourceColumnReady|bidValueNullabilityTrusted|adProductReady|advertisedProductIdentityReady|attributionMaturityReady|bidGovernanceReady|campaignStudioReady/);
 assert.match(webEntry, /const gate26Layer = createStoreDailySourceObjectVersionLayer\(\{ env: gate25Layer\.env \}\)/);
 assert.match(webEntry, /const gate27Layer = createStoreDailySourceObjectEtagLayer\(\{ env: gate26Layer\.env \}\)/);
-assert.match(webEntry, /const gate28Layer = createStoreDailySourceObjectStorageClassLayer\(\{ env: gate27Layer\.env \}\)/);
-assert.match(webEntry, /handleStoreDailySourceObjectChecksumApiRoute\(\{ request, env: gate28Layer\.env, actor, url \}\)/);
+assert.match(webEntry, /handleStoreDailySourceObjectChecksumApiRoute\(\{ request, env: gate27Layer\.env, actor, url \}\)/);
 assert.match(webEntry, /return gate26Layer\.enrich\(gate25Response\)/);
 assert.match(webEntry, /return gate27Layer\.enrich\(gate26Response\)/);
 

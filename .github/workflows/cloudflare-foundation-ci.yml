@@ -40,7 +40,6 @@ on:
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
       - 'scripts/test-search-term-r2-object-etag-contract.mjs'
-      - 'scripts/test-search-term-r2-object-storage-class-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -52,7 +51,6 @@ on:
       - '.github/workflows/cloudflare-gate25-ci.yml'
       - '.github/workflows/cloudflare-gate26-ci.yml'
       - '.github/workflows/cloudflare-gate27-ci.yml'
-      - '.github/workflows/cloudflare-gate28-ci.yml'
       - '.github/workflows/cloudflare-foundation-ci.yml'
   pull_request:
     paths:
@@ -90,7 +88,6 @@ on:
       - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
       - 'scripts/test-search-term-r2-object-version-contract.mjs'
       - 'scripts/test-search-term-r2-object-etag-contract.mjs'
-      - 'scripts/test-search-term-r2-object-storage-class-contract.mjs'
       - 'scripts/test-cloudflare-foundation.py'
       - 'scripts/test-rollup-contract.mjs'
       - 'scripts/test-rollup-observability.mjs'
@@ -102,7 +99,6 @@ on:
       - '.github/workflows/cloudflare-gate25-ci.yml'
       - '.github/workflows/cloudflare-gate26-ci.yml'
       - '.github/workflows/cloudflare-gate27-ci.yml'
-      - '.github/workflows/cloudflare-gate28-ci.yml'
       - '.github/workflows/cloudflare-foundation-ci.yml'
 
 permissions:
