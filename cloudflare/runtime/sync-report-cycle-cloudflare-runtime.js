@@ -2,6 +2,7 @@ import { createD1ReportCycleSnapshotRepository } from './sync-report-cycle-snaps
 import { createCloudflareReportCycleIngestionAdapter } from './sync-report-cycle-ingestion-runtime.js';
 import { createCloudflareReportCycleFinalizeAdapter } from './sync-report-cycle-finalize-runtime.js';
 import { createReportCycleRuntime } from './sync-report-cycle-runtime.js';
+import { createReportCycleAcquisitionCapabilityGate } from './sync-report-cycle-acquisition-capability.js';
 import { SEARCH_TERM_INGESTION_BINDINGS } from './search-term-ingestion-runtime.js';
 
 export class CloudflareReportCycleRuntimeFactoryError extends Error {
@@ -15,8 +16,8 @@ export class CloudflareReportCycleRuntimeFactoryError extends Error {
 
 // Compose the verified Cloudflare read/ingestion/finalization boundaries without
 // introducing any Amazon or R2 write transport. Acquisition remains explicitly
-// adapter-injected and defaults to no capability, so queued/processing/ready jobs
-// fail closed unless a higher layer deliberately supplies verified adapters later.
+// adapter-injected and is additionally guarded by both runtime kill switches before
+// every delegate call. Missing adapters remain missing and therefore fail closed.
 export function createCloudflareReportCycleRuntime(options = {}) {
   const {
     env,
@@ -40,6 +41,7 @@ export function createCloudflareReportCycleRuntime(options = {}) {
   let snapshotRepository;
   let ingestionAdapter;
   let finalizeRun;
+  let guardedAcquisitionAdapters;
   try {
     snapshotRepository = createD1ReportCycleSnapshotRepository(db);
     ingestionAdapter = createCloudflareReportCycleIngestionAdapter({
@@ -49,6 +51,10 @@ export function createCloudflareReportCycleRuntime(options = {}) {
       now,
     });
     finalizeRun = createCloudflareReportCycleFinalizeAdapter({ env, now });
+    guardedAcquisitionAdapters = createReportCycleAcquisitionCapabilityGate({
+      env,
+      adapters:acquisitionAdapters,
+    });
   } catch (error) {
     throw new CloudflareReportCycleRuntimeFactoryError(
       'CLOUDFLARE_REPORT_CYCLE_DEPENDENCY_BUILD_FAILED',
@@ -59,7 +65,7 @@ export function createCloudflareReportCycleRuntime(options = {}) {
   try {
     return createReportCycleRuntime({
       snapshotRepository,
-      acquisitionAdapters,
+      acquisitionAdapters:guardedAcquisitionAdapters,
       ingestionAdapter,
       finalizeRun,
     });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './test-sync-report-cycle-acquisition-capability.mjs';
 import {
   createCloudflareReportCycleRuntime,
   CloudflareReportCycleRuntimeFactoryError,
@@ -120,12 +121,14 @@ function createBucket() {
   };
 }
 
-function build(status) {
+function build(status, { envOverrides = {}, acquisitionAdapters = {} } = {}) {
   const db = createDb(status);
   const bucket = createBucket();
   let nowCalls = 0;
+  const env = { STORE_01_DB:db, DATA_BUCKET:bucket, ...envOverrides };
   const runtime = createCloudflareReportCycleRuntime({
-    env:{ STORE_01_DB:db, DATA_BUCKET:bucket },
+    env,
+    acquisitionAdapters,
     maxCompressedBytes:MAX_COMPRESSED,
     maxDecompressedBytes:MAX_DECOMPRESSED,
     now:() => {
@@ -133,7 +136,7 @@ function build(status) {
       return '2026-08-16T03:20:00+08:00';
     },
   });
-  return { runtime, db, bucket, getNowCalls:() => nowCalls };
+  return { runtime, env, db, bucket, getNowCalls:() => nowCalls };
 }
 
 assert.throws(
@@ -173,8 +176,7 @@ assert.throws(
   assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
 }
 
-// With no acquisition adapters supplied, queued fails closed after fresh routing.
-// The concrete runtime never invents Amazon/R2 write capability.
+// With no acquisition adapters supplied, queued still fails closed after fresh routing.
 {
   const h = build('queued');
   let caught = null;
@@ -186,6 +188,56 @@ assert.throws(
   assert.equal(h.db.calls.mutationBatch, 0);
   assert.equal(h.db.calls.first, 0);
   assert.equal(h.getNowCalls(), 0);
+  assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
+}
+
+// Even when a concrete acquisition delegate is injected, the runtime kill switches are
+// authoritative. Current Dev semantics (SYNC_TRIGGER_ENABLED=false; AMAZON flag absent)
+// block before the injected delegate and before any R2/D1 mutation path can run.
+{
+  let delegateCalls = 0;
+  const h = build('queued', {
+    envOverrides:{ SYNC_TRIGGER_ENABLED:'false' },
+    acquisitionAdapters:{
+      createAmazonReport:async () => { delegateCalls += 1; return { action:'should-not-run' }; },
+    },
+  });
+  let caught = null;
+  try { await h.runtime.advance('run-cloudflare'); } catch (error) { caught = error; }
+  assert.ok(caught);
+  assert.equal(caught.code, 'REPORT_CYCLE_RUNTIME_EXECUTION_FAILED:CREATE_AMAZON_REPORT');
+  assert.equal(caught.cause?.code, 'REPORT_CYCLE_EXECUTION_FAILED:CREATE_AMAZON_REPORT');
+  assert.equal(
+    caught.cause?.cause?.code,
+    'REPORT_CYCLE_ACQUISITION_DISABLED:SYNC_TRIGGER_ENABLED',
+  );
+  assert.equal(delegateCalls, 0);
+  assert.equal(h.db.calls.snapshotBatch, 1);
+  assert.equal(h.db.calls.mutationBatch, 0);
+  assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
+}
+
+// Both exact grants are required before an injected delegate becomes reachable. This is
+// a contract-only fixture; repository deployment config remains disabled and unchanged.
+{
+  let delegateCalls = 0;
+  const h = build('queued', {
+    envOverrides:{ SYNC_TRIGGER_ENABLED:'true', AMAZON_ADS_ENABLED:'true' },
+    acquisitionAdapters:{
+      createAmazonReport:async (input) => {
+        delegateCalls += 1;
+        assert.equal(input.directive, 'CREATE_AMAZON_REPORT');
+        return { action:'created-by-test-adapter' };
+      },
+    },
+  });
+  const result = await h.runtime.advance('run-cloudflare');
+  assert.equal(result.directive, 'CREATE_AMAZON_REPORT');
+  assert.equal(result.executed, true);
+  assert.deepEqual(result.result, { action:'created-by-test-adapter' });
+  assert.equal(delegateCalls, 1);
+  assert.equal(h.db.calls.snapshotBatch, 1);
+  assert.equal(h.db.calls.mutationBatch, 0);
   assert.deepEqual(h.bucket.calls, { get:0, head:0, put:0, list:0, delete:0 });
 }
 

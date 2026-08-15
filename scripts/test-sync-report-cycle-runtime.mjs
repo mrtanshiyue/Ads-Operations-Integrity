@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './test-sync-report-cycle-acquisition-capability.mjs';
 import './test-sync-report-cycle-cloudflare-runtime.mjs';
 import { createReportCycleRuntime, ReportCycleRuntimeError } from '../cloudflare/runtime/sync-report-cycle-runtime.js';
 
