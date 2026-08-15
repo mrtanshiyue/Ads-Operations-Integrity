@@ -48,6 +48,7 @@ on:
       - 'scripts/test-sync-producer-bootstrap.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
+      - 'scripts/test-amazon-report-acquisition.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
@@ -111,6 +112,7 @@ on:
       - 'scripts/test-sync-producer-bootstrap.mjs'
       - 'scripts/test-amazon-search-term-parser.mjs'
       - 'scripts/test-amazon-raw-object-contract.mjs'
+      - 'scripts/test-amazon-report-acquisition.mjs'
       - 'scripts/test-phase-e-runtime-integration.mjs'
       - 'scripts/test-amazon-profile-producer.mjs'
       - 'scripts/test-amazon-report-producer.mjs'
@@ -174,6 +176,7 @@ jobs:
           node --check cloudflare/runtime/amazon-producer-state.js
           node --check cloudflare/runtime/amazon-search-term-parser.js
           node --check cloudflare/runtime/amazon-raw-object-contract.js
+          node --check cloudflare/runtime/amazon-report-acquisition.js
           node --check cloudflare/runtime/web-sync-orchestration.js
           node --check cloudflare/runtime/sync-workflow-orchestration.js
           node --check cloudflare/runtime/sync-api.js
@@ -189,6 +192,7 @@ jobs:
           node scripts/test-sync-producer-bootstrap.mjs
           node scripts/test-amazon-search-term-parser.mjs
           node scripts/test-amazon-raw-object-contract.mjs
+          node scripts/test-amazon-report-acquisition.mjs
           node scripts/test-phase-e-runtime-integration.mjs
           node scripts/test-amazon-profile-producer.mjs
           node scripts/test-amazon-report-producer.mjs

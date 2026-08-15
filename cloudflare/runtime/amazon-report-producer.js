@@ -86,7 +86,7 @@ export function assertReservedReportJob(row, plan) {
 }
 
 // Call this function inside one Workflow step.do callback. It deliberately never retries createReport.
-export async function createAmazonReportOnce({ repository, jobId, createReport, now }) {
+export async function createAmazonReportOnce({ repository, jobId, createReport }) {
   let job = await repository.loadByJobId(jobId);
   const initialDecision = amazonCreateDecision(job);
   if (initialDecision === 'REUSE_AMAZON_REPORT' || initialDecision === 'TERMINAL') return job;
@@ -112,10 +112,11 @@ export async function createAmazonReportOnce({ repository, jobId, createReport, 
   }
 
   const amazonReportId = requiredText(response?.reportId, 'AMAZON_REPORT_ID_INVALID');
-  const amazonCreatedAt = requiredText(response?.createdAt || now, 'AMAZON_REPORT_CREATED_AT_REQUIRED');
+  // amazon_created_at is source provenance. Never replace a missing Amazon timestamp with local time.
+  const amazonCreatedAt = requiredText(response?.createdAt, 'AMAZON_REPORT_CREATED_AT_REQUIRED');
   await repository.persistAmazonReportReceipt(jobId, amazonReportId, amazonCreatedAt);
   job = await repository.loadByJobId(jobId);
-  if (job?.status !== 'processing' || job?.amazon_report_id !== amazonReportId) {
+  if (job?.status !== 'processing' || job?.amazon_report_id !== amazonReportId || job?.amazon_created_at !== amazonCreatedAt) {
     throw new ReportProducerError('AMAZON_REPORT_CREATE_RECEIPT_PERSIST_FAILED');
   }
   return job;
@@ -177,6 +178,18 @@ export function createD1ReportJobRepository(db) {
         SET status = 'ready', updated_at = CURRENT_TIMESTAMP
         WHERE job_id = ?1 AND status = 'processing' AND amazon_report_id IS NOT NULL
       `).bind(jobId).run();
+      return this.loadByJobId(jobId);
+    },
+
+    async markFailed(jobId, errorCode, errorMessage = null) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET status = 'failed',
+            error_code = ?2,
+            error_message = ?3,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1 AND status = 'processing' AND amazon_report_id IS NOT NULL
+      `).bind(jobId, errorCode, errorMessage).run();
       return this.loadByJobId(jobId);
     },
 

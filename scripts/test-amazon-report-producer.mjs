@@ -99,6 +99,7 @@ const queued = {
   job_id: 'job-create-1',
   status: 'queued',
   amazon_report_id: null,
+  amazon_created_at: null,
   request_json: JSON.stringify({ name: 'report request' }),
 };
 
@@ -108,7 +109,6 @@ const queued = {
   const created = await createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: '2026-08-15T11:00:00Z',
     async createReport(request) {
       postCount += 1;
       assert.equal(request.name, 'report request');
@@ -118,15 +118,30 @@ const queued = {
   assert.equal(postCount, 1);
   assert.equal(created.status, 'processing');
   assert.equal(created.amazon_report_id, 'amazon-report-1');
+  assert.equal(created.amazon_created_at, '2026-08-15T11:00:01Z');
 
   const replay = await createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 'ignored',
     async createReport() { postCount += 1; throw new Error('must not call'); },
   });
   assert.equal(replay.amazon_report_id, 'amazon-report-1');
   assert.equal(postCount, 1);
+}
+
+// Amazon createdAt is source provenance. Missing source timestamp must never be replaced with local time.
+{
+  const repository = new FakeCreateRepository(queued);
+  let postCount = 0;
+  await expectCodeAsync(() => createAmazonReportOnce({
+    repository,
+    jobId: queued.job_id,
+    async createReport() { postCount += 1; return { reportId:'amazon-report-no-time' }; },
+  }), 'AMAZON_REPORT_CREATED_AT_REQUIRED');
+  assert.equal(postCount, 1);
+  assert.equal(repository.state.status, 'requested');
+  assert.equal(repository.state.amazon_report_id, null);
+  assert.equal(repository.state.amazon_created_at, null);
 }
 
 {
@@ -135,8 +150,7 @@ const queued = {
   await expectCodeAsync(() => createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 't',
-    async createReport() { postCount += 1; return { reportId: 'must-not-happen' }; },
+    async createReport() { postCount += 1; return { reportId: 'must-not-happen', createdAt:'t' }; },
   }), 'AMAZON_REPORT_CREATE_AMBIGUOUS');
   assert.equal(postCount, 0);
 }
@@ -147,7 +161,6 @@ const queued = {
   await expectCodeAsync(() => createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 't',
     async createReport() { postCount += 1; throw new Error('response lost'); },
   }), 'AMAZON_REPORT_CREATE_OUTCOME_UNKNOWN');
   assert.equal(postCount, 1);
@@ -157,8 +170,7 @@ const queued = {
   await expectCodeAsync(() => createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 't2',
-    async createReport() { postCount += 1; return { reportId: 'second-post-forbidden' }; },
+    async createReport() { postCount += 1; return { reportId: 'second-post-forbidden', createdAt:'t' }; },
   }), 'AMAZON_REPORT_CREATE_AMBIGUOUS');
   assert.equal(postCount, 1);
 }
@@ -171,8 +183,7 @@ const queued = {
   await expectCodeAsync(() => createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 't',
-    async createReport() { postCount += 1; return { reportId: 'double-post' }; },
+    async createReport() { postCount += 1; return { reportId: 'double-post', createdAt:'t' }; },
   }), 'AMAZON_REPORT_CREATE_AMBIGUOUS');
   assert.equal(postCount, 0, 'loser of queued->requested CAS must never POST');
 }
@@ -185,8 +196,7 @@ const queued = {
   const row = await createAmazonReportOnce({
     repository,
     jobId: queued.job_id,
-    now: 't',
-    async createReport() { postCount += 1; return { reportId: 'double-post' }; },
+    async createReport() { postCount += 1; return { reportId: 'double-post', createdAt:'t' }; },
   });
   assert.equal(row.amazon_report_id, 'amazon-report-race');
   assert.equal(postCount, 0);
@@ -197,6 +207,7 @@ console.log(JSON.stringify({
   deterministicPlanning: true,
   reservationReplay: true,
   createReportExactlyOnce: true,
+  amazonCreatedAtNeverSynthesized: true,
   ambiguousCreateFailsClosed: true,
   concurrentArmLoserNeverPosts: true,
 }, null, 2));
