@@ -59,6 +59,7 @@ on:
       - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
       - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
       - 'scripts/test-sync-report-cycle-ingestion-runtime.mjs'
       - 'scripts/test-r2-raw-object-reader.mjs'
@@ -143,6 +144,7 @@ on:
       - 'scripts/test-sync-report-cycle-executor.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
       - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
       - 'scripts/test-sync-report-cycle-ingestion-runtime.mjs'
       - 'scripts/test-r2-raw-object-reader.mjs'
@@ -217,6 +219,7 @@ jobs:
           node --check cloudflare/runtime/sync-report-cycle-executor.js
           node --check cloudflare/runtime/sync-report-cycle-acquisition-adapter.js
           node --check cloudflare/runtime/sync-report-cycle-finalize-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-finalize-runtime.js
           node --check cloudflare/runtime/sync-report-cycle-ingestion-adapter.js
           node --check cloudflare/runtime/sync-report-cycle-ingestion-runtime.js
           node --check cloudflare/runtime/r2-raw-object-reader.js
@@ -250,6 +253,7 @@ jobs:
           node scripts/test-sync-report-cycle-executor.mjs
           node scripts/test-sync-report-cycle-acquisition-freshness.mjs
           node scripts/test-sync-report-cycle-finalize-freshness.mjs
+          node scripts/test-sync-report-cycle-finalize-runtime.mjs
           node scripts/test-sync-report-cycle-ingestion-freshness.mjs
           node scripts/test-sync-report-cycle-ingestion-runtime.mjs
           node scripts/test-r2-raw-object-reader.mjs
