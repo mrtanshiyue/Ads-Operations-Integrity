@@ -12,6 +12,7 @@ import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
+import { handleSyncApiRoute } from './sync-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 import { enforceStrictAccessActorBinding } from '../../src/access-actor.js';
 
@@ -23,6 +24,7 @@ const CONTROL_ROUTE_PATTERNS = [
 const STORE_PRODUCTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/products(?:\/[^/]+\/[^/]+)?$/;
 const PRODUCT_KEYWORDS_ROUTE_PATTERN = /^\/api\/v1\/products\/[^/]+\/keywords(?:\/[^/]+)?$/;
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
+const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 
 export default {
@@ -38,6 +40,7 @@ export default {
       || STORE_PRODUCTS_ROUTE_PATTERN.test(url.pathname)
       || PRODUCT_KEYWORDS_ROUTE_PATTERN.test(url.pathname)
       || STORE_ROUTE_PATTERN.test(url.pathname)
+      || SYNC_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname);
     if (!modularRoute || request.method === 'OPTIONS') {
       return legacyWebWorker.fetch(request, env, ctx);
@@ -58,6 +61,10 @@ export default {
     await touchLastSeen(env.CONTROL_DB, actor.user_id);
 
     try {
+      if (SYNC_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleSyncApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
       if (isControlRoute(url.pathname)) {
         const response = await handleControlApiRoute({ request, env, actor, url });
         if (response) return response;
