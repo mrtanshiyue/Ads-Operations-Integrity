@@ -20,6 +20,8 @@ export class CloudflareReportCycleAcquisitionTransportError extends Error {
 // Compose caller-supplied Amazon transports with the single concrete R2 write authority.
 // The caller may provide only create/poll/download. putRawObject is always derived from the
 // bound DATA_BUCKET so one runtime cannot accidentally carry two independent R2 writers.
+// Internal jobId context remains inside acquisition; Amazon poll/download transports receive
+// only the Amazon report id that is meaningful to the remote API.
 export function createCloudflareReportCycleAcquisitionTransportAdapters(options = {}) {
   const { env, amazonTransportAdapters = {} } = options;
   if (!env || typeof env !== 'object' || Array.isArray(env)) {
@@ -64,7 +66,11 @@ export function createCloudflareReportCycleAcquisitionTransportAdapters(options 
         `REPORT_CYCLE_AMAZON_TRANSPORT_INVALID:${name}`,
       );
     }
-    result[name] = adapter;
+    if (name === 'pollReport' || name === 'downloadReport') {
+      result[name] = async (input) => adapter(requiredReportId(input));
+    } else {
+      result[name] = adapter;
+    }
   }
 
   try {
@@ -76,4 +82,14 @@ export function createCloudflareReportCycleAcquisitionTransportAdapters(options 
     );
   }
   return Object.freeze(result);
+}
+
+function requiredReportId(input) {
+  const reportId = String(input?.reportId ?? '').trim();
+  if (!reportId) {
+    throw new CloudflareReportCycleAcquisitionTransportError(
+      'REPORT_CYCLE_AMAZON_REPORT_ID_REQUIRED',
+    );
+  }
+  return reportId;
 }
