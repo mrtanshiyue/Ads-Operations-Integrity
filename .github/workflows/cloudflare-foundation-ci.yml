@@ -57,6 +57,7 @@ on:
       - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-sync-report-cycle.mjs'
       - 'scripts/test-sync-report-cycle-executor.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
@@ -142,6 +143,7 @@ on:
       - 'scripts/test-sync-run-completion.mjs'
       - 'scripts/test-sync-report-cycle.mjs'
       - 'scripts/test-sync-report-cycle-executor.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
       - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
       - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
@@ -217,6 +219,7 @@ jobs:
           node --check cloudflare/runtime/sync-report-cycle.js
           node --check cloudflare/runtime/sync-report-cycle-snapshot.js
           node --check cloudflare/runtime/sync-report-cycle-executor.js
+          node --check cloudflare/runtime/sync-report-cycle-runtime.js
           node --check cloudflare/runtime/sync-report-cycle-acquisition-adapter.js
           node --check cloudflare/runtime/sync-report-cycle-finalize-adapter.js
           node --check cloudflare/runtime/sync-report-cycle-finalize-runtime.js
@@ -251,6 +254,7 @@ jobs:
           node scripts/test-sync-run-completion.mjs
           node scripts/test-sync-report-cycle.mjs
           node scripts/test-sync-report-cycle-executor.mjs
+          node scripts/test-sync-report-cycle-runtime.mjs
           node scripts/test-sync-report-cycle-acquisition-freshness.mjs
           node scripts/test-sync-report-cycle-finalize-freshness.mjs
           node scripts/test-sync-report-cycle-finalize-runtime.mjs
