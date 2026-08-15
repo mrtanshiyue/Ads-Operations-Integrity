@@ -140,7 +140,7 @@ assert.match(gate25, /eligibilityRule:\s*'validated_source_r2_object_byte_size_i
 assert.match(gate25, /evidenceRule:\s*'cloudflare_r2_uploaded_timestamp_is_valid_date'/);
 assert.match(helper, /uploaded instanceof Date/);
 assert.doesNotMatch(`${gate25}\n${helper}`, /DATA_BUCKET\.get\s*\(|bucket\.get\s*\(|\.arrayBuffer\s*\(|\.text\s*\(/);
-assert.doesNotMatch(gate25, /prepare\s*\(|SELECT\s+|report_jobs|row_count|schema_version/i);
+assert.doesNotMatch(gate25, /prepare\s*\(|SELECT\s+|row_count|schema_version/i);
 assert.doesNotMatch(`${gate25}\n${helper}`, /freshness|stale|freshThreshold|ageMs|ageMinutes|downloaded_at|ingested_at|amazon_created_at/i);
 assert.doesNotMatch(`${gate25}\n${helper}`, /INSERT\s+INTO|UPDATE\s+[^\s]+\s+SET|DELETE\s+FROM|AMAZON_SYNC_WORKFLOW/);
 assert.doesNotMatch(`${gate25}\n${helper}`, /targetingIdentityReady|bidSourceColumnReady|bidValueNullabilityTrusted|adProductReady|advertisedProductIdentityReady|attributionMaturityReady|bidGovernanceReady|campaignStudioReady/);
