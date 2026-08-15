@@ -190,6 +190,7 @@ jobs:
           node --check cloudflare/runtime/sync-producer-bootstrap.js
           node --check cloudflare/runtime/sync-run-completion.js
           node --check cloudflare/runtime/sync-report-cycle.js
+          node --check cloudflare/runtime/sync-report-cycle-snapshot.js
           node --check cloudflare/runtime/amazon-numeric.js
           node --check cloudflare/runtime/amazon-profile-contract.js
           node --check cloudflare/runtime/amazon-report-contract.js
