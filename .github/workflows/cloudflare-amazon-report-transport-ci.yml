@@ -1,0 +1,54 @@
+name: Cloudflare Amazon Report Transport CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
+      - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
+      - 'cloudflare/runtime/sync-worker.js'
+      - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'scripts/test-amazon-ads-credential-provider.mjs'
+      - 'scripts/test-amazon-ads-report-transport.mjs'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
+      - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
+      - 'cloudflare/runtime/sync-worker.js'
+      - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'scripts/test-amazon-ads-credential-provider.mjs'
+      - 'scripts/test-amazon-ads-report-transport.mjs'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-amazon-report-transport-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate Amazon Ads transport modules
+        run: |
+          node --check cloudflare/runtime/amazon-ads-credential-provider.js
+          node --check cloudflare/runtime/amazon-ads-report-transport.js
+          node scripts/test-amazon-ads-credential-provider.mjs
+          node scripts/test-amazon-ads-report-transport.mjs
