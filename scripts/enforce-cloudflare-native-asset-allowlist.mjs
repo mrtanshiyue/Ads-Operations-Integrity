@@ -16,6 +16,7 @@ const allowedAssets = new Set([
   'cloudflare-native-data-panel-v1.js',
   'cloudflare-native-keyword-governance-v1.js',
   'cloudflare-native-product-governance-v1.js',
+  'cloudflare-native-operations-health-v1.js',
   'cloudflare-native-negative-governance-v1.js',
   'cloudflare-native-query-bridge-v1.js',
   'query-native-ads-source-readiness-v1.js',
