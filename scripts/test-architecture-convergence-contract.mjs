@@ -24,6 +24,23 @@ assert.equal(await exists('wrangler.jsonc'), false, 'root wrangler.jsonc must re
 assert.equal(await exists('.github/workflows/pages.yml'), false, 'legacy GitHub Pages workflow must remain inactive');
 assert.equal(await exists('.github/workflows/ci-main.yml'), false, 'legacy TiDB-era main CI must remain inactive');
 
+const retiredGranularWorkflows = [
+  'cloudflare-access-governance-ci.yml',
+  'cloudflare-amazon-report-transport-ci.yml',
+  'cloudflare-foundation-ci.yml',
+  'cloudflare-gate24-ci.yml',
+  'cloudflare-gate25-ci.yml',
+  'cloudflare-gate26-ci.yml',
+  'cloudflare-gate27-ci.yml',
+];
+for (const workflow of retiredGranularWorkflows) {
+  assert.equal(
+    await exists(`.github/workflows/${workflow}`),
+    false,
+    `retired granular workflow must remain inactive: ${workflow}`,
+  );
+}
+
 // Historical material must remain recoverable without remaining active.
 for (const archivedPath of [
   'docs/archive/legacy-warehouse-v4/wrangler.jsonc',
@@ -35,6 +52,14 @@ for (const archivedPath of [
 ]) {
   assert.equal(await exists(archivedPath), true, `missing legacy archive: ${archivedPath}`);
 }
+for (const workflow of retiredGranularWorkflows) {
+  assert.equal(
+    await exists(`docs/archive/legacy-ci/${workflow}`),
+    true,
+    `missing retired CI archive: ${workflow}`,
+  );
+}
+assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing retired CI archive manifest');
 
 const readme = await text('README.md');
 assert.match(readme, /Cloudflare Native/i);
@@ -66,15 +91,22 @@ assert.match(allowlist, /private-cloud-warehouse-v3\.js/);
 const canonicalCi = await text('.github/workflows/cloudflare-native-canonical-ci.yml');
 assert.match(canonicalCi, /Cloudflare Native Canonical CI/);
 assert.match(canonicalCi, /consolidation\/\*\*/);
+assert.match(canonicalCi, /Validate Phase E producer and ingestion regressions/);
+assert.match(canonicalCi, /Validate R2 provenance Gate 24-27 regressions/);
+assert.match(canonicalCi, /Validate dormant Amazon transport regressions without deployment/);
+assert.match(canonicalCi, /test-promote-cloudflare-sync-dev-trigger\.mjs/);
+assert.doesNotMatch(canonicalCi, /^\s*node scripts\/promote-cloudflare-sync-dev-trigger\.mjs\s*$/m);
 assert.doesNotMatch(canonicalCi, /wrangler deploy/);
 assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v1',
+  contract: 'architecture-convergence-phase0-v2',
   canonicalRuntime: 'cloudflare-native',
   rootWranglerAbsent: true,
   legacyPagesInactive: true,
+  granularCiRetired: true,
   legacyArchived: true,
+  canonicalCoverageParityLocked: true,
   nativeAssetAllowlistEnforced: true,
 }, null, 2));
