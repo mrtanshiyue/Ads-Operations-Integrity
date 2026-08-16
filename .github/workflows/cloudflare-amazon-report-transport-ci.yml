@@ -7,23 +7,27 @@ on:
     paths:
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
       - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
       - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
+      - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
       - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
   pull_request:
     paths:
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
       - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
       - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
+      - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
       - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
 
 permissions:
@@ -50,5 +54,7 @@ jobs:
         run: |
           node --check cloudflare/runtime/amazon-ads-credential-provider.js
           node --check cloudflare/runtime/amazon-ads-report-transport.js
+          node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
           node scripts/test-amazon-ads-credential-provider.mjs
           node scripts/test-amazon-ads-report-transport.mjs
+          node scripts/test-amazon-ads-bootstrap-transport.mjs
