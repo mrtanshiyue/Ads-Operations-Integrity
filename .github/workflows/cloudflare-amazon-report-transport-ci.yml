@@ -19,6 +19,8 @@ on:
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
@@ -43,6 +45,8 @@ on:
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
@@ -54,6 +58,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: cloudflare-amazon-report-transport-${{ github.ref }}
@@ -83,6 +88,8 @@ jobs:
           node --check scripts/test-cloudflare-sync-dev-deploy.mjs
           node --check scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs
           node --check scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/promote-cloudflare-sync-dev-trigger.mjs
+          node --check scripts/test-promote-cloudflare-sync-dev-trigger.mjs
           node --check scripts/smoke-cloudflare-sync-dev.mjs
           node --check scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
@@ -91,12 +98,37 @@ jobs:
           node scripts/test-amazon-ads-sync-runtime.mjs
           node scripts/test-cloudflare-sync-dev-deploy.mjs
           node scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node scripts/test-promote-cloudflare-sync-dev-trigger.mjs
           node scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-phase-e-runtime-integration.mjs
 
-  disabled-dev-smoke:
+  promote-dev-trigger:
     if: github.event_name == 'push'
     needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      CF_SYNC_DEV_PROMOTION_ATTEMPTS: '60'
+      CF_SYNC_DEV_PROMOTION_DELAY_MS: '5000'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Promote exact SHA after Foundation succeeds
+        run: node scripts/promote-cloudflare-sync-dev-trigger.mjs
+
+  disabled-dev-smoke:
+    if: github.event_name == 'push'
+    needs: promote-dev-trigger
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
