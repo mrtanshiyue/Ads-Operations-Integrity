@@ -89,21 +89,6 @@ assert.throws(
   assert.equal(db.state.writeCalls, 0, 'dry-run must not perform mutation');
 }
 
-{
-  const validated = validateAccessRecoveryInput(validInput);
-  const target = Object.freeze({
-    userId: 'user-owner',
-    emailNorm: 'owner@example.invalid',
-    currentCfAccessSub: 'sub-owner-current',
-    status: 'active',
-  });
-  assert.throws(
-    () => buildAccessRecoveryPlan(validated, target, { recoveryId: 'recovery-noop-test-0001' }),
-    /break_glass_subject_noop_forbidden/,
-    'fixture new sub must be distinct; this assertion should be replaced below',
-  );
-}
-
 // Explicitly verify no-op rejection with a matching current/new subject.
 {
   const validated = validateAccessRecoveryInput({ ...validInput, newCfAccessSub: 'sub-owner-current' });
@@ -114,7 +99,7 @@ assert.throws(
     status: 'active',
   });
   assert.throws(
-    () => buildAccessRecoveryPlan(validated, target, { recoveryId: 'recovery-noop-test-0002' }),
+    () => buildAccessRecoveryPlan(validated, target, { recoveryId: 'recovery-noop-test-0001' }),
     /break_glass_subject_noop_forbidden/,
   );
 }
