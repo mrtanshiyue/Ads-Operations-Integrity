@@ -2,6 +2,13 @@ import assert from 'node:assert/strict';
 import { createTestHarness } from 'wrangler';
 import { handleGlobalRoleGovernanceApiRoute } from '../cloudflare/runtime/global-role-governance-api.js';
 import { handleUserLifecycleApiRoute } from '../cloudflare/runtime/user-lifecycle-api.js';
+import {
+  executeAccessRecovery,
+  recoveryConfirmation,
+} from './break-glass-access-recovery.mjs';
+
+// Pure CLI safety contracts run in the same canonical security step before workerd starts.
+await import('./test-break-glass-access-recovery.mjs');
 
 const server = createTestHarness({
   workers: [{ configPath: './cloudflare/runtime/wrangler.security-test.jsonc' }],
@@ -18,6 +25,7 @@ try {
   await assertMigrationState(db);
   await assertDatabaseGuards(db);
   await assertAccessRecoveryAtomicity(db);
+  await assertBreakGlassCliIntegration(db);
   await assertGlobalRoleAtomicity(db);
   await assertLifecycleAtomicity(db);
 
@@ -30,6 +38,9 @@ try {
     accessRecoveryAuditRollbackVerified: true,
     accessRecoverySuccessVerified: true,
     accessRecoveryLedgerImmutableVerified: true,
+    breakGlassCliDryRunVerified: true,
+    breakGlassCliAuditRollbackVerified: true,
+    breakGlassCliPostflightVerified: true,
     globalRoleGrantRollbackVerified: true,
     globalRoleRevokeRollbackVerified: true,
     lifecycleRollbackVerified: true,
@@ -247,6 +258,64 @@ async function assertAccessRecoveryAtomicity(db) {
   );
   assert.equal(await recoveryCount(db, recoveryId), 1);
   assert.equal(await roleCount(db, 'owner-a', 'owner'), 1, 'break-glass recovery must not alter owner role');
+}
+
+async function assertBreakGlassCliIntegration(db) {
+  const currentSub = 'sub-owner-a-recovered';
+  const newSub = 'sub-owner-a-cli-recovered';
+  const ticket = 'SEC-D1-CLI';
+  const input = {
+    environment: 'dev',
+    userId: 'owner-a',
+    expectedEmail: 'owner-a@example.invalid',
+    newCfAccessSub: newSub,
+    operatorIdentity: 'operator:canonical-d1-harness',
+    reason: 'Exercise the production break-glass CLI helper against real local D1.',
+    ticket,
+  };
+
+  const dryRun = await executeAccessRecovery({
+    db,
+    input: { ...input, execute: false },
+    recoveryId: 'recovery-cli-harness-dry-0001',
+    env: {},
+  });
+  assert.equal(dryRun.executed, false);
+  assert.equal(dryRun.plan.expectedPreviousCfAccessSub, currentSub);
+  assert.equal(await userAccessSub(db, 'owner-a'), currentSub);
+  assert.equal(await recoveryCount(db, dryRun.plan.recoveryId), 0);
+
+  const confirmation = recoveryConfirmation(input.userId, input.ticket);
+  await createAuditFailureTrigger(
+    db,
+    'test_fail_break_glass_cli_audit',
+    'security.break_glass.access_subject_rebind',
+  );
+  await assert.rejects(
+    () => executeAccessRecovery({
+      db,
+      input: { ...input, execute: true, confirmation },
+      recoveryId: 'recovery-cli-harness-fail-0001',
+      env: {},
+    }),
+    /test_audit_failure:security\.break_glass\.access_subject_rebind/,
+  );
+  assert.equal(await userAccessSub(db, 'owner-a'), currentSub);
+  assert.equal(await recoveryCount(db, 'recovery-cli-harness-fail-0001'), 0);
+  await dropTrigger(db, 'test_fail_break_glass_cli_audit');
+
+  const result = await executeAccessRecovery({
+    db,
+    input: { ...input, execute: true, confirmation },
+    recoveryId: 'recovery-cli-harness-pass-0001',
+    env: {},
+  });
+  assert.equal(result.executed, true);
+  assert.equal(result.recoveryId, 'recovery-cli-harness-pass-0001');
+  assert.equal(result.auditAction, 'security.break_glass.access_subject_rebind');
+  assert.equal(await userAccessSub(db, 'owner-a'), newSub);
+  assert.equal(await recoveryCount(db, result.recoveryId), 1);
+  assert.equal(await roleCount(db, 'owner-a', 'owner'), 1);
 }
 
 async function assertGlobalRoleAtomicity(db) {
