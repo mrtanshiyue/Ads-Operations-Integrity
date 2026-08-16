@@ -7,6 +7,7 @@ on:
     paths:
       - 'package.json'
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-credential-smoke.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
       - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
@@ -19,6 +20,9 @@ on:
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs'
+      - 'scripts/test-amazon-ads-credential-smoke.mjs'
+      - 'scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs'
       - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
@@ -33,6 +37,7 @@ on:
     paths:
       - 'package.json'
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-credential-smoke.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
       - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
@@ -45,6 +50,9 @@ on:
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs'
+      - 'scripts/test-amazon-ads-credential-smoke.mjs'
+      - 'scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs'
       - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
@@ -80,6 +88,7 @@ jobs:
       - name: Validate Amazon Ads transport and sync composition
         run: |
           node --check cloudflare/runtime/amazon-ads-credential-provider.js
+          node --check cloudflare/runtime/amazon-ads-credential-smoke.js
           node --check cloudflare/runtime/amazon-ads-report-transport.js
           node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
           node --check cloudflare/runtime/amazon-ads-sync-runtime.js
@@ -88,11 +97,16 @@ jobs:
           node --check scripts/test-cloudflare-sync-dev-deploy.mjs
           node --check scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs
           node --check scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs
+          node --check scripts/test-amazon-ads-credential-smoke.mjs
+          node --check scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
           node --check scripts/promote-cloudflare-sync-dev-trigger.mjs
           node --check scripts/test-promote-cloudflare-sync-dev-trigger.mjs
           node --check scripts/smoke-cloudflare-sync-dev.mjs
           node --check scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
+          node scripts/test-amazon-ads-credential-smoke.mjs
+          node scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
           node scripts/test-amazon-ads-report-transport.mjs
           node scripts/test-amazon-ads-bootstrap-transport.mjs
           node scripts/test-amazon-ads-sync-runtime.mjs
