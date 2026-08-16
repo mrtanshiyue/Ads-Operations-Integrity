@@ -54,6 +54,9 @@ jobs:
         run: |
           node --check scripts/test-deployment-integrity-contract.mjs
           node scripts/test-deployment-integrity-contract.mjs
+          node --check cloudflare/runtime/deployment-health.js
+          node --check scripts/test-deployment-health-contract.mjs
+          node scripts/test-deployment-health-contract.mjs
 
       - name: Validate canonical Cloudflare Native runtime
         run: npm run check:cf-native
