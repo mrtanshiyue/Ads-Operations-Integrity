@@ -72,12 +72,18 @@ assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing re
 assert.equal(await exists('docs/archive/legacy-deploy/package-deploy-scripts.json'), true, 'missing direct deploy command archive');
 assert.equal(await exists('scripts/block-direct-cloudflare-deploy.mjs'), true, 'missing direct deploy blocker');
 assert.equal(await exists('scripts/block-dormant-amazon-execution.mjs'), true, 'missing dormant Amazon execution blocker');
+assert.equal(await exists('scripts/break-glass-access-recovery.mjs'), true, 'missing break-glass access recovery CLI');
+assert.equal(await exists('scripts/test-break-glass-access-recovery.mjs'), true, 'missing break-glass CLI contract test');
+assert.equal(await exists('scripts/test-security-integrity-d1-harness.mjs'), true, 'missing real local D1 security harness');
+assert.equal(await exists('cloudflare/runtime/wrangler.security-test.jsonc'), true, 'missing local D1 security test config');
+assert.equal(await exists('cloudflare/foundation/migrations/control/0006_control_access_recovery.sql'), true, 'missing access recovery migration');
 
 const nativeWrangler = await text('cloudflare/runtime/wrangler.native.jsonc');
 assert.match(nativeWrangler, /"main"\s*:\s*"\.\/web-entry\.js"/);
 const webEntry = await text('cloudflare/runtime/web-entry.js');
 assert.match(webEntry, /from ['"]\.\/web-worker\.js['"]/);
 assert.doesNotMatch(webEntry, /src\/worker\.js/);
+assert.doesNotMatch(webEntry, /break-glass-access-recovery|access_recovery_events/);
 const archivedWarehouseProxy = await text('docs/archive/legacy-warehouse-v4/src-worker.js');
 assert.match(archivedWarehouseProxy, /WAREHOUSE_BINDING_UNAVAILABLE/);
 assert.match(archivedWarehouseProxy, /amazon-warehouse-cloud-v4\.internal/);
@@ -97,6 +103,11 @@ assert.match(status, /cloudflare_native_raw_import_not_migrated/);
 const packageJson = JSON.parse(await text('package.json'));
 assert.equal(packageJson.scripts?.build, 'node scripts/build-cloudflare.mjs');
 assert.equal(packageJson.scripts?.['check:cloudflare'], 'npm run check:cf-native');
+assert.equal(
+  packageJson.scripts?.['security:break-glass:access-recovery'],
+  'node scripts/break-glass-access-recovery.mjs',
+  'break-glass CLI npm alias must remain explicit and fail-closed by default',
+);
 const directDeployScripts = [
   'deploy:cloudflare',
   'deploy:cf-native:dev',
@@ -123,6 +134,35 @@ const amazonBlocker = await text('scripts/block-dormant-amazon-execution.mjs');
 assert.match(amazonBlocker, /Amazon live execution remains paused until controlled Store 01 activation is explicitly authorized/);
 assert.match(amazonBlocker, /Security Integrity and intermediate platform phases do not authorize Amazon credential provisioning/);
 assert.match(amazonBlocker, /deterministic regression coverage only/);
+
+const breakGlass = await text('scripts/break-glass-access-recovery.mjs');
+assert.match(breakGlass, /INSERT INTO access_recovery_events/);
+assert.match(breakGlass, /break_glass_confirmation_mismatch/);
+assert.match(breakGlass, /BREAK_GLASS_PRODUCTION_ENABLED/);
+assert.match(breakGlass, /break_glass_production_confirmation_mismatch/);
+assert.match(breakGlass, /CLOUDFLARE_API_TOKEN/);
+assert.match(breakGlass, /break_glass_api_token_cli_forbidden/);
+assert.match(breakGlass, /security\.break_glass\.access_subject_rebind/);
+assert.doesNotMatch(breakGlass, /(?:INSERT INTO|UPDATE|DELETE FROM)\s+user_global_roles/i);
+assert.doesNotMatch(breakGlass, /(?:INSERT INTO|UPDATE|DELETE FROM)\s+role_permissions/i);
+assert.doesNotMatch(breakGlass, /wrangler\s+deploy|AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED/);
+
+const recoveryMigration = await text('cloudflare/foundation/migrations/control/0006_control_access_recovery.sql');
+assert.match(recoveryMigration, /CREATE TABLE access_recovery_events/);
+assert.match(recoveryMigration, /trg_access_recovery_target_guard/);
+assert.match(recoveryMigration, /trg_owner_access_subject_rebind_guard/);
+assert.match(recoveryMigration, /trg_access_recovery_apply/);
+assert.match(recoveryMigration, /security\.break_glass\.access_subject_rebind/);
+assert.match(recoveryMigration, /globalRoleChanged', json\('false'\)/);
+assert.doesNotMatch(recoveryMigration, /INSERT INTO\s+user_global_roles|UPDATE\s+user_global_roles/i);
+
+const realD1Harness = await text('scripts/test-security-integrity-d1-harness.mjs');
+assert.match(realD1Harness, /createTestHarness/);
+assert.match(realD1Harness, /applyD1Migrations\('CONTROL_DB'\)/);
+assert.match(realD1Harness, /executeAccessRecovery/);
+assert.match(realD1Harness, /test-break-glass-access-recovery\.mjs/);
+assert.match(realD1Harness, /breakGlassCliAuditRollbackVerified:\s*true/);
+assert.match(realD1Harness, /remoteD1Touched:\s*false/);
 
 const amazonProvisionHelper = await text('scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs');
 assert.match(amazonProvisionHelper, /wrangler', 'secret', 'bulk/);
@@ -171,6 +211,8 @@ assert.match(canonicalCi, /Validate Native cloud loader strangler boundary/);
 assert.match(canonicalCi, /test-native-cloud-loader-strangler-contract\.mjs/);
 assert.match(canonicalCi, /Validate Phase E producer and ingestion regressions/);
 assert.match(canonicalCi, /Validate R2 provenance Gate 24-27 regressions/);
+assert.match(canonicalCi, /Validate real local D1 security transactions/);
+assert.match(canonicalCi, /test-security-integrity-d1-harness\.mjs/);
 assert.match(canonicalCi, /Validate dormant Amazon transport regressions without deployment/);
 assert.doesNotMatch(canonicalCi, /^\s*node scripts\/promote-cloudflare-sync-dev-trigger\.mjs\s*$/m);
 assert.doesNotMatch(canonicalCi, /wrangler deploy/);
@@ -178,7 +220,7 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'canonical-architecture-v8',
+  contract: 'security-integrity-canonical-v9',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
@@ -193,6 +235,10 @@ console.log(JSON.stringify({
   amazonLivePackageEntryBlocked: true,
   canonicalShortLivedBranchCoverage: true,
   mainProtectionContextPreserved: true,
+  breakGlassCliOnly: true,
+  breakGlassNoGlobalRoleWrite: true,
+  breakGlassProductionDoubleGate: true,
+  breakGlassRealD1Coverage: true,
   legacyArchived: true,
   canonicalCoverageParityLocked: true,
   nativeAssetAllowlistEnforced: true,
