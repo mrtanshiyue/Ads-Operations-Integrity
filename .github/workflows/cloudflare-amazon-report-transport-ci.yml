@@ -8,26 +8,32 @@ on:
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
+      - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
       - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
       - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
+      - 'scripts/test-amazon-ads-sync-runtime.mjs'
       - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
   pull_request:
     paths:
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
+      - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
       - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
       - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
+      - 'scripts/test-amazon-ads-sync-runtime.mjs'
       - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
 
 permissions:
@@ -50,11 +56,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate Amazon Ads transport modules
+      - name: Validate Amazon Ads transport and sync composition
         run: |
           node --check cloudflare/runtime/amazon-ads-credential-provider.js
           node --check cloudflare/runtime/amazon-ads-report-transport.js
           node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
+          node --check cloudflare/runtime/amazon-ads-sync-runtime.js
+          node --check cloudflare/runtime/sync-worker.js
           node scripts/test-amazon-ads-credential-provider.mjs
           node scripts/test-amazon-ads-report-transport.mjs
           node scripts/test-amazon-ads-bootstrap-transport.mjs
+          node scripts/test-amazon-ads-sync-runtime.mjs

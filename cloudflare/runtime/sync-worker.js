@@ -1,9 +1,22 @@
 import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
+import { createAmazonAdsAccessTokenProviderFromEnv } from './amazon-ads-credential-provider.js';
+import {
+  advanceAmazonAdsReportCycle,
+  amazonAdsExecutionEnabled,
+  prepareAmazonAdsProducerRuntime,
+  resolveAmazonAdsSyncPolicy,
+  shouldSleepAfterReportCycleAdvance,
+} from './amazon-ads-sync-runtime.js';
 import { prepareWorkflowExecution } from './sync-workflow-orchestration.js';
 import { assertProducerIntentSupported } from './sync-producer-capability.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
+const MAX_REPORT_CYCLE_ADVANCES = 8_000;
+const AMAZON_STEP_CONFIG = Object.freeze({
+  retries:Object.freeze({ limit:3, delay:'5 seconds', backoff:'exponential' }),
+  timeout:'5 minutes',
+});
 
 export default {
   async fetch(request, env) {
@@ -14,7 +27,7 @@ export default {
       ok: true,
       service: 'ads-operations-sync',
       environment: env.APP_ENV || 'unknown',
-      amazonAdsEnabled: env.AMAZON_ADS_ENABLED === 'true',
+      amazonAdsEnabled: amazonAdsExecutionEnabled(env),
       dependencies: {
         controlDb: Boolean(env.CONTROL_DB),
         dataBucket: Boolean(env.DATA_BUCKET),
@@ -82,17 +95,12 @@ export class AmazonAdsSyncWorkflow extends WorkflowEntrypoint {
     });
 
     if (execution.profileStage === 'REUSE_TERMINAL') {
-      return {
-        ok: execution.run.status === 'succeeded',
-        mode: 'terminal_receipt_reused',
-        storeId: route.storeId,
-        profileId: execution.run.profile_id || null,
-        runStatus: execution.run.status,
-      };
+      return terminalResult(route, execution.run.status, execution.run.profile_id, 'terminal_receipt_reused');
     }
 
-    // Kill switch remains ahead of every producer capability check and producer-side mutation.
-    if (this.env.AMAZON_ADS_ENABLED !== 'true') {
+    // Keep the execution-domain kill switch ahead of capability checks, secret validation,
+    // LWA token refresh, Amazon API calls, R2 writes, and Store D1 producer mutations.
+    if (!amazonAdsExecutionEnabled(this.env)) {
       return {
         ok: true,
         mode: 'disabled',
@@ -103,20 +111,87 @@ export class AmazonAdsSyncWorkflow extends WorkflowEntrypoint {
       };
     }
 
-    // Fail closed before profile/entity/report/R2/fact production when the durable intent
-    // contains a dataset for which this producer has no complete contract yet.
     try {
       assertProducerIntentSupported(execution.intent);
     } catch (error) {
       throw new NonRetryableError(String(error?.code || error?.message || 'producer_capability_invalid'));
     }
 
-    if (execution.profileStage === 'RESOLVE_CANONICAL_PROFILE') {
-      throw new NonRetryableError('amazon_profile_adapter_not_implemented');
+    let credentialProvider;
+    let policy;
+    try {
+      credentialProvider = createAmazonAdsAccessTokenProviderFromEnv(this.env);
+      policy = resolveAmazonAdsSyncPolicy(this.env);
+    } catch (error) {
+      throw new NonRetryableError(String(error?.code || error?.message || 'amazon_ads_sync_configuration_invalid'));
     }
 
-    throw new NonRetryableError('amazon_ads_adapter_not_implemented');
+    const bootstrap = await step.do('prepare durable Amazon producer bootstrap', AMAZON_STEP_CONFIG, async () => {
+      return prepareAmazonAdsProducerRuntime({
+        env:this.env,
+        execution,
+        route,
+        storeDb,
+        credentialProvider,
+      });
+    });
+
+    if (!bootstrap?.profileId || !Number.isSafeInteger(bootstrap.reportJobCount) || bootstrap.reportJobCount < 1) {
+      throw new NonRetryableError('amazon_ads_bootstrap_receipt_invalid');
+    }
+
+    for (let advanceIndex = 0; advanceIndex < MAX_REPORT_CYCLE_ADVANCES; advanceIndex += 1) {
+      const advance = await step.do('advance durable Amazon report cycle', AMAZON_STEP_CONFIG, async () => {
+        return advanceAmazonAdsReportCycle({
+          env:this.env,
+          route,
+          storeDb,
+          runId:execution.instanceId,
+          profileId:bootstrap.profileId,
+          credentialProvider,
+          policy,
+        });
+      });
+
+      if (advance.directive === 'RUN_TERMINAL') {
+        return terminalResult(route, advance.runStatus, bootstrap.profileId, 'report_cycle_terminal');
+      }
+      if (advance.directive === 'FINALIZE_RUN' && advance.runStatus) {
+        return terminalResult(route, advance.runStatus, bootstrap.profileId, 'report_cycle_finalized');
+      }
+      if (advance.directive === 'BLOCKED') {
+        return {
+          ok:false,
+          mode:'blocked',
+          storeId:route.storeId,
+          profileId:bootstrap.profileId,
+          runStatus:'running',
+          reason:advance.reason,
+          jobId:advance.jobId,
+        };
+      }
+
+      if (shouldSleepAfterReportCycleAdvance(advance)) {
+        await step.sleep('wait for Amazon report processing', policy.pollIntervalMs);
+      }
+    }
+
+    throw new NonRetryableError('sync_report_cycle_advance_budget_exhausted');
   }
+}
+
+function terminalResult(route, status, profileId, mode) {
+  const runStatus = String(status || '').trim();
+  if (!['succeeded', 'partial', 'failed', 'cancelled'].includes(runStatus)) {
+    throw new NonRetryableError('sync_terminal_status_invalid');
+  }
+  return {
+    ok:runStatus === 'succeeded',
+    mode,
+    storeId:route.storeId,
+    profileId:profileId || null,
+    runStatus,
+  };
 }
 
 function requiredPayloadStoreId(payload) {
