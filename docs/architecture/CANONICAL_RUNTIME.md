@@ -1,63 +1,158 @@
 # Canonical Architecture and Runtime
 
-Status: Architecture Convergence Phase 0
+Status: Architecture Convergence Phase 0 — implementation converged, PR review pending
 
-Baseline: `b1828b8b6f62c167f8e0654175413e55f449c4bd`
+Foundation baseline: `b1828b8b6f62c167f8e0654175413e55f449c4bd`
 
 ## Canonical product architecture
 
 The active product target is Cloudflare Native:
 
-Cloudflare Access -> Web Worker -> application RBAC -> Control D1 -> store-scoped D1 -> R2 raw objects -> Workflows -> Sync Worker -> Amazon Ads API.
+```text
+Cloudflare Access
+  -> Web Worker
+  -> application RBAC
+  -> Control D1
+  -> store-scoped D1
+  -> R2 raw objects
+  -> Workflows
+  -> Sync Worker
+  -> Amazon Ads API (dormant until the later Amazon integration phase)
+```
 
-The historical GitHub Pages / TiDB / `amazon-warehouse-cloud-v4` architecture is retained only as rollback and migration history. It is not a canonical deployment target.
+The historical GitHub Pages / TiDB / `amazon-warehouse-cloud-v4` architecture is migration history only. It is not an active deployment target.
 
 ## Canonical runtime entrypoints
 
-- Web runtime: `cloudflare/runtime/web-entry.js`
-- Web Wrangler config: `cloudflare/runtime/wrangler.native.jsonc`
-- Sync runtime: `cloudflare/runtime/sync-worker.js`
-- Sync Wrangler config: `cloudflare/runtime/wrangler.sync.jsonc`
-- Native asset builder: `scripts/build-cloudflare-native.mjs`
-- Native artifact: `dist-cloudflare-native/`
+Web runtime:
 
-There must be no implicit root Wrangler deployment target. All Worker commands must name the intended Cloudflare Native config explicitly until the deployment-integrity phase replaces direct Wrangler deployment with exact-SHA Workers Builds API deployment.
+```text
+cloudflare/runtime/wrangler.native.jsonc
+  -> cloudflare/runtime/web-entry.js
+  -> cloudflare/runtime/web-worker.js + modular APIs
+```
 
-## Repository convergence guardrails
+Dormant sync runtime:
 
-During Phase 0:
+```text
+cloudflare/runtime/wrangler.sync.jsonc
+  -> cloudflare/runtime/sync-worker.js
+```
 
-1. Do not merge this consolidation work to `main` until canonical CI is green.
-2. Do not alter Production resources or Production bindings.
-3. Do not move `__manual_ci_gated_deploy__` as part of repository canonicalization.
-4. Do not delete legacy implementation merely because it is old; first prove that active runtime/build references are absent.
-5. Legacy workflows/configuration removed from active paths must be preserved under `docs/archive/` or by Git history/tag.
-6. Cloudflare Native build output must eventually use an explicit asset allowlist rather than copying the entire `assets/` tree.
+There is no active root `wrangler.jsonc` and no active `src/worker.js` Warehouse proxy.
 
-## Transitional compatibility debt
+## Canonical browser data path
 
-`index.html` still loads `assets/private-cloud-warehouse-v4.js`. That browser runtime still owns legacy private-cloud UI behavior and directly references the retired Warehouse API origin. The Cloudflare Native query bridge provides `window.PrivateCloudQuery`, but it does not yet prove that the Warehouse V4 browser loader can be removed without UI regression.
+```text
+assets/cloudflare-native-api-v1.js
+  -> assets/cloudflare-native-query-bridge-v1.js
+  -> assets/cloudflare-native-data-panel-v1.js
+```
 
-Therefore Phase 0 keeps the Warehouse V4 browser compatibility layer in source and current Native UI until its remaining behaviors are mapped and replaced. This is an explicit migration boundary, not the target architecture.
+Browser transport rules:
 
-## Legacy archive
+- same-origin Cloudflare Native APIs only;
+- Cloudflare Access browser session, not Warehouse dashboard passwords;
+- no `X-Dashboard-Password`;
+- no session-stored Warehouse credential;
+- no browser request to `amazon-warehouse-cloud-v4`;
+- Cloud Raw import remains explicitly fail-closed with `501 cloudflare_native_raw_import_not_migrated` until migrated;
+- local file import remains a separate browser workflow.
 
-The following historical deployment material is archived and is not active CI/CD/runtime configuration:
+Legacy browser cloud loaders/query client are archived under `docs/archive/legacy-browser-loaders/` and are neither active source assets nor deployment assets.
 
-- `docs/archive/legacy-github-pages/pages.yml`
-- `docs/archive/legacy-github-pages/ci-main.yml`
-- `docs/archive/legacy-warehouse-v4/wrangler.jsonc`
+## Canonical build
+
+```text
+npm run build
+  -> scripts/build-cloudflare.mjs
+  -> scripts/build-cloudflare-native.mjs
+  -> scripts/build-cloudflare-native-copy-all.mjs
+  -> scripts/enforce-cloudflare-native-asset-allowlist.mjs
+  -> dist-cloudflare-native/
+```
+
+The final Native artifact is controlled by an explicit file allowlist. The build strips legacy migration script-tag markers from the input HTML, injects Native browser clients, and enforces `connect-src 'self'`.
 
 ## Canonical CI
 
-`.github/workflows/cloudflare-native-canonical-ci.yml` is the convergence umbrella CI. It validates the Cloudflare Native runtime, foundation regressions, Access governance regressions, and dormant Amazon transport regressions without activating Amazon or deploying any Worker.
+The only active repository CI topology for convergence is:
 
-Existing granular Cloudflare workflows remain temporarily as regression history during convergence. They can be consolidated only after equivalent coverage is proven in canonical CI.
+```text
+.github/workflows/cloudflare-native-canonical-ci.yml
+```
 
-## Next Phase 0 slices
+It covers:
 
-1. Rewire package-level default build/check commands to Cloudflare Native semantics and quarantine obsolete deploy aliases.
-2. Build an asset dependency manifest and replace whole-tree `assets/` copying with an allowlist.
-3. Retire or replace remaining Warehouse V4 browser behaviors from the Native artifact.
-4. Rewrite root README/status documentation to reflect the canonical architecture.
-5. Prepare the repository for a controlled PR to canonical `main` only after full CI passes.
+- Architecture Convergence contracts;
+- Native runtime/build/UI/Gate regressions;
+- Native cloud-loader strangler boundary;
+- foundation schema/migration regressions;
+- Phase E producer/ingestion/migration regressions;
+- R2 provenance Gates 24–27;
+- Access/user/global-role governance;
+- dormant Amazon transport tests without deployment or promotion.
+
+The former Foundation, Access, Amazon transport and Gate 24–27 granular workflows were retired only after coverage parity was proven and are archived under `docs/archive/legacy-ci/`.
+
+GitHub Pages `pages.yml` and TiDB-era `ci-main.yml` are archived under `docs/archive/legacy-github-pages/`.
+
+## Deployment and live-execution boundaries
+
+Repository `deploy:*` npm aliases are fail-closed through `scripts/block-direct-cloudflare-deploy.mjs`.
+
+The Amazon secret-provisioning npm entrypoint is fail-closed through `scripts/block-dormant-amazon-execution.mjs`.
+
+Dormant Amazon helper implementations remain in the repository for deterministic regression coverage and later resumption, but Amazon credential provisioning, live LWA smoke, sync trigger promotion and sync Worker deployment are not part of the Phase 0 execution surface.
+
+Current kill switches remain:
+
+```text
+SYNC_TRIGGER_ENABLED=false
+AMAZON_ADS_ENABLED=false
+```
+
+## Repository ownership
+
+Active architecture/runtime source:
+
+- `cloudflare/foundation/`
+- `cloudflare/runtime/`
+- active `assets/cloudflare-native-*`
+- active Native/query/governance assets required by the allowlist
+- `scripts/` validation/build/test helpers
+
+Historical implementation/configuration:
+
+- `docs/archive/legacy-github-pages/`
+- `docs/archive/legacy-warehouse-v4/`
+- `docs/archive/legacy-browser-loaders/`
+- `docs/archive/legacy-ci/`
+- `docs/archive/legacy-deploy/`
+- `docs/archive/dormant-amazon/`
+
+History is preserved, but archived paths do not define current runtime behavior.
+
+## Phase 0 guardrails
+
+Until the consolidation PR is explicitly reviewed and merged:
+
+1. Do not advance `main` outside the controlled PR.
+2. Do not move `__manual_ci_gated_deploy__` as part of repository convergence.
+3. Do not deploy Workers from repository scripts.
+4. Do not create or modify Production resources.
+5. Do not resume Amazon API credentials, live smoke, report transport execution or real sync.
+6. Do not weaken source provenance/readiness fail-closed semantics.
+
+## Deferred phases
+
+Phase 0 intentionally does not complete:
+
+- final Production resource provisioning or Production acceptance;
+- exact-SHA Cloudflare deployment API migration / deployment-integrity work;
+- Security Integrity expansion;
+- frontend visual modernization;
+- Cloud Raw import migration;
+- Amazon Store 01 real API activation.
+
+Those are later phases and should not be mixed into the convergence PR.
