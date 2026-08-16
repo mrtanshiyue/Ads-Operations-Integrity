@@ -40,7 +40,7 @@ def main():
         conn = sqlite3.connect(db_path)
         conn.execute('PRAGMA foreign_keys = ON')
         migrations = apply_migrations(conn)
-        assert migrations[-1] == '0005_control_security_integrity.sql'
+        assert migrations[-1] == '0006_control_access_recovery.sql'
 
         for user_id in ('owner-a', 'owner-b', 'admin-a', 'ordinary-a', 'ordinary-b', 'disabled-a'):
             seed_user(conn, user_id, status='disabled' if user_id == 'disabled-a' else 'active')
@@ -143,6 +143,96 @@ def main():
         ).fetchone()[0]
         assert owner_count == 1
 
+        # Existing bound owners cannot be rebound by an arbitrary direct UPDATE.
+        expect_integrity_error(
+            conn,
+            "UPDATE users SET cf_access_sub='sub-owner-b-direct' WHERE user_id='owner-b'",
+            contains='owner_access_subject_rebind_requires_recovery_event',
+        )
+        assert conn.execute("SELECT cf_access_sub FROM users WHERE user_id='owner-b'").fetchone()[0] == 'sub-owner-b'
+
+        # Break-glass recovery is a single append-only intent. The trigger requires the exact
+        # current owner state, applies the new subject, and writes an audit event atomically.
+        recovery_id = 'recovery-owner-b-000001'
+        conn.execute(
+            """
+            INSERT INTO access_recovery_events(
+              recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+              new_cf_access_sub,operator_identity,reason,ticket
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                recovery_id,
+                'owner-b',
+                'owner-b@example.invalid',
+                'sub-owner-b',
+                'sub-owner-b-recovered',
+                'operator:security-test',
+                'Recover owner Access subject after verified identity rotation.',
+                'SEC-1001',
+            ),
+        )
+        assert conn.execute("SELECT cf_access_sub FROM users WHERE user_id='owner-b'").fetchone()[0] == 'sub-owner-b-recovered'
+        audit = conn.execute(
+            "SELECT actor_user_id,action,entity_id,request_id,details_json FROM audit_log WHERE event_id=?",
+            (recovery_id,),
+        ).fetchone()
+        assert audit is not None
+        assert audit[0] is None
+        assert audit[1] == 'security.break_glass.access_subject_rebind'
+        assert audit[2] == 'owner-b'
+        assert audit[3] == recovery_id
+        assert 'globalRoleChanged' in audit[4]
+
+        # Recovery cannot target an admin, cannot use stale state, and cannot steal another user's sub.
+        expect_integrity_error(
+            conn,
+            """
+            INSERT INTO access_recovery_events(
+              recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+              new_cf_access_sub,operator_identity,reason,ticket
+            ) VALUES('recovery-admin-000001','admin-a','admin-a@example.invalid','sub-admin-a',
+              'sub-admin-a-new','operator:security-test','Attempt invalid admin recovery for test.','SEC-1002')
+            """,
+            contains='break_glass_target_state_mismatch',
+        )
+        expect_integrity_error(
+            conn,
+            """
+            INSERT INTO access_recovery_events(
+              recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+              new_cf_access_sub,operator_identity,reason,ticket
+            ) VALUES('recovery-stale-000001','owner-b','owner-b@example.invalid','sub-owner-b',
+              'sub-owner-b-newer','operator:security-test','Attempt stale-state recovery for test.','SEC-1003')
+            """,
+            contains='break_glass_target_state_mismatch',
+        )
+        expect_integrity_error(
+            conn,
+            """
+            INSERT INTO access_recovery_events(
+              recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+              new_cf_access_sub,operator_identity,reason,ticket
+            ) VALUES('recovery-conflict-000001','owner-b','owner-b@example.invalid','sub-owner-b-recovered',
+              'sub-ordinary-b','operator:security-test','Attempt conflicting subject recovery for test.','SEC-1004')
+            """,
+            contains='break_glass_new_subject_conflict',
+        )
+
+        # Recovery ledger is append-only and cannot be edited or removed after execution.
+        expect_integrity_error(
+            conn,
+            "UPDATE access_recovery_events SET ticket='SEC-CHANGED' WHERE recovery_id=?",
+            (recovery_id,),
+            contains='access_recovery_ledger_immutable',
+        )
+        expect_integrity_error(
+            conn,
+            "DELETE FROM access_recovery_events WHERE recovery_id=?",
+            (recovery_id,),
+            contains='access_recovery_ledger_immutable',
+        )
+
         # Assigned role catalog scope cannot be changed underneath existing assignments.
         expect_integrity_error(
             conn,
@@ -174,6 +264,12 @@ def main():
             'trg_user_global_roles_last_owner_role_update',
             'trg_users_last_owner_delete',
             'trg_app_roles_scope_update_guard',
+            'trg_access_recovery_target_guard',
+            'trg_access_recovery_new_subject_guard',
+            'trg_owner_access_subject_rebind_guard',
+            'trg_access_recovery_apply',
+            'trg_access_recovery_immutable_update',
+            'trg_access_recovery_immutable_delete',
         }
         assert required_triggers.issubset(trigger_names)
 
@@ -186,6 +282,9 @@ def main():
             'global_role_lifecycle_guarded': True,
             'last_active_owner_guarded': True,
             'bootstrap_unbound_owner_compatible': True,
+            'owner_subject_direct_rebind_guarded': True,
+            'break_glass_owner_recovery_audited': True,
+            'break_glass_ledger_immutable': True,
         })
         conn.close()
 
