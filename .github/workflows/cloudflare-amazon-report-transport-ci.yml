@@ -17,6 +17,8 @@ on:
       - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/deploy-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
@@ -37,6 +39,8 @@ on:
       - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/deploy-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
@@ -73,9 +77,35 @@ jobs:
           node --check cloudflare/runtime/sync-worker.js
           node --check scripts/deploy-cloudflare-sync-dev.mjs
           node --check scripts/test-cloudflare-sync-dev-deploy.mjs
+          node --check scripts/smoke-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
           node scripts/test-amazon-ads-report-transport.mjs
           node scripts/test-amazon-ads-bootstrap-transport.mjs
           node scripts/test-amazon-ads-sync-runtime.mjs
           node scripts/test-cloudflare-sync-dev-deploy.mjs
+          node scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-phase-e-runtime-integration.mjs
+
+  disabled-dev-smoke:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SYNC_DEV_HEALTH_URL: https://ads-operations-sync-dev.tanshiyuesir.workers.dev/health
+      EXPECTED_GIT_SHA: ${{ github.sha }}
+      SYNC_DEV_SMOKE_ATTEMPTS: '24'
+      SYNC_DEV_SMOKE_DELAY_MS: '5000'
+      SYNC_DEV_SMOKE_TIMEOUT_MS: '3000'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact Dev deployment is disabled and bound
+        run: node scripts/smoke-cloudflare-sync-dev.mjs
