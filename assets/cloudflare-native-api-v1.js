@@ -57,6 +57,12 @@
     stores: () => request('/api/v1/stores'),
     capabilities: () => request('/api/v1/capabilities'),
 
+    accessRoles: (params) => request(query('/api/v1/access/roles', params)),
+    accessUsers: (params) => request(query('/api/v1/access/users', params)),
+    storeMembers: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/members`, params)),
+    putStoreMember: (storeId, userId, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/members/${encodeURIComponent(userId)}`, { method: 'PUT', body }),
+    deleteStoreMember: (storeId, userId) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+
     listProducts: (params) => request(query('/api/v1/products', params)),
     createProduct: (body) => request('/api/v1/products', { method: 'POST', body }),
     updateProduct: (productId, body) => request(`/api/v1/products/${encodeURIComponent(productId)}`, { method: 'PATCH', body }),
