@@ -80,15 +80,42 @@ assert.throws(
   /CF_SYNC_DEV_RELEASE_COMMIT_SHA_INVALID/,
 );
 
+// The release helper remains regression-tested, but Architecture Convergence Phase 0
+// must not expose it through any active npm deploy alias.
 const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-const syncDevScript = String(packageJson.scripts?.['deploy:cf-sync:dev'] || '');
-const stackDevScript = String(packageJson.scripts?.['deploy:cf-stack:dev'] || '');
-assert.match(syncDevScript, /node scripts\/deploy-cloudflare-sync-dev\.mjs/);
-assert.doesNotMatch(syncDevScript, /wrangler deploy[^&]*wrangler\.sync\.jsonc/);
-assert.match(stackDevScript, /npm run deploy:cf-sync:dev/);
-assert.doesNotMatch(stackDevScript, /wrangler deploy[^&]*wrangler\.sync\.jsonc/);
-assert.match(String(packageJson.scripts?.['deploy:cf-sync:prod'] || ''), /wrangler deploy --env production/);
-assert.doesNotMatch(String(packageJson.scripts?.['deploy:cf-sync:prod'] || ''), /deploy-cloudflare-sync-dev/);
+for (const scriptName of [
+  'deploy:cloudflare',
+  'deploy:cf-native:dev',
+  'deploy:cf-sync:dev',
+  'deploy:cf-stack:dev',
+  'deploy:cf-native:prod',
+  'deploy:cf-sync:prod',
+  'deploy:cf-stack:prod',
+]) {
+  assert.match(
+    String(packageJson.scripts?.[scriptName] || ''),
+    /^node scripts\/block-direct-cloudflare-deploy\.mjs /,
+    `direct deploy alias must remain blocked: ${scriptName}`,
+  );
+}
+assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/);
+
+const archivedDeployScripts = JSON.parse(await readFile(
+  new URL('../docs/archive/legacy-deploy/package-deploy-scripts.json', import.meta.url),
+  'utf8',
+));
+assert.match(
+  String(archivedDeployScripts.scripts?.['deploy:cf-sync:dev'] || ''),
+  /node scripts\/deploy-cloudflare-sync-dev\.mjs/,
+);
+assert.match(
+  String(archivedDeployScripts.scripts?.['deploy:cf-stack:dev'] || ''),
+  /npm run deploy:cf-sync:dev/,
+);
+assert.match(
+  String(archivedDeployScripts.scripts?.['deploy:cf-sync:prod'] || ''),
+  /wrangler deploy --env production/,
+);
 
 {
   const calls = [];
@@ -172,4 +199,4 @@ assert.doesNotMatch(String(packageJson.scripts?.['deploy:cf-sync:prod'] || ''), 
   assert.equal(calls.some((call) => call.args.includes('deploy')), false);
 }
 
-console.log('Cloudflare Sync Dev migration-gated deploy tests: PASS');
+console.log('Dormant Cloudflare Sync Dev release helper tests: PASS');
