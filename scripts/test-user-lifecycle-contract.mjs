@@ -10,7 +10,7 @@ const webEntrySource = await readFile(path.join(repoRoot, 'cloudflare/runtime/we
 const nativeApiSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-api-v1.js'), 'utf8');
 const accessConsoleSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-access-console-v1.js'), 'utf8');
 
-function createDb({ permissions = ['users.manage'] } = {}) {
+function createDb({ permissions = ['users.manage'], failAudit = false, revokePermissionOnBatch = false } = {}) {
   const users = new Map([
     ['user-owner', userRow('user-owner', 'owner@example.test', 'Owner', 'active', 'owner')],
     ['user-operator', userRow('user-operator', 'operator@example.test', 'Operator', 'active', null)],
@@ -20,53 +20,94 @@ function createDb({ permissions = ['users.manage'] } = {}) {
     ['store-dev-01:user-operator', 'operator'],
     ['store-dev-01:user-disabled', 'viewer'],
   ]);
+  const permissionSet = new Set(permissions);
   const state = { users, memberships, audits: [] };
 
-  return {
-    state,
-    prepare(sql) {
-      return {
-        bind(...params) {
-          return {
-            async first() {
-              if (sql.includes('FROM users u') && sql.includes('WHERE u.user_id=?1')) {
-                const row = users.get(params[0]);
-                return row ? { ...row } : null;
-              }
-              if (sql.includes('FROM user_global_roles ugr')) {
-                return permissions.includes(params[1]) ? { ok: 1 } : null;
-              }
-              throw new Error(`unexpected lifecycle first query: ${sql}`);
-            },
-            async run() {
-              if (sql.includes('UPDATE users') && sql.includes('SET status=?1')) {
-                const [status, userId] = params;
-                const row = users.get(userId);
-                if (row) {
-                  row.status = status;
-                  row.updated_at = '2026-08-16 11:30:00';
-                }
-                return { success: true };
-              }
-              if (sql.includes('INSERT INTO audit_log')) {
-                state.audits.push({
-                  actorUserId: params[1],
-                  action: params[2],
-                  entityType: params[3],
-                  entityId: params[4],
-                  requestId: params[5],
-                  cfRay: params[6],
-                  details: JSON.parse(params[7]),
-                });
-                return { success: true };
-              }
-              throw new Error(`unexpected lifecycle write query: ${sql}`);
-            },
-          };
-        },
-      };
-    },
-  };
+  function prepared(sql, params = []) {
+    return {
+      __sql: sql,
+      __params: params,
+      bind(...bound) { return prepared(sql, bound); },
+      async first() {
+        if (sql.includes('FROM users u') && sql.includes('global_roles_csv') && sql.includes('WHERE u.user_id=?1')) {
+          const row = users.get(params[0]);
+          return row ? { ...row } : null;
+        }
+        if (sql.includes('FROM users u') && sql.includes('JOIN user_global_roles ugr')) {
+          const row = users.get(params[0]);
+          return row?.status === 'active' && permissionSet.has(params[1]) ? { ok: 1 } : null;
+        }
+        throw new Error(`unexpected lifecycle first query: ${sql}`);
+      },
+    };
+  }
+
+  async function batch(statements) {
+    const usersSnapshot = new Map([...users.entries()].map(([key, value]) => [key, { ...value }]));
+    const auditsSnapshot = state.audits.map((item) => structuredClone(item));
+    if (revokePermissionOnBatch) permissionSet.delete('users.manage');
+    let previousChanges = 0;
+    const results = [];
+    try {
+      for (const item of statements) {
+        const sql = item.__sql;
+        const params = item.__params;
+        if (sql.includes('UPDATE users') && sql.includes('SET status=?1')) {
+          const [status, userId, expectedStatus, actorUserId] = params;
+          const row = users.get(userId);
+          const actor = users.get(actorUserId);
+          const allowed = Boolean(row)
+            && row.status === expectedStatus
+            && userId !== actorUserId
+            && !row.global_roles_csv
+            && actor?.status === 'active'
+            && permissionSet.has('users.manage');
+          previousChanges = allowed ? 1 : 0;
+          if (allowed) {
+            row.status = status;
+            row.updated_at = '2026-08-16 11:30:00';
+          }
+          results.push({ meta: { changes: previousChanges }, results: [] });
+          continue;
+        }
+        if (sql.includes('INSERT INTO audit_log')) {
+          if (previousChanges !== 1) {
+            previousChanges = 0;
+            results.push({ meta: { changes: 0 }, results: [] });
+            continue;
+          }
+          if (failAudit) throw new Error('injected_lifecycle_audit_failure');
+          state.audits.push({
+            eventId: params[0],
+            actorUserId: params[1],
+            action: 'user.status.update',
+            entityType: 'user',
+            entityId: params[2],
+            requestId: params[3],
+            cfRay: params[4],
+            details: JSON.parse(params[5]),
+          });
+          previousChanges = 1;
+          results.push({ meta: { changes: 1 }, results: [] });
+          continue;
+        }
+        if (sql.includes('FROM users u') && sql.includes('global_roles_csv') && sql.includes('WHERE u.user_id=?1')) {
+          const row = users.get(params[0]);
+          results.push({ meta: { changes: 0 }, results: row ? [{ ...row }] : [] });
+          continue;
+        }
+        throw new Error(`unexpected lifecycle batch query: ${sql}`);
+      }
+      return results;
+    } catch (error) {
+      users.clear();
+      for (const [key, value] of usersSnapshot) users.set(key, value);
+      state.audits.splice(0, state.audits.length, ...auditsSnapshot);
+      throw error;
+    }
+  }
+
+  return { state, prepare: (sql) => prepared(sql), batch };
 }
 
 function userRow(userId, email, displayName, status, globalRolesCsv) {
@@ -122,9 +163,7 @@ assert.deepEqual(db.state.audits[0].details, {
 
 const idempotentResponse = await lifecycle(db, 'user-owner', { userId: 'user-operator', status: 'disabled' });
 assert.equal(idempotentResponse.status, 200);
-const idempotent = await idempotentResponse.json();
-assert.equal(idempotent.changed, false);
-assert.equal(idempotent.user.status, 'disabled');
+assert.equal((await idempotentResponse.json()).changed, false);
 assert.equal(db.state.audits.length, 1, 'idempotent lifecycle update must not audit a no-op');
 assert.equal(db.state.memberships.get('store-dev-01:user-operator'), membershipBefore);
 
@@ -157,6 +196,37 @@ const deniedResponse = await lifecycle(createDb({ permissions: [] }), 'user-owne
 assert.equal(deniedResponse.status, 403);
 assert.deepEqual(await deniedResponse.json(), { error: 'forbidden', permission: 'users.manage' });
 
+// Audit insertion failure must roll back the lifecycle mutation.
+{
+  const rollbackDb = createDb({ failAudit: true });
+  await assert.rejects(
+    () => lifecycle(rollbackDb, 'user-owner', { userId: 'user-operator', status: 'disabled' }),
+    /injected_lifecycle_audit_failure/,
+  );
+  assert.equal(rollbackDb.state.users.get('user-operator').status, 'active');
+  assert.equal(rollbackDb.state.audits.length, 0);
+}
+
+// Actor privilege loss between precheck and write must block the mutation and leave no audit.
+{
+  const raceDb = createDb({ revokePermissionOnBatch: true });
+  const response = await lifecycle(raceDb, 'user-owner', { userId: 'user-operator', status: 'disabled' });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'forbidden', permission: 'users.manage' });
+  assert.equal(raceDb.state.users.get('user-operator').status, 'active');
+  assert.equal(raceDb.state.audits.length, 0);
+}
+
+// Atomic D1 batch is a hard dependency; no sequential fallback is permitted.
+{
+  const noBatchDb = createDb();
+  delete noBatchDb.batch;
+  await assert.rejects(
+    () => lifecycle(noBatchDb, 'user-owner', { userId: 'user-operator', status: 'disabled' }),
+    /control_d1_atomic_batch_required/,
+  );
+}
+
 for (const body of [
   { userId: 'user-operator', status: 'paused' },
   { userId: 'user-operator', status: 'disabled', globalRoles: [] },
@@ -170,7 +240,12 @@ for (const body of [
 assert.match(webEntrySource, /handleUserLifecycleApiRoute/);
 assert.match(webEntrySource, /request\.method\.toUpperCase\(\) === 'PATCH'/);
 assert.match(nativeApiSource, /updateAccessUserStatus:\s*\(userId, status\).*method:\s*'PATCH'/s);
+assert.match(apiSource, /requireAtomicBatch\(db\)/);
+assert.match(apiSource, /await db\.batch\(\[/);
+assert.match(apiSource, /UPDATE users[\s\S]*actor_user\.status='active'[\s\S]*actor_permission\.permission_key='users\.manage'/);
+assert.match(apiSource, /INSERT INTO audit_log[\s\S]*WHERE changes\(\)=1/);
 assert.match(apiSource, /membershipsPreserved:\s*true/);
+assert.doesNotMatch(apiSource, /async function audit\(/);
 assert.doesNotMatch(apiSource, /DELETE FROM\s+store_members/i);
 assert.doesNotMatch(apiSource, /INSERT INTO\s+user_global_roles/i);
 assert.doesNotMatch(apiSource, /UPDATE\s+user_global_roles/i);
@@ -199,14 +274,17 @@ console.log(JSON.stringify({
   ok: true,
   module: 'access-user-lifecycle',
   contracts: [
-    'users-manage-required',
+    'active-users-manage-required',
     'ordinary-user-disable',
     'ordinary-user-restore',
     'idempotent-status-no-op',
     'self-lifecycle-forbidden',
     'global-role-user-protected',
     'store-memberships-preserved',
-    'audit-status-change',
+    'audit-status-change-atomic-batch',
+    'audit-failure-rolls-back-status',
+    'actor-permission-race-fails-closed',
+    'atomic-batch-required-no-sequential-fallback',
     'no-user-delete',
     'no-global-role-write',
     'native-client-patch',
