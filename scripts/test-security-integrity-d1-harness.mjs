@@ -17,6 +17,7 @@ try {
   await seed(db);
   await assertMigrationState(db);
   await assertDatabaseGuards(db);
+  await assertAccessRecoveryAtomicity(db);
   await assertGlobalRoleAtomicity(db);
   await assertLifecycleAtomicity(db);
 
@@ -26,6 +27,9 @@ try {
     runtime: 'cloudflare-createTestHarness',
     controlMigrationsApplied: true,
     dbInvariantsVerified: true,
+    accessRecoveryAuditRollbackVerified: true,
+    accessRecoverySuccessVerified: true,
+    accessRecoveryLedgerImmutableVerified: true,
     globalRoleGrantRollbackVerified: true,
     globalRoleRevokeRollbackVerified: true,
     lifecycleRollbackVerified: true,
@@ -68,7 +72,7 @@ async function assertMigrationState(db) {
   const migration = await db.prepare(`
     SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1
   `).first();
-  assert.equal(migration?.name, '0005_control_security_integrity.sql');
+  assert.equal(migration?.name, '0006_control_access_recovery.sql');
 
   const index = await db.prepare(`
     SELECT name FROM sqlite_master
@@ -81,6 +85,12 @@ async function assertMigrationState(db) {
     'trg_store_members_scope_insert',
     'trg_users_global_role_status_update',
     'trg_user_global_roles_last_owner_delete',
+    'trg_access_recovery_target_guard',
+    'trg_access_recovery_new_subject_guard',
+    'trg_owner_access_subject_rebind_guard',
+    'trg_access_recovery_apply',
+    'trg_access_recovery_immutable_update',
+    'trg_access_recovery_immutable_delete',
   ];
   for (const triggerName of requiredTriggers) {
     const row = await db.prepare(`
@@ -116,6 +126,127 @@ async function assertDatabaseGuards(db) {
   );
 
   assert.equal(await roleCount(db, 'owner-a', 'owner'), 1);
+}
+
+async function assertAccessRecoveryAtomicity(db) {
+  const action = 'security.break_glass.access_subject_rebind';
+  const originalSub = 'sub-owner-a';
+  const recoveredSub = 'sub-owner-a-recovered';
+
+  await assert.rejects(
+    () => db.prepare(`
+      UPDATE users SET cf_access_sub=?1 WHERE user_id='owner-a'
+    `).bind('sub-owner-a-direct').run(),
+    /owner_access_subject_rebind_requires_recovery_event/,
+  );
+  assert.equal(await userAccessSub(db, 'owner-a'), originalSub);
+
+  await createAuditFailureTrigger(db, 'test_fail_break_glass_audit', action);
+  await assert.rejects(
+    () => insertRecoveryEvent(db, {
+      recoveryId: 'recovery-real-d1-fail-0001',
+      userId: 'owner-a',
+      emailNorm: 'owner-a@example.invalid',
+      previousSub: originalSub,
+      newSub: recoveredSub,
+      operatorIdentity: 'operator:real-d1-test',
+      reason: 'Verify break-glass audit failure rolls back the owner subject rebind.',
+      ticket: 'SEC-D1-FAIL',
+    }),
+    /test_audit_failure:security\.break_glass\.access_subject_rebind/,
+  );
+  assert.equal(await userAccessSub(db, 'owner-a'), originalSub, 'failed recovery audit must roll back subject rebind');
+  assert.equal(await recoveryCount(db, 'recovery-real-d1-fail-0001'), 0, 'failed recovery audit must roll back recovery ledger insert');
+  assert.equal(await auditCount(db, action, 'owner-a'), 0);
+  await dropTrigger(db, 'test_fail_break_glass_audit');
+
+  const recoveryId = 'recovery-real-d1-pass-0001';
+  await insertRecoveryEvent(db, {
+    recoveryId,
+    userId: 'owner-a',
+    emailNorm: 'owner-a@example.invalid',
+    previousSub: originalSub,
+    newSub: recoveredSub,
+    operatorIdentity: 'operator:real-d1-test',
+    reason: 'Recover the existing owner Access subject after verified identity rotation.',
+    ticket: 'SEC-D1-PASS',
+  });
+  assert.equal(await userAccessSub(db, 'owner-a'), recoveredSub);
+  assert.equal(await recoveryCount(db, recoveryId), 1);
+  assert.equal(await auditCount(db, action, 'owner-a'), 1);
+
+  const audit = await db.prepare(`
+    SELECT actor_user_id,request_id,details_json
+    FROM audit_log
+    WHERE event_id=?1
+  `).bind(recoveryId).first();
+  assert.equal(audit?.actor_user_id, null);
+  assert.equal(audit?.request_id, recoveryId);
+  const details = JSON.parse(audit?.details_json || '{}');
+  assert.equal(details.targetUserId, 'owner-a');
+  assert.equal(details.previousCfAccessSub, originalSub);
+  assert.equal(details.newCfAccessSub, recoveredSub);
+  assert.equal(details.globalRoleChanged, false);
+  assert.equal(details.controlPlane, 'break-glass-cli');
+
+  await assert.rejects(
+    () => db.prepare(`
+      INSERT INTO access_recovery_events(
+        recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+        new_cf_access_sub,operator_identity,reason,ticket
+      ) VALUES(?1,'admin-a','admin-a@example.invalid','sub-admin-a',?2,?3,?4,?5)
+    `).bind(
+      'recovery-real-d1-admin-0001',
+      'sub-admin-a-recovered',
+      'operator:real-d1-test',
+      'Verify break-glass recovery rejects a non-owner target.',
+      'SEC-D1-ADMIN',
+    ).run(),
+    /break_glass_target_state_mismatch/,
+  );
+
+  await assert.rejects(
+    () => insertRecoveryEvent(db, {
+      recoveryId: 'recovery-real-d1-stale-0001',
+      userId: 'owner-a',
+      emailNorm: 'owner-a@example.invalid',
+      previousSub: originalSub,
+      newSub: 'sub-owner-a-stale-attempt',
+      operatorIdentity: 'operator:real-d1-test',
+      reason: 'Verify stale previous subject state cannot be used for recovery.',
+      ticket: 'SEC-D1-STALE',
+    }),
+    /break_glass_target_state_mismatch/,
+  );
+
+  await assert.rejects(
+    () => insertRecoveryEvent(db, {
+      recoveryId: 'recovery-real-d1-conflict-0001',
+      userId: 'owner-a',
+      emailNorm: 'owner-a@example.invalid',
+      previousSub: recoveredSub,
+      newSub: 'sub-admin-a',
+      operatorIdentity: 'operator:real-d1-test',
+      reason: 'Verify recovery cannot steal a Cloudflare Access subject from another user.',
+      ticket: 'SEC-D1-CONFLICT',
+    }),
+    /break_glass_new_subject_conflict/,
+  );
+
+  await assert.rejects(
+    () => db.prepare(`
+      UPDATE access_recovery_events SET ticket='SEC-D1-CHANGED' WHERE recovery_id=?1
+    `).bind(recoveryId).run(),
+    /access_recovery_ledger_immutable/,
+  );
+  await assert.rejects(
+    () => db.prepare(`
+      DELETE FROM access_recovery_events WHERE recovery_id=?1
+    `).bind(recoveryId).run(),
+    /access_recovery_ledger_immutable/,
+  );
+  assert.equal(await recoveryCount(db, recoveryId), 1);
+  assert.equal(await roleCount(db, 'owner-a', 'owner'), 1, 'break-glass recovery must not alter owner role');
 }
 
 async function assertGlobalRoleAtomicity(db) {
@@ -200,6 +331,24 @@ async function lifecycleMutation(db, userId, status, ray) {
   });
 }
 
+async function insertRecoveryEvent(db, input) {
+  return db.prepare(`
+    INSERT INTO access_recovery_events(
+      recovery_id,target_user_id,expected_email_norm,expected_previous_cf_access_sub,
+      new_cf_access_sub,operator_identity,reason,ticket
+    ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+  `).bind(
+    input.recoveryId,
+    input.userId,
+    input.emailNorm,
+    input.previousSub,
+    input.newSub,
+    input.operatorIdentity,
+    input.reason,
+    input.ticket,
+  ).run();
+}
+
 async function createAuditFailureTrigger(db, name, action) {
   if (!/^test_[a-z0-9_]+$/.test(name)) throw new Error('invalid_test_trigger_name');
   if (!/^[a-z0-9_.]+$/.test(action)) throw new Error('invalid_test_audit_action');
@@ -233,7 +382,19 @@ async function auditCount(db, action, entityId) {
   return Number(row?.count || 0);
 }
 
+async function recoveryCount(db, recoveryId) {
+  const row = await db.prepare(`
+    SELECT COUNT(*) AS count FROM access_recovery_events WHERE recovery_id=?1
+  `).bind(recoveryId).first();
+  return Number(row?.count || 0);
+}
+
 async function userStatus(db, userId) {
   const row = await db.prepare(`SELECT status FROM users WHERE user_id=?1`).bind(userId).first();
   return row?.status || null;
+}
+
+async function userAccessSub(db, userId) {
+  const row = await db.prepare(`SELECT cf_access_sub FROM users WHERE user_id=?1`).bind(userId).first();
+  return row?.cf_access_sub ?? null;
 }
