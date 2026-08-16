@@ -12,6 +12,7 @@ const required = [
   'assets/cloudflare-native-api-v1.js',
   'assets/cloudflare-native-keyword-governance-v1.js',
   'assets/cloudflare-native-product-governance-v1.js',
+  'assets/cloudflare-native-operations-health-v1.js',
   'assets/cloudflare-native-negative-governance-v1.js',
   'assets/cloudflare-native-audit-console-v1.js',
   'assets/cloudflare-native-access-console-v1.js',
@@ -43,6 +44,16 @@ if (/AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(|wrangle
 }
 if (!/CloudflareNativeAPI/.test(productGovernanceSource) || !/CloudflareProductGovernance/.test(productGovernanceSource)) {
   throw new Error('Product governance console must expose its Native API delegated public contract');
+}
+
+const operationsHealthPath = path.join(repoRoot, 'assets/cloudflare-native-operations-health-v1.js');
+const operationsHealthSource = await readFile(operationsHealthPath, 'utf8');
+new vm.Script(operationsHealthSource, { filename: 'cloudflare-native-operations-health-v1.js' });
+if (/AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(|wrangler\s+deploy/i.test(operationsHealthSource)) {
+  throw new Error('Operations health console must remain read-only and isolated from Amazon/sync/direct deployment transports');
+}
+if (!/CloudflareNativeAPI/.test(operationsHealthSource) || !/CloudflareOperationsHealth/.test(operationsHealthSource)) {
+  throw new Error('Operations health console must expose its Native API delegated public contract');
 }
 
 const auditConsolePath = path.join(repoRoot, 'assets/cloudflare-native-audit-console-v1.js');
@@ -176,15 +187,11 @@ if (!/<\/head>/i.test(sourceIndex)) {
   throw new Error('index.html is missing </head>; cannot inject the native API client safely');
 }
 
-// The Cloudflare-native runtime exposes all browser APIs on the same origin under /api/*.
-// Remove legacy external API origins from the deployment artifact without mutating source index.html.
 let nativeIndex = sourceIndex.replace(connectSrcPattern, "connect-src 'self';");
 if (!/connect-src\s+'self';/i.test(nativeIndex)) {
   throw new Error('Failed to enforce same-origin connect-src in native build');
 }
 
-// The native runtime owns all cloud-query and cloud-data browser transports.
-// Strip the old query client plus both generations of Warehouse browser loaders from the artifact.
 const retiredScriptPatterns = [
   {
     name: 'private-cloud-query-v1',
@@ -213,6 +220,7 @@ for (const entry of retiredScriptPatterns) {
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
 const keywordGovernanceTag = '<script src="assets/cloudflare-native-keyword-governance-v1.js"></script>';
 const productGovernanceTag = '<script src="assets/cloudflare-native-product-governance-v1.js"></script>';
+const operationsHealthTag = '<script src="assets/cloudflare-native-operations-health-v1.js"></script>';
 const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
 const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.js"></script>';
 const accessConsoleTag = '<script src="assets/cloudflare-native-access-console-v1.js"></script>';
@@ -220,8 +228,8 @@ const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.j
 const nativeDataPanelTag = '<script src="assets/cloudflare-native-data-panel-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${keywordGovernanceTag}\n  ${productGovernanceTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, keywordGovernanceTag, productGovernanceTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${keywordGovernanceTag}\n  ${productGovernanceTag}\n  ${operationsHealthTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, keywordGovernanceTag, productGovernanceTag, operationsHealthTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
@@ -229,6 +237,7 @@ if (
   !nativeIndex.includes(nativeClientTag)
   || !nativeIndex.includes(keywordGovernanceTag)
   || !nativeIndex.includes(productGovernanceTag)
+  || !nativeIndex.includes(operationsHealthTag)
   || !nativeIndex.includes(negativeGovernanceTag)
   || !nativeIndex.includes(auditConsoleTag)
   || !nativeIndex.includes(accessConsoleTag)
@@ -237,13 +246,16 @@ if (
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/keyword/product/negative/audit/access/query/data-panel/Gate clients');
+  throw new Error('Failed to inject the native browser API/keyword/product/health/negative/audit/access/query/data-panel/Gate clients');
 }
 if ((nativeIndex.split(keywordGovernanceTag).length - 1) !== 1) {
   throw new Error('Keyword governance console client must be injected exactly once');
 }
 if ((nativeIndex.split(productGovernanceTag).length - 1) !== 1) {
   throw new Error('Product governance console client must be injected exactly once');
+}
+if ((nativeIndex.split(operationsHealthTag).length - 1) !== 1) {
+  throw new Error('Operations health console client must be injected exactly once');
 }
 if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
   throw new Error('Audit console client must be injected exactly once');
@@ -270,8 +282,6 @@ await cp(path.join(repoRoot, 'assets'), path.join(outputDir, 'assets'), {
   },
 });
 
-// Native-only provenance correction. The adapter logic remains unchanged, but native builds
-// must not claim the retired backend as their data source.
 const moduleDataPath = path.join(outputDir, 'assets/query-native-module-data-v1.js');
 try {
   const moduleData = await readFile(moduleDataPath, 'utf8');
@@ -298,6 +308,8 @@ console.log(JSON.stringify({
   keywordGovernanceContract: 'control-d1-native-api-no-amazon-sync',
   productGovernanceClient: 'assets/cloudflare-native-product-governance-v1.js',
   productGovernanceContract: 'control-d1-store-mapping-native-api-no-amazon-sync',
+  operationsHealthClient: 'assets/cloudflare-native-operations-health-v1.js',
+  operationsHealthContract: 'read-only-analytics-audit-native-api',
   negativeGovernanceClient: 'assets/cloudflare-native-negative-governance-v1.js',
   auditConsoleClient: 'assets/cloudflare-native-audit-console-v1.js',
   auditConsoleContract: 'read-only-native-api',
