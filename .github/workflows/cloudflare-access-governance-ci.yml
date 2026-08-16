@@ -6,18 +6,24 @@ on:
       - cloudflare-foundation-v1
     paths:
       - 'cloudflare/runtime/access-governance-api.js'
+      - 'cloudflare/runtime/user-lifecycle-api.js'
+      - 'cloudflare/runtime/web-entry.js'
       - 'assets/cloudflare-native-api-v1.js'
       - 'assets/cloudflare-native-access-console-v1.js'
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-user-provisioning-contract.mjs'
+      - 'scripts/test-user-lifecycle-contract.mjs'
       - '.github/workflows/cloudflare-access-governance-ci.yml'
   pull_request:
     paths:
       - 'cloudflare/runtime/access-governance-api.js'
+      - 'cloudflare/runtime/user-lifecycle-api.js'
+      - 'cloudflare/runtime/web-entry.js'
       - 'assets/cloudflare-native-api-v1.js'
       - 'assets/cloudflare-native-access-console-v1.js'
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-user-provisioning-contract.mjs'
+      - 'scripts/test-user-lifecycle-contract.mjs'
       - '.github/workflows/cloudflare-access-governance-ci.yml'
 
 permissions:
@@ -44,12 +50,18 @@ jobs:
       - name: Access governance syntax
         run: |
           node --check cloudflare/runtime/access-governance-api.js
+          node --check cloudflare/runtime/user-lifecycle-api.js
+          node --check cloudflare/runtime/web-entry.js
           node --check assets/cloudflare-native-api-v1.js
           node --check scripts/test-access-contract.mjs
           node --check scripts/test-user-provisioning-contract.mjs
+          node --check scripts/test-user-lifecycle-contract.mjs
 
       - name: Existing access governance regressions
         run: node scripts/test-access-contract.mjs
 
       - name: User provisioning contract
         run: node scripts/test-user-provisioning-contract.mjs
+
+      - name: User lifecycle contract
+        run: node scripts/test-user-lifecycle-contract.mjs

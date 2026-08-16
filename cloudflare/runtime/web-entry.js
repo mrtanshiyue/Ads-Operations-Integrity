@@ -13,6 +13,7 @@ import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleNegativeKeywordScopesApiRoute } from './negative-keyword-scopes-api.js';
 import { handleAuditApiRoute } from './audit-api.js';
 import { handleAccessGovernanceApiRoute } from './access-governance-api.js';
+import { handleUserLifecycleApiRoute } from './user-lifecycle-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
@@ -101,6 +102,10 @@ export default {
         if (response) return response;
       }
       if (isAccessGovernanceRoute(url.pathname)) {
+        if (url.pathname === '/api/v1/access/users' && request.method.toUpperCase() === 'PATCH') {
+          const lifecycleResponse = await handleUserLifecycleApiRoute({ request, env, actor, url });
+          if (lifecycleResponse) return lifecycleResponse;
+        }
         const response = await handleAccessGovernanceApiRoute({ request, env, actor, url });
         if (response) return response;
       }

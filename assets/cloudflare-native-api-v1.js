@@ -60,6 +60,7 @@
     accessRoles: (params) => request(query('/api/v1/access/roles', params)),
     accessUsers: (params) => request(query('/api/v1/access/users', params)),
     createAccessUser: (body) => request('/api/v1/access/users', { method: 'POST', body }),
+    updateAccessUserStatus: (userId, status) => request('/api/v1/access/users', { method: 'PATCH', body: { userId, status } }),
     storeMembers: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/members`, params)),
     putStoreMember: (storeId, userId, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/members/${encodeURIComponent(userId)}`, { method: 'PUT', body }),
     deleteStoreMember: (storeId, userId) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
