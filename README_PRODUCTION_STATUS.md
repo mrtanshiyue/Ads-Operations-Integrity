@@ -57,7 +57,11 @@ assets/cloudflare-native-api-v1.js
 → assets/cloudflare-native-data-panel-v1.js
 ```
 
-Warehouse browser credentials, Warehouse external transport, the old root Worker and legacy root Wrangler deployment target are retired from active runtime/source ownership.
+Warehouse browser credentials, Warehouse external transport, the old root Worker and legacy root Wrangler deployment target are retired from active runtime/source ownership. Exact retired browser-loader implementations remain recoverable only under:
+
+```text
+docs/archive/legacy-browser-loaders/
+```
 
 Cloud Raw import remains explicitly fail-closed with:
 
