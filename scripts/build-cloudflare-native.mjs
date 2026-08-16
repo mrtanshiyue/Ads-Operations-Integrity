@@ -1,6 +1,7 @@
 import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -10,6 +11,7 @@ const required = [
   'assets',
   'assets/cloudflare-native-api-v1.js',
   'assets/cloudflare-native-negative-governance-v1.js',
+  'assets/cloudflare-native-audit-console-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
   'assets/cloudflare-gate6-acceptance-v1.js',
   'assets/cloudflare-gate7-ui-acceptance-v1.js',
@@ -17,6 +19,30 @@ const required = [
 
 for (const entry of required) {
   await access(path.join(repoRoot, entry), constants.R_OK);
+}
+
+const auditConsolePath = path.join(repoRoot, 'assets/cloudflare-native-audit-console-v1.js');
+const auditConsoleSource = await readFile(auditConsolePath, 'utf8');
+new vm.Script(auditConsoleSource, { filename: 'cloudflare-native-audit-console-v1.js' });
+if (/AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(|putStoreNegativeKeyword|putProductNegativeKeyword/.test(auditConsoleSource)) {
+  throw new Error('Audit console must remain read-only and isolated from Amazon/sync/write transports');
+}
+const auditCalls = [];
+const auditSandboxWindow = {
+  CloudflareNativeAPI: {
+    auditEvents(params) {
+      auditCalls.push({ ...params });
+      return Promise.resolve({ items: [], nextCursor: null });
+    },
+  },
+};
+vm.runInNewContext(auditConsoleSource, { window: auditSandboxWindow, console }, { filename: 'cloudflare-native-audit-console-v1.js' });
+if (!auditSandboxWindow.CloudflareAuditConsole || auditSandboxWindow.CloudflareAuditConsole.version !== '1.0.0') {
+  throw new Error('Audit console public contract was not installed');
+}
+await auditSandboxWindow.CloudflareAuditConsole.listEvents({ storeId: 'store-dev-01', limit: 7 });
+if (auditCalls.length !== 1 || auditCalls[0].storeId !== 'store-dev-01' || auditCalls[0].limit !== 7) {
+  throw new Error('Audit console must delegate reads to CloudflareNativeAPI.auditEvents');
 }
 
 await rm(outputDir, { recursive: true, force: true });
@@ -46,22 +72,27 @@ nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
 
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
 const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
+const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, negativeGovernanceTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
 if (
   !nativeIndex.includes(nativeClientTag)
   || !nativeIndex.includes(negativeGovernanceTag)
+  || !nativeIndex.includes(auditConsoleTag)
   || !nativeIndex.includes(nativeBridgeTag)
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/negative governance/query bridge/Gate 6/Gate 7 clients');
+  throw new Error('Failed to inject the native browser API/governance/audit/query bridge/Gate 6/Gate 7 clients');
+}
+if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
+  throw new Error('Audit console client must be injected exactly once');
 }
 if (legacyQueryScriptPattern.test(nativeIndex)) {
   throw new Error('Legacy private cloud query client remains in native index');
@@ -102,6 +133,8 @@ console.log(JSON.stringify({
   browserConnectPolicy: "'self'",
   nativeApiClient: 'assets/cloudflare-native-api-v1.js',
   negativeGovernanceClient: 'assets/cloudflare-native-negative-governance-v1.js',
+  auditConsoleClient: 'assets/cloudflare-native-audit-console-v1.js',
+  auditConsoleContract: 'read-only-native-api',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
   gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',
