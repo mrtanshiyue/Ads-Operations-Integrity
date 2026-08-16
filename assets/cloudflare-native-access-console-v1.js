@@ -1,7 +1,7 @@
 (function initCloudflareNativeAccessConsole(global) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const PAGE_LIMIT = 200;
   const state = {
     mounted: false,
@@ -10,6 +10,7 @@
     canRead: false,
     canProvision: false,
     canWriteMembership: false,
+    currentUserId: '',
     stores: [],
     storeId: '',
     roles: [],
@@ -33,7 +34,7 @@
   }
 
   function listUsers(params = {}) {
-    return api().accessUsers({ status: 'active', limit: PAGE_LIMIT, ...params });
+    return api().accessUsers({ limit: PAGE_LIMIT, ...params });
   }
 
   function createUser(email, displayName) {
@@ -41,6 +42,10 @@
     const normalizedDisplayName = String(displayName || '').trim();
     if (normalizedDisplayName) body.displayName = normalizedDisplayName;
     return api().createAccessUser(body);
+  }
+
+  function updateUserStatus(userId, status) {
+    return api().updateAccessUserStatus(userId, status);
   }
 
   function listMembers(storeId, params = {}) {
@@ -60,6 +65,7 @@
     listRoles,
     listUsers,
     createUser,
+    updateUserStatus,
     listMembers,
     putMember,
     deleteMember,
@@ -95,7 +101,7 @@
     button.type = 'button';
     button.className = 'btn';
     button.textContent = '成员权限';
-    button.title = '预置用户并管理店铺成员与店铺级角色';
+    button.title = '预置用户、管理普通用户状态以及店铺成员与店铺级角色';
     button.style.display = 'none';
     button.addEventListener('click', open);
     host.appendChild(button);
@@ -112,7 +118,7 @@
           <div>
             <div class="cfAccessEyebrow">CLOUDFLARE NATIVE ACCESS GOVERNANCE</div>
             <h2 id="nativeAccessConsoleTitle">成员与店铺权限</h2>
-            <div class="small">Phase B1：预置普通应用用户，并管理 store membership；不开放全局角色、用户状态或删除能力。</div>
+            <div class="small">Phase B2：预置普通应用用户，管理普通用户 active / disabled 生命周期，并管理 store membership；不开放全局角色或用户删除。</div>
           </div>
           <div class="cfAccessHeaderActions">
             <span id="cfAccessMode" class="cfAccessBadge">权限检查中</span>
@@ -124,7 +130,7 @@
           <div class="cfAccessContext">
             <label>店铺<select id="cfAccessStore"></select></label>
             <div class="cfAccessStat"><strong id="cfAccessMemberCount">0</strong><span>当前成员</span></div>
-            <div class="cfAccessStat"><strong id="cfAccessUserCount">0</strong><span>Active 用户</span></div>
+            <div class="cfAccessStat"><strong id="cfAccessUserCount">0</strong><span>用户总数</span></div>
             <div class="cfAccessStat"><strong id="cfAccessRoleCount">0</strong><span>Store Roles</span></div>
           </div>
 
@@ -136,6 +142,20 @@
             <div class="small cfAccessHint">创建后 <code>cf_access_sub</code> 保持未绑定，首次通过 Cloudflare Access 验证登录时再完成身份绑定。</div>
           </div>
 
+          <div id="cfAccessStatus" class="cfAccessStatus" aria-live="polite"></div>
+
+          <div class="cfAccessSectionBlock">
+            <div class="cfAccessSectionHeading">
+              <div><strong>用户目录与生命周期</strong><span>普通用户可停用或恢复；全局角色账号与当前账号受保护。</span></div>
+            </div>
+            <div class="table-container cfAccessUserTableWrap">
+              <table class="cfAccessTable cfAccessUserTable">
+                <thead><tr><th>Display Name</th><th>Email</th><th>Status</th><th>Cloudflare Access</th><th>Global Roles</th><th>Last Seen</th><th>操作</th></tr></thead>
+                <tbody id="cfAccessUserRows"></tbody>
+              </table>
+            </div>
+          </div>
+
           <div class="cfAccessAssign" id="cfAccessAssignPanel">
             <div class="cfAccessSectionTitle">店铺成员分配</div>
             <label>用户<select id="cfAccessUser"></select></label>
@@ -143,14 +163,18 @@
             <button id="btnCfAccessAssign" class="btn primary" type="button">分配 / 更新成员</button>
           </div>
 
-          <div id="cfAccessStatus" class="cfAccessStatus" aria-live="polite"></div>
-          <div class="table-container cfAccessTableWrap">
-            <table class="cfAccessTable">
-              <thead><tr><th>用户</th><th>Email</th><th>状态</th><th>店铺角色</th><th>最后访问</th><th>加入时间</th><th>操作</th></tr></thead>
-              <tbody id="cfAccessRows"></tbody>
-            </table>
+          <div class="cfAccessSectionBlock">
+            <div class="cfAccessSectionHeading">
+              <div><strong>店铺成员与角色</strong><span>停用普通用户不会删除这里的 membership；恢复后原角色继续保留。</span></div>
+            </div>
+            <div class="table-container cfAccessTableWrap">
+              <table class="cfAccessTable">
+                <thead><tr><th>用户</th><th>Email</th><th>状态</th><th>店铺角色</th><th>最后访问</th><th>加入时间</th><th>操作</th></tr></thead>
+                <tbody id="cfAccessRows"></tbody>
+              </table>
+            </div>
           </div>
-          <div class="small cfAccessFoot">用户预置与目录读取要求 global <code>users.manage</code>；店铺成员写入额外要求 global <code>stores.manage</code>。本控制台不修改全局角色、用户状态，也不删除用户。</div>
+          <div class="small cfAccessFoot">用户预置、目录读取与普通用户生命周期要求 global <code>users.manage</code>；店铺成员写入额外要求 global <code>stores.manage</code>。本控制台不修改全局角色，也不删除用户。</div>
         </div>
       </div>`;
     global.document.body.appendChild(modal);
@@ -175,9 +199,10 @@
 
   async function probeAccess() {
     try {
-      const [storesPayload, capabilities] = await Promise.all([
+      const [storesPayload, capabilities, session] = await Promise.all([
         api().stores(),
         api().capabilities(),
+        api().session(),
       ]);
       const globalPermissions = Array.isArray(capabilities?.globalPermissions)
         ? capabilities.globalPermissions
@@ -185,6 +210,7 @@
       state.canRead = globalPermissions.includes('users.manage');
       state.canProvision = state.canRead;
       state.canWriteMembership = state.canRead && globalPermissions.includes('stores.manage');
+      state.currentUserId = String(session?.user?.userId || '');
       state.stores = normalizeStores(storesPayload?.stores);
       if (!state.stores.some((store) => store.storeId === state.storeId)) {
         state.storeId = state.stores[0]?.storeId || '';
@@ -200,6 +226,7 @@
       state.canRead = false;
       state.canProvision = false;
       state.canWriteMembership = false;
+      state.currentUserId = '';
       const button = global.document.querySelector('#btnNativeAccessConsole');
       if (button) button.style.display = 'none';
     }
@@ -240,9 +267,10 @@
       ]);
       state.roles = (Array.isArray(rolesPayload?.roles) ? rolesPayload.roles : [])
         .filter((role) => role.roleScope === 'store');
-      state.users = activeUsers(usersPayload?.items);
+      state.users = normalizeUsers(usersPayload?.items);
       renderRoles();
       renderUsers();
+      renderUserDirectory();
       renderCounts();
       setStatus('用户与角色目录已加载', 'ok');
     } catch (error) {
@@ -254,11 +282,13 @@
 
   async function refreshUsersCatalog(selectUserId) {
     const usersPayload = await listUsers();
-    state.users = activeUsers(usersPayload?.items);
+    state.users = normalizeUsers(usersPayload?.items);
     renderUsers();
+    renderUserDirectory();
     if (selectUserId) {
       const select = global.document.querySelector('#cfAccessUser');
-      if (select && state.users.some((user) => user.userId === selectUserId)) select.value = selectUserId;
+      const assignable = activeUsers(state.users);
+      if (select && assignable.some((user) => user.userId === selectUserId)) select.value = selectUserId;
     }
     renderCounts();
   }
@@ -269,7 +299,7 @@
       state.members = [];
       renderMembers();
       renderCounts();
-      setStatus('没有可用店铺；仍可预置用户', 'warn');
+      setStatus('没有可用店铺；仍可预置和管理用户', 'warn');
       return;
     }
     const serial = ++state.requestSerial;
@@ -365,22 +395,23 @@
     const select = global.document.querySelector('#cfAccessUser');
     if (!select) return;
     const previous = select.value;
+    const users = activeUsers(state.users);
     select.replaceChildren();
-    if (!state.users.length) {
+    if (!users.length) {
       const option = global.document.createElement('option');
       option.value = '';
       option.textContent = '无 active 用户';
       select.appendChild(option);
       return;
     }
-    for (const user of state.users) {
+    for (const user of users) {
       const option = global.document.createElement('option');
       option.value = user.userId;
-      const roles = Array.isArray(user.globalRoles) && user.globalRoles.length ? ` · ${user.globalRoles.join(',')}` : '';
+      const roles = user.globalRoles.length ? ` · ${user.globalRoles.join(',')}` : '';
       option.textContent = `${user.displayName || user.email || user.userId} · ${user.email || user.userId}${roles}`;
       select.appendChild(option);
     }
-    if (state.users.some((user) => user.userId === previous)) select.value = previous;
+    if (users.some((user) => user.userId === previous)) select.value = previous;
   }
 
   function renderRoles() {
@@ -395,6 +426,107 @@
       select.appendChild(option);
     }
     if (state.roles.some((role) => role.roleKey === previous)) select.value = previous;
+  }
+
+  function renderUserDirectory() {
+    const tbody = global.document.querySelector('#cfAccessUserRows');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    if (!state.users.length) {
+      const tr = global.document.createElement('tr');
+      const td = global.document.createElement('td');
+      td.colSpan = 7;
+      td.className = 'cfAccessEmpty';
+      td.textContent = '没有用户';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    for (const user of state.users) {
+      const tr = global.document.createElement('tr');
+      tr.appendChild(textCell(user.displayName || '—'));
+      tr.appendChild(textCell(user.email || '—'));
+      tr.appendChild(statusCell(user.status));
+      tr.appendChild(textCell(user.cfAccessBound ? '已绑定' : '未绑定'));
+      tr.appendChild(globalRolesCell(user));
+      tr.appendChild(textCell(user.lastSeenAt || '—'));
+      tr.appendChild(userLifecycleActionCell(user));
+      tbody.appendChild(tr);
+    }
+  }
+
+  function globalRolesCell(user) {
+    const td = global.document.createElement('td');
+    if (!user.globalRoles.length) {
+      td.textContent = '—';
+      return td;
+    }
+    const roles = global.document.createElement('div');
+    roles.textContent = user.globalRoles.join(', ');
+    const protectedBadge = badge('受保护账号', 'protected');
+    td.append(roles, protectedBadge);
+    return td;
+  }
+
+  function userLifecycleActionCell(user) {
+    const td = global.document.createElement('td');
+    td.className = 'cfAccessActions';
+
+    const isCurrent = user.userId === state.currentUserId;
+    const isProtected = user.globalRoles.length > 0;
+    if (isCurrent) td.appendChild(badge('当前账号', 'current'));
+    if (isProtected) td.appendChild(badge('受保护账号', 'protected'));
+    if (isCurrent || isProtected) return td;
+
+    const nextStatus = user.status === 'active'
+      ? 'disabled'
+      : user.status === 'disabled' ? 'active' : null;
+    if (!nextStatus) {
+      td.textContent = '不可操作';
+      return td;
+    }
+
+    const disabling = nextStatus === 'disabled';
+    const label = disabling ? '停用' : '恢复';
+    const button = global.document.createElement('button');
+    button.type = 'button';
+    button.className = `btn cfAccessAction${disabling ? ' danger' : ''}`;
+    button.textContent = label;
+    button.addEventListener('click', async () => {
+      if (state.loading) return;
+      if (disabling) {
+        const confirmed = global.confirm('停用后该用户将失去应用访问权限；现有店铺成员关系和角色会继续保留，之后可以恢复。确认停用？');
+        if (!confirmed) return;
+      }
+      setBusy(true, `正在${label}用户…`);
+      try {
+        const payload = await updateUserStatus(user.userId, nextStatus);
+        await refreshUsersCatalog();
+        await refreshMembers();
+        const changedText = payload?.changed === false ? '（状态未变化）' : '';
+        setStatus(`用户${label}成功${changedText}`, 'ok');
+      } catch (error) {
+        setStatus(errorText(error), 'bad');
+      } finally {
+        setBusy(false);
+      }
+    });
+    td.appendChild(button);
+    return td;
+  }
+
+  function statusCell(status) {
+    const td = global.document.createElement('td');
+    td.appendChild(badge(status === 'active' ? 'active' : status === 'disabled' ? 'disabled' : status || '—', status));
+    return td;
+  }
+
+  function badge(label, tone) {
+    const span = global.document.createElement('span');
+    span.className = `cfAccessMiniBadge${tone ? ` ${tone}` : ''}`;
+    span.textContent = label;
+    return span;
   }
 
   function renderMembers() {
@@ -494,10 +626,10 @@
   }
 
   function renderMode() {
-    const badge = global.document.querySelector('#cfAccessMode');
-    if (badge) {
-      badge.textContent = state.canWriteMembership ? '用户 + 成员可管理' : '用户可预置 · 成员只读';
-      badge.classList.toggle('can-write', state.canWriteMembership);
+    const badgeNode = global.document.querySelector('#cfAccessMode');
+    if (badgeNode) {
+      badgeNode.textContent = state.canWriteMembership ? '用户生命周期 + 成员可管理' : '用户生命周期可管理 · 成员只读';
+      badgeNode.classList.toggle('can-write', state.canWriteMembership);
     }
     const provisionPanel = global.document.querySelector('#cfAccessProvisionPanel');
     if (provisionPanel) provisionPanel.style.display = state.canProvision ? 'grid' : 'none';
@@ -521,6 +653,19 @@
     if (!node) return;
     node.textContent = String(message || '');
     node.dataset.tone = tone || 'info';
+  }
+
+  function normalizeUsers(rows) {
+    return (Array.isArray(rows) ? rows : []).map((user) => ({
+      ...user,
+      userId: String(user.userId || ''),
+      email: String(user.email || ''),
+      displayName: String(user.displayName || ''),
+      status: String(user.status || ''),
+      cfAccessBound: Boolean(user.cfAccessBound),
+      globalRoles: Array.isArray(user.globalRoles) ? user.globalRoles.map((role) => String(role)) : [],
+      lastSeenAt: user.lastSeenAt || null,
+    })).filter((user) => user.userId);
   }
 
   function activeUsers(rows) {
@@ -558,12 +703,14 @@
     const style = global.document.createElement('style');
     style.id = 'cfAccessStyles';
     style.textContent = `
-      .cfAccessModal{width:min(1260px,calc(100vw - 32px));max-width:1260px;max-height:calc(100vh - 32px);overflow:hidden;display:flex;flex-direction:column}
+      .cfAccessModal{width:min(1320px,calc(100vw - 32px));max-width:1320px;max-height:calc(100vh - 32px);overflow:hidden;display:flex;flex-direction:column}
       .cfAccessHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.cfAccessHeader h2{margin:3px 0 5px}.cfAccessEyebrow{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--accent)}.cfAccessHeaderActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cfAccessBadge{padding:6px 9px;border-radius:999px;background:var(--softWarn);color:var(--warn);font-size:11px;font-weight:750}.cfAccessBadge.can-write{background:var(--softGood);color:var(--good)}
       .cfAccessBody{overflow:auto}.cfAccessContext{display:grid;grid-template-columns:minmax(260px,1.7fr) repeat(3,minmax(120px,.6fr));gap:8px;margin-bottom:10px}.cfAccessContext label,.cfAccessAssign label,.cfAccessProvision label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:10.8px;font-weight:700}.cfAccessContext select,.cfAccessAssign select,.cfAccessProvision input,.cfAccessInlineRole{min-width:0;border:1px solid var(--line);background:var(--input-bg);color:var(--text);border-radius:8px;padding:8px 9px}.cfAccessStat{border:1px solid var(--line);background:var(--hover-bg);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}.cfAccessStat strong{font-size:18px;color:var(--text)}.cfAccessStat span{font-size:10.5px;color:var(--muted)}
       .cfAccessProvision,.cfAccessAssign{display:grid;gap:8px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--hover-bg);margin-bottom:8px}.cfAccessProvision{grid-template-columns:auto 1.35fr 1fr auto 1.5fr}.cfAccessAssign{grid-template-columns:auto 1.6fr 1fr auto}.cfAccessSectionTitle{font-size:11px;font-weight:800;color:var(--text);align-self:center;white-space:nowrap}.cfAccessHint{color:var(--muted);align-self:center}
       .cfAccessStatus{min-height:28px;display:flex;align-items:center;padding:5px 8px;border-radius:8px;margin-bottom:8px;background:var(--hover-bg);color:var(--muted);font-size:11px}.cfAccessStatus[data-tone="ok"]{background:var(--softGood);color:var(--good)}.cfAccessStatus[data-tone="bad"]{background:var(--softBad);color:var(--bad)}.cfAccessStatus[data-tone="warn"]{background:var(--softWarn);color:var(--warn)}
-      .cfAccessTableWrap{max-height:52vh}.cfAccessTable{width:100%;min-width:1040px;border-collapse:collapse}.cfAccessTable th:nth-child(4){width:190px}.cfAccessActions{display:flex;gap:5px;flex-wrap:wrap}.cfAccessAction{padding:5px 8px;font-size:10.8px}.cfAccessEmpty{text-align:center;color:var(--muted);padding:28px!important}.cfAccessFoot{margin-top:8px;color:var(--muted)}
+      .cfAccessSectionBlock{border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:8px;margin-bottom:8px}.cfAccessSectionHeading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:2px 2px 8px}.cfAccessSectionHeading>div{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.cfAccessSectionHeading strong{font-size:11.5px;color:var(--text)}.cfAccessSectionHeading span{font-size:10.5px;color:var(--muted)}
+      .cfAccessTableWrap{max-height:34vh}.cfAccessUserTableWrap{max-height:31vh}.cfAccessTable{width:100%;min-width:1040px;border-collapse:collapse}.cfAccessTable th:nth-child(4){width:190px}.cfAccessUserTable th:nth-child(4){width:auto}.cfAccessActions{display:flex;gap:5px;flex-wrap:wrap;align-items:center}.cfAccessAction{padding:5px 8px;font-size:10.8px}.cfAccessEmpty{text-align:center;color:var(--muted);padding:28px!important}.cfAccessFoot{margin-top:8px;color:var(--muted)}
+      .cfAccessMiniBadge{display:inline-flex;align-items:center;width:max-content;padding:3px 6px;border-radius:999px;background:var(--hover-bg);color:var(--muted);font-size:10px;font-weight:750;margin:2px 4px 2px 0}.cfAccessMiniBadge.active{background:var(--softGood);color:var(--good)}.cfAccessMiniBadge.disabled,.cfAccessMiniBadge.protected{background:var(--softWarn);color:var(--warn)}.cfAccessMiniBadge.current{background:var(--softGood);color:var(--good)}
       @media(max-width:1100px){.cfAccessContext{grid-template-columns:repeat(2,minmax(0,1fr))}.cfAccessProvision,.cfAccessAssign{grid-template-columns:1fr 1fr}.cfAccessSectionTitle,.cfAccessHint,.cfAccessProvision .btn,.cfAccessAssign .btn{grid-column:1/-1;width:max-content}.cfAccessHint{width:auto}.cfAccessHeader{flex-direction:column}}
       @media(max-width:620px){.cfAccessContext,.cfAccessProvision,.cfAccessAssign{grid-template-columns:1fr}.cfAccessModal{width:calc(100vw - 18px);max-height:calc(100vh - 18px)}}`;
     global.document.head.appendChild(style);

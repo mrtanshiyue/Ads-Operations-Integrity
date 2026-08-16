@@ -8,6 +8,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const apiSource = await readFile(path.join(repoRoot, 'cloudflare/runtime/user-lifecycle-api.js'), 'utf8');
 const webEntrySource = await readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8');
 const nativeApiSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-api-v1.js'), 'utf8');
+const accessConsoleSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-access-console-v1.js'), 'utf8');
 
 function createDb({ permissions = ['users.manage'] } = {}) {
   const users = new Map([
@@ -177,6 +178,23 @@ assert.doesNotMatch(apiSource, /DELETE FROM\s+user_global_roles/i);
 assert.doesNotMatch(apiSource, /DELETE FROM\s+users/i);
 assert.doesNotMatch(apiSource, /AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/);
 
+assert.match(accessConsoleSource, /api\(\)\.session\(\)/);
+assert.match(accessConsoleSource, /state\.currentUserId\s*=\s*String\(session\?\.user\?\.userId/);
+assert.match(accessConsoleSource, /api\(\)\.updateAccessUserStatus\(userId, status\)/);
+assert.match(accessConsoleSource, /const users = activeUsers\(state\.users\)/);
+assert.match(accessConsoleSource, /user\.status === 'active'[\s\S]*?'disabled'[\s\S]*?user\.status === 'disabled' \? 'active'/);
+assert.match(accessConsoleSource, /受保护账号/);
+assert.match(accessConsoleSource, /当前账号/);
+assert.match(accessConsoleSource, /Cloudflare Access/);
+assert.match(accessConsoleSource, /Global Roles/);
+assert.match(accessConsoleSource, /Last Seen/);
+assert.match(accessConsoleSource, /失去应用访问权限/);
+assert.match(accessConsoleSource, /店铺成员关系和角色会继续保留/);
+assert.match(accessConsoleSource, /之后可以恢复/);
+assert.doesNotMatch(accessConsoleSource, /accessUsers\(\{\s*status:\s*'active'/);
+assert.doesNotMatch(accessConsoleSource, /deleteAccessUser|grantGlobalRole|revokeGlobalRole|setGlobalRole/);
+assert.doesNotMatch(accessConsoleSource, /AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/);
+
 console.log(JSON.stringify({
   ok: true,
   module: 'access-user-lifecycle',
@@ -192,6 +210,11 @@ console.log(JSON.stringify({
     'no-user-delete',
     'no-global-role-write',
     'native-client-patch',
+    'ui-all-status-user-directory',
+    'ui-current-user-protected',
+    'ui-global-role-user-protected',
+    'ui-disable-confirmation',
+    'ui-membership-preservation-message',
     'amazon-sync-isolation',
   ],
 }));
