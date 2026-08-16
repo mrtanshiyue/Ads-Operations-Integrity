@@ -168,6 +168,28 @@ assert(DEPLOYMENT_EQUIVALENCE_PATHS.includes('package.json'));
 }
 
 {
+  let equivalenceCalls = 0;
+  await assert.rejects(
+    () => fetchCloudflareSyncDevHealth({
+      url:'https://sync.example.workers.dev/health',
+      expectedCommit:sha,
+      requireExact:true,
+      fetchImpl:async () => new Response(JSON.stringify({
+        ...validHealth,
+        runtimeVersion:{ ...validHealth.runtimeVersion, tag:staleSha },
+      }), { status:200 }),
+      deploymentEquivalent:async () => {
+        equivalenceCalls += 1;
+        return true;
+      },
+      timeoutMs:1000,
+    }),
+    /CF_SYNC_DEV_RUNTIME_TAG_NOT_EXACT/,
+  );
+  assert.equal(equivalenceCalls, 0, 'exact mode must never fall back to equivalence');
+}
+
+{
   let fetchCalls = 0;
   let sleeps = 0;
   const result = await waitForCloudflareSyncDevHealth({
@@ -176,6 +198,7 @@ assert(DEPLOYMENT_EQUIVALENCE_PATHS.includes('package.json'));
     attempts:3,
     delayMs:0,
     timeoutMs:1000,
+    requireExact:true,
     sleep:async () => { sleeps += 1; },
     fetchImpl:async () => {
       fetchCalls += 1;
@@ -184,7 +207,6 @@ assert(DEPLOYMENT_EQUIVALENCE_PATHS.includes('package.json'));
         runtimeVersion:{ ...validHealth.runtimeVersion, tag:fetchCalls < 3 ? staleSha : sha },
       }), { status:200 });
     },
-    deploymentEquivalent:async () => false,
   });
   assert.equal(result.attempt, 3);
   assert.equal(fetchCalls, 3);

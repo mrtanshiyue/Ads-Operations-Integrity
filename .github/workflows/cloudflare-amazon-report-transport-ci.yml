@@ -137,6 +137,7 @@ jobs:
       SYNC_DEV_SMOKE_ATTEMPTS: '24'
       SYNC_DEV_SMOKE_DELAY_MS: '5000'
       SYNC_DEV_SMOKE_TIMEOUT_MS: '3000'
+      CF_SYNC_DEV_REQUIRE_EXACT: 'true'
     steps:
       - name: Checkout deployment history
         uses: actions/checkout@v4
@@ -148,5 +149,5 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Verify disabled Dev deployment safety and payload equivalence
+      - name: Verify exact disabled Dev deployment
         run: node scripts/smoke-cloudflare-sync-dev.mjs

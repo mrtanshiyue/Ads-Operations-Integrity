@@ -73,9 +73,9 @@ export function validateCloudflareSyncDevHealth(payload, expectedCommit) {
   });
 }
 
-// A CI/test-only commit may intentionally not produce a new Worker version. In that case the
-// active tagged commit is acceptable only when it is an ancestor of HEAD and the entire
-// deployment-relevant payload is byte-identical across the two commits.
+// A CI/test-only commit may intentionally not produce a new Worker version. In diagnostic or
+// manual smoke mode, the active tagged commit is acceptable only when it is an ancestor of HEAD
+// and the entire deployment-relevant payload is byte-identical across the two commits.
 export function isGitDeploymentEquivalent(options = {}) {
   const deployedCommit = requiredCommitShaWithCode(
     options.deployedCommit,
@@ -153,6 +153,12 @@ export async function fetchCloudflareSyncDevHealth(options = {}) {
   const health = validateCloudflareSyncDevHealth(payload, expectedCommit);
   if (health.deploymentExact) {
     return Object.freeze({ ...health, deploymentEquivalent:true });
+  }
+
+  if (options.requireExact === true) {
+    throw new CloudflareSyncDevSmokeError(
+      `CF_SYNC_DEV_RUNTIME_TAG_NOT_EXACT:${health.runtimeVersionTag}:${expectedCommit}`,
+    );
   }
 
   const equivalent = typeof options.deploymentEquivalent === 'function'
@@ -269,6 +275,7 @@ if (invokedPath === import.meta.url) {
     attempts:process.env.SYNC_DEV_SMOKE_ATTEMPTS || DEFAULT_ATTEMPTS,
     delayMs:process.env.SYNC_DEV_SMOKE_DELAY_MS || DEFAULT_DELAY_MS,
     timeoutMs:process.env.SYNC_DEV_SMOKE_TIMEOUT_MS || DEFAULT_TIMEOUT_MS,
+    requireExact:process.env.CF_SYNC_DEV_REQUIRE_EXACT === 'true',
   });
   console.log(JSON.stringify(result, null, 2));
 }
