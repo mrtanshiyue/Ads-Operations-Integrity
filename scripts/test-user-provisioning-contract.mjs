@@ -32,12 +32,12 @@ function createDb({ permissions = ['users.manage'] } = {}) {
         bind(...params) {
           return {
             async first() {
-              if (sql.includes('FROM user_global_roles ugr')) {
-                return permissions.includes(params[1]) ? { ok: 1 } : null;
-              }
               if (sql.includes('FROM users u') && sql.includes('WHERE u.user_id=?1')) {
                 const row = users.get(params[0]);
                 return row ? { ...row } : null;
+              }
+              if (sql.includes('FROM user_global_roles ugr')) {
+                return permissions.includes(params[1]) ? { ok: 1 } : null;
               }
               throw new Error(`unexpected provisioning first query: ${sql}`);
             },
