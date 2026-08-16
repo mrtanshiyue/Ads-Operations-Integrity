@@ -6,6 +6,9 @@ on:
       - main
       - cloudflare-foundation-v1
       - 'consolidation/**'
+      - 'feature/**'
+      - 'fix/**'
+      - 'security-integrity-*'
   pull_request:
     branches:
       - main
@@ -157,6 +160,17 @@ jobs:
           node scripts/test-user-provisioning-contract.mjs
           node scripts/test-user-lifecycle-contract.mjs
           node scripts/test-global-role-governance-contract.mjs
+
+      - name: Validate real local D1 security transactions
+        run: |
+          node --check cloudflare/runtime/security-test-worker.js
+          node --check scripts/test-security-integrity-d1-harness.mjs
+          node scripts/test-security-integrity-d1-harness.mjs
+
+      - name: Validate full Access JWT request pipeline
+        run: |
+          node --check scripts/test-access-web-worker-integration.mjs
+          node scripts/test-access-web-worker-integration.mjs
 
       - name: Validate dormant Amazon transport regressions without deployment
         run: |

@@ -1,0 +1,14 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ads-operations-security-test",
+  "main": "./security-test-worker.js",
+  "compatibility_date": "2026-07-29",
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "ads-ops-control-security-test",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../foundation/migrations/control"
+    }
+  ]
+}

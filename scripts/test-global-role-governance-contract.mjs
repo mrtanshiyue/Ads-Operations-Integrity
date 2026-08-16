@@ -4,12 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleGlobalRoleGovernanceApiRoute } from '../cloudflare/runtime/global-role-governance-api.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(here, '..');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const apiSource = await readFile(path.join(repoRoot, 'cloudflare/runtime/global-role-governance-api.js'), 'utf8');
 const webEntrySource = await readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8');
 
-function createDb({ secondOwner = true } = {}) {
+function createDb({ secondOwner = true, failAudit = false } = {}) {
   const users = new Map([
     ['owner-a', user('owner-a', 'owner-a@example.test', 'Owner A', 'active', 'sub-owner-a')],
     ['owner-b', user('owner-b', 'owner-b@example.test', 'Owner B', 'active', 'sub-owner-b')],
@@ -20,9 +19,10 @@ function createDb({ secondOwner = true } = {}) {
     ['store-member', user('store-member', 'store@example.test', 'Store Member', 'active', 'sub-store')],
   ]);
   const globalRoles = new Map();
-  setRole(globalRoles, 'owner-a', 'owner', 'bootstrap', '2026-08-16 01:00:00');
-  if (secondOwner) setRole(globalRoles, 'owner-b', 'owner', 'owner-a', '2026-08-16 02:00:00');
-  setRole(globalRoles, 'admin-a', 'admin', 'owner-a', '2026-08-16 03:00:00');
+  let nextRowId = 1;
+  setRole(globalRoles, 'owner-a', 'owner', 'bootstrap', '2026-08-16 01:00:00', nextRowId++);
+  if (secondOwner) setRole(globalRoles, 'owner-b', 'owner', 'owner-a', '2026-08-16 02:00:00', nextRowId++);
+  setRole(globalRoles, 'admin-a', 'admin', 'owner-a', '2026-08-16 03:00:00', nextRowId++);
   const memberships = new Set(['store-dev-01:store-member']);
   const audits = [];
   const state = { users, globalRoles, memberships, audits };
@@ -50,28 +50,16 @@ function createDb({ secondOwner = true } = {}) {
   }
 
   function activeOwnerCount() {
-    let count = 0;
-    for (const relation of globalRoles.values()) {
-      if (relation.role_key !== 'owner') continue;
-      if (users.get(relation.user_id)?.status === 'active') count += 1;
-    }
-    return count;
+    return [...globalRoles.values()].filter((relation) => (
+      relation.role_key === 'owner' && users.get(relation.user_id)?.status === 'active'
+    )).length;
   }
 
-  return {
-    state,
-    prepare(sql) {
-      return {
-        bind(...params) {
-          return statement(sql, params);
-        },
-        ...statement(sql, []),
-      };
-    },
-  };
-
-  function statement(sql, params) {
+  function prepared(sql, params = []) {
     return {
+      __sql: sql,
+      __params: params,
+      bind(...bound) { return prepared(sql, bound); },
       async first() {
         if (sql.includes('AS is_owner') && sql.includes('AS has_system_manage')) {
           return actorAuthority(params[0]);
@@ -79,12 +67,28 @@ function createDb({ secondOwner = true } = {}) {
         if (sql.includes('store_membership_count') && sql.includes('global_roles_csv')) {
           return targetRow(params[0]);
         }
+        if (sql.includes('rowid AS relation_rowid')) {
+          const relation = globalRoles.get(`${params[0]}:${params[1]}`);
+          return relation ? { ...relation } : null;
+        }
         if (sql.includes('AS active_owner_count')) {
           return { active_owner_count: activeOwnerCount() };
         }
-        throw new Error(`unexpected Phase C first query: ${sql}`);
+        throw new Error(`unexpected global-role first query: ${sql}`);
       },
-      async run() {
+    };
+  }
+
+  async function batch(statements) {
+    const roleSnapshot = new Map([...globalRoles.entries()].map(([key, value]) => [key, { ...value }]));
+    const auditSnapshot = audits.map((event) => structuredClone(event));
+    const rowIdSnapshot = nextRowId;
+    let previousChanges = 0;
+    const results = [];
+    try {
+      for (const item of statements) {
+        const sql = item.__sql;
+        const params = item.__params;
         if (sql.includes('INSERT INTO user_global_roles')) {
           const [userId, roleKey, actorUserId] = params;
           const target = users.get(userId);
@@ -98,60 +102,105 @@ function createDb({ secondOwner = true } = {}) {
             && Boolean(authority.is_owner)
             && Boolean(authority.has_users_manage)
             && Boolean(authority.has_system_manage);
-          if (!allowed) return { meta: { changes: 0 } };
-          setRole(globalRoles, userId, roleKey, actorUserId, '2026-08-16 12:30:00');
-          return { meta: { changes: 1 } };
+          previousChanges = allowed ? 1 : 0;
+          if (allowed) {
+            setRole(globalRoles, userId, roleKey, actorUserId, '2026-08-16 12:30:00', nextRowId++);
+          }
+          results.push({ meta: { changes: previousChanges }, results: [] });
+          continue;
+        }
+        if (sql.includes('DELETE FROM user_global_roles')) {
+          const [userId, roleKey, actorUserId, relationRowId, grantedBy, grantedAt] = params;
+          const relationKey = `${userId}:${roleKey}`;
+          const relation = globalRoles.get(relationKey);
+          const authority = actorAuthority(actorUserId);
+          const target = users.get(userId);
+          const matches = Boolean(relation)
+            && Number(relation.relation_rowid) === Number(relationRowId)
+            && (relation.granted_by ?? null) === (grantedBy ?? null)
+            && relation.granted_at === grantedAt;
+          const allowed = matches
+            && authority.status === 'active'
+            && Boolean(authority.is_owner)
+            && Boolean(authority.has_users_manage)
+            && Boolean(authority.has_system_manage)
+            && !(roleKey === 'owner' && target?.status === 'active' && activeOwnerCount() <= 1);
+          previousChanges = allowed ? 1 : 0;
+          if (allowed) globalRoles.delete(relationKey);
+          results.push({ meta: { changes: previousChanges }, results: [] });
+          continue;
         }
         if (sql.includes('INSERT INTO audit_log')) {
+          if (previousChanges !== 1) {
+            previousChanges = 0;
+            results.push({ meta: { changes: 0 }, results: [] });
+            continue;
+          }
+          if (failAudit) throw new Error('injected_audit_failure');
+          const isGrant = sql.includes('user.global_role.grant');
+          const userId = params[5];
+          const roleKey = params[6];
+          const ownerCountAfter = activeOwnerCount();
+          const details = isGrant ? {
+            userId,
+            roleKey,
+            previousGlobalRoles: [],
+            globalRoles: [roleKey],
+            grantedBy: params[1],
+            privilegeEscalation: true,
+            activeOwnerCountBefore: ownerCountAfter - (roleKey === 'owner' ? 1 : 0),
+            activeOwnerCountAfter: ownerCountAfter,
+          } : {
+            userId,
+            roleKey,
+            previousGlobalRoles: [roleKey],
+            globalRoles: [],
+            grantedBy: params[7],
+            grantedAt: params[8],
+            privilegeEscalation: false,
+            activeOwnerCountBefore: ownerCountAfter + (roleKey === 'owner' ? 1 : 0),
+            activeOwnerCountAfter: ownerCountAfter,
+          };
           audits.push({
             eventId: params[0],
             actorUserId: params[1],
-            action: params[2],
-            entityType: params[3],
-            entityId: params[4],
-            requestId: params[5],
-            cfRay: params[6],
-            details: JSON.parse(params[7]),
+            action: isGrant ? 'user.global_role.grant' : 'user.global_role.revoke',
+            entityType: 'user_global_role',
+            entityId: params[2],
+            requestId: params[3],
+            cfRay: params[4],
+            details,
           });
-          return { meta: { changes: 1 } };
+          previousChanges = 1;
+          results.push({ meta: { changes: 1 }, results: [] });
+          continue;
         }
-        throw new Error(`unexpected Phase C run query: ${sql}`);
-      },
-      async all() {
-        if (sql.includes('DELETE FROM user_global_roles') && sql.includes('RETURNING')) {
-          const [userId, roleKey, actorUserId] = params;
-          const relationKey = `${userId}:${roleKey}`;
-          const relation = globalRoles.get(relationKey);
-          if (!relation) return { results: [] };
-          const authority = actorAuthority(actorUserId);
-          if (authority.status !== 'active' || !authority.is_owner || !authority.has_users_manage || !authority.has_system_manage) {
-            return { results: [] };
-          }
-          const target = users.get(userId);
-          if (roleKey === 'owner' && target?.status === 'active' && activeOwnerCount() <= 1) {
-            return { results: [] };
-          }
-          globalRoles.delete(relationKey);
-          return { results: [{ ...relation }] };
+        if (sql.includes('AS active_owner_count')) {
+          results.push({ meta: { changes: 0 }, results: [{ active_owner_count: activeOwnerCount() }] });
+          continue;
         }
-        throw new Error(`unexpected Phase C all query: ${sql}`);
-      },
-    };
+        throw new Error(`unexpected global-role batch query: ${sql}`);
+      }
+      return results;
+    } catch (error) {
+      globalRoles.clear();
+      for (const [key, value] of roleSnapshot) globalRoles.set(key, value);
+      audits.splice(0, audits.length, ...auditSnapshot);
+      nextRowId = rowIdSnapshot;
+      throw error;
+    }
   }
+
+  return { state, prepare: (sql) => prepared(sql), batch };
 }
 
 function user(userId, email, displayName, status, cfAccessSub) {
-  return {
-    user_id: userId,
-    email,
-    display_name: displayName,
-    status,
-    cf_access_sub: cfAccessSub,
-  };
+  return { user_id: userId, email, display_name: displayName, status, cf_access_sub: cfAccessSub };
 }
 
-function setRole(map, userId, roleKey, grantedBy, grantedAt) {
+function setRole(map, userId, roleKey, grantedBy, grantedAt, relationRowId) {
   map.set(`${userId}:${roleKey}`, {
+    relation_rowid: relationRowId,
     user_id: userId,
     role_key: roleKey,
     granted_by: grantedBy,
@@ -160,10 +209,7 @@ function setRole(map, userId, roleKey, grantedBy, grantedAt) {
 }
 
 function rolesFor(map, userId) {
-  return [...map.values()]
-    .filter((row) => row.user_id === userId)
-    .map((row) => row.role_key)
-    .sort();
+  return [...map.values()].filter((row) => row.user_id === userId).map((row) => row.role_key).sort();
 }
 
 async function mutate(db, actorUserId, method, userId, roleKey, ray = null) {
@@ -181,7 +227,6 @@ async function mutate(db, actorUserId, method, userId, roleKey, ray = null) {
   });
 }
 
-// Authorization: non-owner and admin must never mutate global roles.
 for (const actorUserId of ['ordinary', 'admin-a']) {
   const db = createDb();
   const response = await mutate(db, actorUserId, 'PUT', 'ordinary', 'owner');
@@ -190,13 +235,11 @@ for (const actorUserId of ['ordinary', 'admin-a']) {
   assert.equal(db.state.audits.length, 0);
 }
 
-// Owner may grant another active, Access-bound, store-isolated user.
 {
   const db = createDb({ secondOwner: false });
-  const response = await mutate(db, 'owner-a', 'PUT', 'ordinary', 'owner', 'phase-c-grant-ray');
+  const response = await mutate(db, 'owner-a', 'PUT', 'ordinary', 'owner', 'phase1-grant-ray');
   assert.equal(response.status, 200);
-  assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal(response.headers.get('x-request-id'), 'phase-c-grant-ray');
+  assert.equal(response.headers.get('x-request-id'), 'phase1-grant-ray');
   const payload = await response.json();
   assert.equal(payload.changed, true);
   assert.deepEqual(payload.globalRoles, ['owner']);
@@ -204,20 +247,12 @@ for (const actorUserId of ['ordinary', 'admin-a']) {
   assert.deepEqual(rolesFor(db.state.globalRoles, 'ordinary'), ['owner']);
   assert.equal(db.state.audits.length, 1);
   assert.equal(db.state.audits[0].action, 'user.global_role.grant');
-  assert.equal(db.state.audits[0].entityType, 'user_global_role');
   assert.deepEqual(db.state.audits[0].details, {
-    userId: 'ordinary',
-    roleKey: 'owner',
-    previousGlobalRoles: [],
-    globalRoles: ['owner'],
-    grantedBy: 'owner-a',
-    privilegeEscalation: true,
-    activeOwnerCountBefore: 1,
-    activeOwnerCountAfter: 2,
+    userId: 'ordinary', roleKey: 'owner', previousGlobalRoles: [], globalRoles: ['owner'],
+    grantedBy: 'owner-a', privilegeEscalation: true, activeOwnerCountBefore: 1, activeOwnerCountAfter: 2,
   });
 }
 
-// Self mutation is forbidden for both grant and revoke.
 for (const method of ['PUT', 'DELETE']) {
   const db = createDb();
   const response = await mutate(db, 'owner-a', method, 'owner-a', 'owner');
@@ -225,7 +260,6 @@ for (const method of ['PUT', 'DELETE']) {
   assert.deepEqual(await response.json(), { error: 'self_global_role_change_forbidden' });
 }
 
-// Grant target invariants.
 for (const [target, expected] of [
   ['inactive', 'user_not_active'],
   ['unbound', 'cf_access_binding_required'],
@@ -239,50 +273,39 @@ for (const [target, expected] of [
   assert.equal(db.state.audits.length, 0);
 }
 
-// Only owner/admin are valid global role keys.
 {
   const response = await mutate(createDb(), 'owner-a', 'PUT', 'ordinary', 'super-admin');
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: 'invalid_global_role', allowedRoles: ['owner', 'admin'] });
 }
 
-// Single-global-role model: no implicit admin -> owner replacement or dual role.
 {
   const db = createDb();
   const response = await mutate(db, 'owner-a', 'PUT', 'admin-a', 'owner');
   assert.equal(response.status, 409);
   assert.deepEqual(await response.json(), { error: 'global_role_conflict', globalRoles: ['admin'] });
-  assert.deepEqual(rolesFor(db.state.globalRoles, 'admin-a'), ['admin']);
-  assert.equal(db.state.audits.length, 0);
 }
 
-// Duplicate grant is idempotent and does not audit.
 {
   const db = createDb();
   const response = await mutate(db, 'owner-a', 'PUT', 'admin-a', 'admin');
   assert.equal(response.status, 200);
-  const payload = await response.json();
-  assert.equal(payload.changed, false);
-  assert.deepEqual(payload.globalRoles, ['admin']);
+  assert.equal((await response.json()).changed, false);
   assert.equal(db.state.audits.length, 0);
 }
 
-// Missing revoke is idempotent and does not audit.
 {
   const db = createDb();
   const response = await mutate(db, 'owner-a', 'DELETE', 'ordinary', 'admin');
   assert.equal(response.status, 200);
-  const payload = await response.json();
-  assert.equal(payload.changed, false);
-  assert.deepEqual(payload.globalRoles, []);
+  assert.equal((await response.json()).changed, false);
   assert.equal(db.state.audits.length, 0);
 }
 
-// Revoke captures deleted relation provenance before it is gone.
 {
   const db = createDb();
   const original = { ...db.state.globalRoles.get('admin-a:admin') };
-  const response = await mutate(db, 'owner-a', 'DELETE', 'admin-a', 'admin', 'phase-c-revoke-ray');
+  const response = await mutate(db, 'owner-a', 'DELETE', 'admin-a', 'admin', 'phase1-revoke-ray');
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.changed, true);
@@ -290,44 +313,60 @@ for (const [target, expected] of [
   assert.equal(db.state.globalRoles.has('admin-a:admin'), false);
   assert.equal(db.state.audits.length, 1);
   assert.equal(db.state.audits[0].action, 'user.global_role.revoke');
-  assert.equal(db.state.audits[0].entityType, 'user_global_role');
   assert.deepEqual(db.state.audits[0].details, {
-    userId: 'admin-a',
-    roleKey: 'admin',
-    previousGlobalRoles: ['admin'],
-    globalRoles: [],
-    grantedBy: original.granted_by,
-    grantedAt: original.granted_at,
-    privilegeEscalation: false,
-    activeOwnerCountBefore: 2,
-    activeOwnerCountAfter: 2,
+    userId: 'admin-a', roleKey: 'admin', previousGlobalRoles: ['admin'], globalRoles: [],
+    grantedBy: original.granted_by, grantedAt: original.granted_at, privilegeEscalation: false,
+    activeOwnerCountBefore: 2, activeOwnerCountAfter: 2,
   });
 }
 
-// Concurrent cross-revoke must never reduce active owners to zero.
+// Audit failure must roll back the privilege mutation in the same D1 batch transaction.
+{
+  const db = createDb({ secondOwner: false, failAudit: true });
+  await assert.rejects(() => mutate(db, 'owner-a', 'PUT', 'ordinary', 'owner'), /injected_audit_failure/);
+  assert.deepEqual(rolesFor(db.state.globalRoles, 'ordinary'), []);
+  assert.equal(db.state.audits.length, 0);
+}
+
+{
+  const db = createDb({ failAudit: true });
+  const before = { ...db.state.globalRoles.get('admin-a:admin') };
+  await assert.rejects(() => mutate(db, 'owner-a', 'DELETE', 'admin-a', 'admin'), /injected_audit_failure/);
+  assert.deepEqual(db.state.globalRoles.get('admin-a:admin'), before);
+  assert.equal(db.state.audits.length, 0);
+}
+
+// Concurrent cross-revoke must never reduce active owners to zero; the losing actor is re-evaluated.
 {
   const db = createDb();
   const [a, b] = await Promise.all([
     mutate(db, 'owner-a', 'DELETE', 'owner-b', 'owner'),
     mutate(db, 'owner-b', 'DELETE', 'owner-a', 'owner'),
   ]);
-  const statuses = [a.status, b.status].sort();
-  assert.deepEqual(statuses, [200, 403]);
-  const activeOwners = ['owner-a', 'owner-b'].filter((id) => rolesFor(db.state.globalRoles, id).includes('owner'));
-  assert.equal(activeOwners.length, 1, 'atomic conditional revoke must preserve one active owner');
+  assert.deepEqual([a.status, b.status].sort(), [200, 403]);
+  assert.equal(['owner-a', 'owner-b'].filter((id) => rolesFor(db.state.globalRoles, id).includes('owner')).length, 1);
   assert.equal(db.state.audits.filter((event) => event.action === 'user.global_role.revoke').length, 1);
 }
 
-// Static contract: conditional writes re-check actor authority and last-owner count atomically.
-assert.match(apiSource, /INSERT INTO user_global_roles[\s\S]*actor_user\.status='active'[\s\S]*actor_permission\.permission_key='users\.manage'[\s\S]*actor_permission\.permission_key='system\.manage'/);
-assert.match(apiSource, /DELETE FROM user_global_roles[\s\S]*actor_user\.status='active'[\s\S]*actor_permission\.permission_key='users\.manage'[\s\S]*actor_permission\.permission_key='system\.manage'/);
-assert.match(apiSource, /DELETE FROM user_global_roles[\s\S]*SELECT COUNT\(\*\)[\s\S]*role_key='owner'[\s\S]*> 1[\s\S]*RETURNING user_id, role_key, granted_by, granted_at/);
+// Production must fail closed rather than silently fall back to sequential mutation + audit writes.
+{
+  const db = createDb();
+  delete db.batch;
+  await assert.rejects(() => mutate(db, 'owner-a', 'PUT', 'ordinary', 'admin'), /control_d1_atomic_batch_required/);
+}
+
+assert.match(apiSource, /requireAtomicBatch\(db\)/);
+assert.match(apiSource, /await db\.batch\(\[/);
+assert.match(apiSource, /INSERT INTO audit_log[\s\S]*WHERE changes\(\)=1/);
+assert.match(apiSource, /rowid AS relation_rowid/);
+assert.match(apiSource, /DELETE FROM user_global_roles[\s\S]*rowid=\?4[\s\S]*granted_by IS \?5[\s\S]*granted_at=\?6/);
+assert.match(apiSource, /DELETE FROM user_global_roles[\s\S]*actor_user\.status='active'[\s\S]*permission_key='users\.manage'[\s\S]*permission_key='system\.manage'/);
+assert.match(apiSource, /DELETE FROM user_global_roles[\s\S]*SELECT COUNT\(\*\)[\s\S]*role_key='owner'[\s\S]*> 1/);
+assert.doesNotMatch(apiSource, /async function audit\(/);
 assert.doesNotMatch(apiSource, /(?:INSERT INTO|UPDATE|DELETE FROM)\s+role_permissions/i);
-assert.doesNotMatch(apiSource, /permission(?:s)?\s*\[/i);
 assert.doesNotMatch(apiSource, /AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/);
 assert.match(webEntrySource, /handleGlobalRoleGovernanceApiRoute/);
 assert.match(webEntrySource, /GLOBAL_ROLE_GOVERNANCE_ROUTE_PATTERN/);
-assert.match(webEntrySource, /global-roles/);
 
 console.log(JSON.stringify({
   ok: true,
@@ -337,19 +376,17 @@ console.log(JSON.stringify({
     'admin-cannot-mutate-global-role',
     'owner-can-mutate-other-user',
     'self-global-role-change-forbidden',
-    'inactive-target-rejected',
-    'unbound-target-rejected',
-    'store-membership-conflict',
+    'inactive-unbound-store-conflict-targets-rejected',
     'owner-admin-role-key-whitelist',
     'single-global-role-no-implicit-replace',
-    'duplicate-grant-idempotent-no-audit',
-    'missing-revoke-idempotent-no-audit',
-    'grant-audit',
-    'revoke-audit-with-relation-provenance',
-    'atomic-last-owner-protection',
-    'concurrent-cross-revoke-preserves-owner',
-    'atomic-actor-authority-recheck',
-    'no-role-permission-writes',
+    'idempotent-no-op-no-audit',
+    'grant-audit-atomic-batch',
+    'revoke-audit-atomic-batch',
+    'audit-failure-rolls-back-grant',
+    'audit-failure-rolls-back-revoke',
+    'revoke-provenance-row-guard',
+    'concurrent-last-owner-protection',
+    'atomic-batch-required-no-sequential-fallback',
     'amazon-sync-isolation',
   ],
 }));

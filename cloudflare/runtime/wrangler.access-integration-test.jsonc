@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ads-operations-web-access-integration-test",
+  "main": "./web-entry.js",
+  "compatibility_date": "2026-07-29",
+  "vars": {
+    "APP_ENV": "security-test",
+    "ACCESS_MODE": "enforce",
+    "TEAM_DOMAIN": "https://security-test.cloudflareaccess.com",
+    "ACCESS_AUD": "security-test-audience",
+    "SYNC_TRIGGER_ENABLED": "false",
+    "AMAZON_ADS_ENABLED": "false"
+  },
+  "d1_databases": [
+    {
+      "binding": "CONTROL_DB",
+      "database_name": "ads-ops-control-access-integration-test",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "../foundation/migrations/control"
+    }
+  ]
+}
