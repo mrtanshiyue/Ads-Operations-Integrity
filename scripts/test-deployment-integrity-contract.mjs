@@ -13,6 +13,7 @@ const syncWrangler = await text('cloudflare/runtime/wrangler.sync.jsonc');
 const webEntry = await text('cloudflare/runtime/web-entry.js');
 const deploymentHealth = await text('cloudflare/runtime/deployment-health.js');
 const buildsClient = await text('scripts/cloudflare-workers-builds-client.mjs');
+const discoveryClient = await text('scripts/cloudflare-deployment-discovery-client.mjs');
 const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
@@ -23,6 +24,7 @@ assert.match(canonicalCi, /name:\s*Static site and security invariants/);
 assert.match(canonicalCi, /test-deployment-integrity-contract\.mjs/);
 assert.match(canonicalCi, /test-deployment-health-contract\.mjs/);
 assert.match(canonicalCi, /test-cloudflare-workers-builds-client\.mjs/);
+assert.match(canonicalCi, /test-cloudflare-deployment-discovery-client\.mjs/);
 
 // Canonical CI remains validation-only. No repository path may silently restore direct deployment.
 assert.doesNotMatch(canonicalCi, /wrangler\s+deploy/);
@@ -84,6 +86,19 @@ assert.doesNotMatch(buildsClient, /process\.env/);
 assert.doesNotMatch(buildsClient, /CLOUDFLARE_API_TOKEN/);
 assert.doesNotMatch(canonicalCi, /api\.cloudflare\.com/);
 
+// Live topology discovery is a read-only library. It may correlate Worker→trigger→deployment→version→build only with GET.
+assert.match(discoveryClient, /\/workers\/scripts/);
+assert.match(discoveryClient, /\/builds\/workers\/.*\/triggers/);
+assert.match(discoveryClient, /\/deployments/);
+assert.match(discoveryClient, /\/versions\//);
+assert.match(discoveryClient, /version_ids=/);
+assert.match(discoveryClient, /assertLiveRuntimeVersion/);
+assert.match(discoveryClient, /method:\s*'GET'/);
+assert.doesNotMatch(discoveryClient, /method:\s*'(POST|PUT|PATCH|DELETE)'/);
+assert.doesNotMatch(discoveryClient, /process\.argv/);
+assert.doesNotMatch(discoveryClient, /process\.env/);
+assert.doesNotMatch(discoveryClient, /CLOUDFLARE_API_TOKEN/);
+
 // Amazon stays phase-independently dormant. Sync Worker deployment is not part of Phase 2 foundation.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
@@ -97,13 +112,14 @@ assert.match(phase2Definition, /Production remains out of scope/i);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-foundation-v3',
+  contract: 'deployment-integrity-foundation-v4',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   directDeployBlocked: true,
   legacyBranchPromotionNonCanonical: true,
   exactCommitBuildContractDefined: true,
   exactCommitBuildClientLibraryOnly: true,
+  readOnlyCloudflareDiscoveryLibraryOnly: true,
   buildUuidRequired: true,
   versionDeploymentCorrelationRequired: true,
   runtimeVersionMetadataRequired: true,
