@@ -11,6 +11,7 @@ import {
 import { prepareWorkflowExecution } from './sync-workflow-orchestration.js';
 import { assertProducerIntentSupported } from './sync-producer-capability.js';
 
+// Keep this source path inside the Dev Workers Build watch surface; behavior remains unchanged.
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_REPORT_CYCLE_ADVANCES = 8_000;
 const AMAZON_STEP_CONFIG = Object.freeze({
