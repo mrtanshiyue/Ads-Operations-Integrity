@@ -272,6 +272,8 @@ Controlled Amazon activation begins later with Store 01 read-only only after Dep
 
 ## Production state
 
+The final Cloudflare Native Production deployment contract is **not established yet**.
+
 Cloudflare Native Production deployment remains **NOT READY**. `wrangler.native.jsonc` still contains explicit Production placeholders.
 
 No current work authorizes or creates Production DNS, Access, Worker, D1, R2, Amazon resources, Production deployment, or Production break-glass execution.
