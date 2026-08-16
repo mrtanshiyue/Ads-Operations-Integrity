@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runCloudflareSyncDevRelease } from './deploy-cloudflare-sync-dev.mjs';
+import { runCloudflareAmazonAdsCredentialSmoke } from './smoke-cloudflare-amazon-ads-credentials-dev.mjs';
 import { waitForCloudflareSyncDevHealth } from './smoke-cloudflare-sync-dev.mjs';
 
 const SYNC_CONFIG = 'cloudflare/runtime/wrangler.sync.jsonc';
@@ -93,6 +94,7 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
   const healthUrl = String(options.healthUrl ?? env.SYNC_DEV_HEALTH_URL ?? DEFAULT_HEALTH_URL).trim();
   const smoke = options.smoke ?? waitForCloudflareSyncDevHealth;
   const release = options.release ?? runCloudflareSyncDevRelease;
+  const credentialSmoke = options.credentialSmoke ?? runCloudflareAmazonAdsCredentialSmoke;
 
   // Fail closed before changing secrets unless the currently served Dev worker is known disabled.
   await smoke({
@@ -154,12 +156,27 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
     throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_POSTFLIGHT_NOT_EXACT');
   }
 
+  // Prove the real LWA credential set can refresh an access token while the execution kill
+  // switch is still false. The smoke endpoint cannot Create/Poll/Download reports or touch D1/R2,
+  // and the access token is discarded inside the Worker rather than returned to this process.
+  const credentialPostflight = await credentialSmoke({
+    refreshToken:payload.AMAZON_ADS_REFRESH_TOKEN,
+    expectedCommit:commitSha,
+    url:options.credentialSmokeUrl ?? env.SYNC_DEV_CREDENTIAL_SMOKE_URL,
+    cwd,
+    timeoutMs:options.credentialSmokeTimeoutMs,
+  });
+  if (credentialPostflight?.lwaTokenRefresh !== 'pass') {
+    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_CREDENTIAL_SMOKE_NOT_PASS');
+  }
+
   return Object.freeze({
     ok:true,
     commitSha,
     secretNames,
     amazonAdsEnabled:false,
     runtimeVersionId:postflight.runtimeVersionId ?? null,
+    lwaTokenRefresh:'pass',
   });
 }
 
