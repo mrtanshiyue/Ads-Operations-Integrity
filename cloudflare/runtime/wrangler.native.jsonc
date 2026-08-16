@@ -3,7 +3,7 @@
   "name": "ads-operations-web",
   "main": "./web-entry.js",
   "compatibility_date": "2026-08-14",
-  "preview_urls": true,
+  "preview_urls": false,
   "assets": {
     "directory": "../../dist-cloudflare-native",
     "binding": "ASSETS",
