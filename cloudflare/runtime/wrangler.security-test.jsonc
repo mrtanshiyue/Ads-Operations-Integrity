@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "ads-operations-security-test",
   "main": "./security-test-worker.js",
-  "compatibility_date": "2026-08-14",
+  "compatibility_date": "2026-07-29",
   "d1_databases": [
     {
       "binding": "CONTROL_DB",
