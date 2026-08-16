@@ -71,7 +71,12 @@ for (const relativePath of [
 
 for (const relativePath of await collectJsFiles(distAssets)) {
   const source = await readFile(path.join(distAssets, relativePath), 'utf8');
-  assert.doesNotMatch(source, /amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.dev/, `legacy Warehouse origin leaked into ${relativePath}`);
+  const retiredHostAcceptanceSentinel = relativePath === 'cloudflare-gate7-ui-acceptance-v1.js'
+    && /RETIRED_BACKEND_HOST/.test(source)
+    && /retired_query_backend_not_requested/.test(source);
+  if (!retiredHostAcceptanceSentinel) {
+    assert.doesNotMatch(source, /amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.dev/, `legacy Warehouse origin leaked into ${relativePath}`);
+  }
   assert.doesNotMatch(source, /X-Dashboard-Password/, `legacy Warehouse password header leaked into ${relativePath}`);
   assert.doesNotMatch(source, /lr_private_cloud_password/, `legacy Warehouse session credential key leaked into ${relativePath}`);
 }
@@ -83,6 +88,7 @@ console.log(JSON.stringify({
   transport: 'CloudflareNativeQueryBridge',
   credentialMode: 'cloudflare-access-session',
   rawCloudImportReady: false,
+  retiredHostAcceptanceSentinelAllowed: true,
   retiredArtifactLoaders: [
     'assets/generated/inline-script-09.js',
     'assets/generated/inline-script-11.js',
