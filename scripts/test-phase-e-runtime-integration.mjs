@@ -27,19 +27,27 @@ assert.doesNotMatch(webSync, /workflow\.create\(/);
 
 assert.match(syncWorker, /prepareWorkflowExecution/);
 assert.match(syncWorker, /load durable sync intent receipt/);
-assert.match(syncWorker, /AMAZON_ADS_ENABLED !== 'true'/);
+assert.match(syncWorker, /amazonAdsExecutionEnabled\(this\.env\)/);
 assert.match(syncWorker, /assertProducerIntentSupported\(execution\.intent\)/);
+assert.match(syncWorker, /createAmazonAdsAccessTokenProviderFromEnv\(this\.env\)/);
+assert.match(syncWorker, /prepareAmazonAdsProducerRuntime\(\{/);
+assert.match(syncWorker, /advanceAmazonAdsReportCycle\(\{/);
+assert.doesNotMatch(syncWorker, /amazon_profile_adapter_not_implemented/);
+assert.doesNotMatch(syncWorker, /amazon_ads_adapter_not_implemented/);
 assert.doesNotMatch(syncWorker, /reportConfigVersion/);
 assert.doesNotMatch(syncWorker, /validate Amazon profile/);
 assert.doesNotMatch(syncWorker, /build report plan/);
 assert.doesNotMatch(syncWorker, /payload\?\.profileId|payload\.profileId|input\.profileId/);
 
-const killSwitchIndex = syncWorker.indexOf("AMAZON_ADS_ENABLED !== 'true'");
+const killSwitchIndex = syncWorker.indexOf('!amazonAdsExecutionEnabled(this.env)');
 const capabilityIndex = syncWorker.indexOf('assertProducerIntentSupported(execution.intent)');
-const profileAdapterIndex = syncWorker.indexOf("amazon_profile_adapter_not_implemented");
-const adsAdapterIndex = syncWorker.indexOf("amazon_ads_adapter_not_implemented");
+const credentialProviderIndex = syncWorker.indexOf('createAmazonAdsAccessTokenProviderFromEnv(this.env)');
+const bootstrapIndex = syncWorker.indexOf('prepareAmazonAdsProducerRuntime({');
+const reportCycleIndex = syncWorker.indexOf('advanceAmazonAdsReportCycle({');
 assert(killSwitchIndex >= 0 && capabilityIndex > killSwitchIndex, 'kill switch must precede producer capability preflight');
-assert(profileAdapterIndex > capabilityIndex && adsAdapterIndex > capabilityIndex, 'capability preflight must precede every producer adapter boundary');
+assert(credentialProviderIndex > capabilityIndex, 'producer capability preflight must precede Amazon credential construction');
+assert(bootstrapIndex > credentialProviderIndex, 'credentials must be available before concrete producer bootstrap');
+assert(reportCycleIndex > bootstrapIndex, 'durable producer bootstrap must precede report-cycle execution');
 
 assert.match(nativeConfig, /"SYNC_TRIGGER_ENABLED": "false"/);
 assert.match(syncConfig, /"AMAZON_ADS_ENABLED": "false"/);
@@ -50,6 +58,8 @@ console.log(JSON.stringify({
   callerProfileAuthorityRemovedFromActivePath: true,
   deterministicWorkflowCreateBatch: true,
   durableIntentReceiptFirst: true,
-  producerCapabilityPreflightBeforeAdapters: true,
+  killSwitchBeforeCapabilityAndCredentials: true,
+  concreteAmazonProducerComposition: true,
+  placeholderAdaptersRemoved: true,
   killSwitchesRemainFalse: true,
 }, null, 2));
