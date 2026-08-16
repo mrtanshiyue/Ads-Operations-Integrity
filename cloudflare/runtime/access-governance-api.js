@@ -1,6 +1,8 @@
 const READ_BODY_LIMIT = 32 * 1024;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const MAX_EMAIL_LENGTH = 320;
+const MAX_DISPLAY_NAME_LENGTH = 200;
 
 export async function handleAccessGovernanceApiRoute({ request, env, actor, url }) {
   const db = env.CONTROL_DB;
@@ -12,8 +14,9 @@ export async function handleAccessGovernanceApiRoute({ request, env, actor, url 
     return listRoles(request, db, actor, url);
   }
   if (path === '/api/v1/access/users') {
-    if (method !== 'GET') return json(request, { error: 'method_not_allowed' }, 405);
-    return listUsers(request, db, actor, url);
+    if (method === 'GET') return listUsers(request, db, actor, url);
+    if (method === 'POST') return provisionUser(request, db, actor);
+    return json(request, { error: 'method_not_allowed' }, 405);
   }
 
   const memberMatch = path.match(/^\/api\/v1\/stores\/([^/]+)\/members(?:\/([^/]+))?$/);
@@ -83,7 +86,7 @@ async function listUsers(request, db, actor, url) {
   const status = optionalEnum(url.searchParams.get('status'), ['active', 'disabled']);
   if (status.error) return json(request, { error: 'invalid_user_status' }, 400);
   const q = normalizeSearch(url.searchParams.get('q'));
-  const cursor = decodeCursor(paging.cursor, 'userId');
+  const cursor = decodeCursor(paging.cursor);
   if (cursor.error) return json(request, { error: 'invalid_cursor' }, 400);
 
   const result = await db.prepare(`
@@ -115,6 +118,41 @@ async function listUsers(request, db, actor, url) {
   return pageResponse(request, rows, paging.limit, (row) => ({ createdAt: row.createdAt, id: row.userId }));
 }
 
+async function provisionUser(request, db, actor) {
+  if (!await hasGlobalPermission(db, actor.user_id, 'users.manage')) {
+    return json(request, { error: 'forbidden', permission: 'users.manage' }, 403);
+  }
+
+  const body = await readJson(request);
+  if (body.error) return json(request, { error: body.error }, 400);
+  const value = validateUserProvisionBody(body.value);
+  if (value.error) return json(request, { error: value.error }, 400);
+
+  const userId = crypto.randomUUID();
+  try {
+    await db.prepare(`
+      INSERT INTO users(
+        user_id, cf_access_sub, email, email_norm, display_name, status,
+        last_seen_at, created_at, updated_at
+      ) VALUES(?1,NULL,?2,?3,?4,'active',NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    `).bind(userId, value.email, value.emailNorm, value.displayName).run();
+  } catch (error) {
+    if (isUniqueError(error)) return json(request, { error: 'user_email_conflict' }, 409);
+    throw error;
+  }
+
+  await audit(db, request, actor.user_id, null, 'user.provision', 'user', userId, {
+    userId,
+    email: value.email,
+    displayName: value.displayName,
+    status: 'active',
+    cfAccessBound: false,
+  });
+
+  const user = await userDetailById(db, userId);
+  return json(request, { user: publicUser(user) }, 201);
+}
+
 async function listStoreMembers(request, db, actor, url, storeId) {
   if (!await hasGlobalPermission(db, actor.user_id, 'users.manage')) {
     return json(request, { error: 'forbidden', permission: 'users.manage' }, 403);
@@ -126,7 +164,7 @@ async function listStoreMembers(request, db, actor, url, storeId) {
   if (paging.error) return json(request, { error: paging.error }, 400);
   const roleKey = normalizeSearch(url.searchParams.get('roleKey'));
   const q = normalizeSearch(url.searchParams.get('q'));
-  const cursor = decodeCursor(paging.cursor, 'userId');
+  const cursor = decodeCursor(paging.cursor);
   if (cursor.error) return json(request, { error: 'invalid_cursor' }, 400);
 
   const result = await db.prepare(`
@@ -260,6 +298,24 @@ async function userById(db, userId) {
   `).bind(userId).first();
 }
 
+async function userDetailById(db, userId) {
+  return db.prepare(`
+    SELECT
+      u.user_id,
+      u.cf_access_sub,
+      u.email,
+      u.display_name,
+      u.status,
+      u.last_seen_at,
+      u.created_at,
+      u.updated_at,
+      (SELECT GROUP_CONCAT(ugr.role_key, ',') FROM user_global_roles ugr WHERE ugr.user_id = u.user_id) AS global_roles_csv
+    FROM users u
+    WHERE u.user_id=?1
+    LIMIT 1
+  `).bind(userId).first();
+}
+
 async function roleByKey(db, roleKey) {
   return db.prepare(`
     SELECT role_key, role_name, role_scope, priority, is_system
@@ -326,6 +382,40 @@ async function readJson(request) {
   } catch {
     return { error: 'invalid_json' };
   }
+}
+
+function validateUserProvisionBody(input) {
+  if (!plainObject(input)) return { error: 'invalid_json_object' };
+  const allowed = new Set(['email', 'displayName']);
+  if (Object.keys(input).some((key) => !allowed.has(key))) return { error: 'unsupported_user_provision_field' };
+
+  if (typeof input.email !== 'string') return { error: 'invalid_user_email' };
+  const email = input.email.trim().toLowerCase();
+  if (!isValidEmail(email)) return { error: 'invalid_user_email' };
+
+  let displayName = null;
+  if (input.displayName !== undefined && input.displayName !== null) {
+    if (typeof input.displayName !== 'string') return { error: 'invalid_user_display_name' };
+    displayName = input.displayName.trim();
+    if (displayName.length > MAX_DISPLAY_NAME_LENGTH) return { error: 'user_display_name_too_long' };
+    if (!displayName) displayName = null;
+  }
+
+  return { email, emailNorm: email, displayName };
+}
+
+function isValidEmail(value) {
+  if (!value || value.length > MAX_EMAIL_LENGTH || /[\u0000-\u0020\u007f]/.test(value)) return false;
+  const at = value.indexOf('@');
+  if (at <= 0 || at !== value.lastIndexOf('@') || at >= value.length - 3) return false;
+  const local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  if (local.length > 64 || domain.length > 255 || !domain.includes('.')) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  if (domain.startsWith('.') || domain.endsWith('.') || domain.includes('..')) return false;
+  return /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/i.test(local)
+    && /^[a-z0-9.-]+$/i.test(domain)
+    && domain.split('.').every((label) => label && !label.startsWith('-') && !label.endsWith('-'));
 }
 
 function validateMemberBody(input) {
@@ -425,6 +515,10 @@ function decodeCursor(value) {
   } catch {
     return { error: true };
   }
+}
+
+function isUniqueError(error) {
+  return /unique|constraint/i.test(String(error?.message || error || ''));
 }
 
 function plainObject(value) {

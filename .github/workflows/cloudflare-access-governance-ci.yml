@@ -1,0 +1,55 @@
+name: Cloudflare Access Governance CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/runtime/access-governance-api.js'
+      - 'assets/cloudflare-native-api-v1.js'
+      - 'assets/cloudflare-native-access-console-v1.js'
+      - 'scripts/test-access-contract.mjs'
+      - 'scripts/test-user-provisioning-contract.mjs'
+      - '.github/workflows/cloudflare-access-governance-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/runtime/access-governance-api.js'
+      - 'assets/cloudflare-native-api-v1.js'
+      - 'assets/cloudflare-native-access-console-v1.js'
+      - 'scripts/test-access-contract.mjs'
+      - 'scripts/test-user-provisioning-contract.mjs'
+      - '.github/workflows/cloudflare-access-governance-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-access-governance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Access governance syntax
+        run: |
+          node --check cloudflare/runtime/access-governance-api.js
+          node --check assets/cloudflare-native-api-v1.js
+          node --check scripts/test-access-contract.mjs
+          node --check scripts/test-user-provisioning-contract.mjs
+
+      - name: Existing access governance regressions
+        run: node scripts/test-access-contract.mjs
+
+      - name: User provisioning contract
+        run: node scripts/test-user-provisioning-contract.mjs
