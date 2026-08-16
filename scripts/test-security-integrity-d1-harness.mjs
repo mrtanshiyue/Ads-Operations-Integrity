@@ -201,18 +201,21 @@ async function lifecycleMutation(db, userId, status, ray) {
 }
 
 async function createAuditFailureTrigger(db, name, action) {
+  if (!/^test_[a-z0-9_]+$/.test(name)) throw new Error('invalid_test_trigger_name');
+  if (!/^[a-z0-9_.]+$/.test(action)) throw new Error('invalid_test_audit_action');
   await db.prepare(`
     CREATE TRIGGER ${name}
     BEFORE INSERT ON audit_log
     FOR EACH ROW
-    WHEN NEW.action=?1
+    WHEN NEW.action='${action}'
     BEGIN
       SELECT RAISE(ABORT, 'test_audit_failure:${action}');
     END
-  `).bind(action).run();
+  `).run();
 }
 
 async function dropTrigger(db, name) {
+  if (!/^test_[a-z0-9_]+$/.test(name)) throw new Error('invalid_test_trigger_name');
   await db.prepare(`DROP TRIGGER IF EXISTS ${name}`).run();
 }
 
