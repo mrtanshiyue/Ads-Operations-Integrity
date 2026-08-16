@@ -47,6 +47,12 @@ jobs:
       - name: Validate canonical Cloudflare Native runtime
         run: npm run check:cf-native
 
+      - name: Validate Native cloud loader strangler boundary
+        run: |
+          node --check assets/cloudflare-native-data-panel-v1.js
+          node --check scripts/test-native-cloud-loader-strangler-contract.mjs
+          node scripts/test-native-cloud-loader-strangler-contract.mjs
+
       - name: Validate foundation regressions
         run: npm run test:cf-foundation
 

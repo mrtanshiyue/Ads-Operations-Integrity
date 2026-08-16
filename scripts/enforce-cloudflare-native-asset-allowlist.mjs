@@ -13,9 +13,9 @@ const allowedAssets = new Set([
   'cloudflare-native-access-console-v1.js',
   'cloudflare-native-api-v1.js',
   'cloudflare-native-audit-console-v1.js',
+  'cloudflare-native-data-panel-v1.js',
   'cloudflare-native-negative-governance-v1.js',
   'cloudflare-native-query-bridge-v1.js',
-  'private-cloud-warehouse-v4.js',
   'query-native-ads-source-readiness-v1.js',
   'query-native-ads-trend-host-v1.js',
   'query-native-ads-trend-v1.js',
@@ -30,9 +30,7 @@ const allowedAssets = new Set([
   'generated/inline-script-06.js',
   'generated/inline-script-07.js',
   'generated/inline-script-08.js',
-  'generated/inline-script-09.js',
   'generated/inline-script-10.js',
-  'generated/inline-script-11.js',
   'vendor/FileSaver.min.js',
   'vendor/chart.umd.min.js',
   'vendor/exceljs.min.js',
@@ -45,6 +43,9 @@ const allowedAssets = new Set([
 const forbiddenAssets = new Set([
   'private-cloud-query-v1.js',
   'private-cloud-warehouse-v3.js',
+  'private-cloud-warehouse-v4.js',
+  'generated/inline-script-09.js',
+  'generated/inline-script-11.js',
 ]);
 
 const discovered = await collectFiles(assetsRoot);
@@ -78,7 +79,7 @@ if (finalFiles.length !== allowedAssets.size) {
 
 console.log(JSON.stringify({
   ok: true,
-  policy: 'explicit-file-allowlist-v1',
+  policy: 'explicit-file-allowlist-v2',
   allowedAssetCount: allowedAssets.size,
   removedAssetCount: removed.length,
   removedAssets: removed,

@@ -117,15 +117,34 @@ const nativeBuild = await text('scripts/build-cloudflare-native.mjs');
 assert.match(nativeBuild, /build-cloudflare-native-copy-all\.mjs/);
 assert.match(nativeBuild, /enforce-cloudflare-native-asset-allowlist\.mjs/);
 
+const nativeCopyBuild = await text('scripts/build-cloudflare-native-copy-all.mjs');
+assert.match(nativeCopyBuild, /cloudflare-native-data-panel-v1\.js/);
+assert.match(nativeCopyBuild, /generated-inline-script-09/);
+assert.match(nativeCopyBuild, /generated-inline-script-11/);
+assert.match(nativeCopyBuild, /private-cloud-warehouse-v4/);
+
+assert.equal(await exists('assets/cloudflare-native-data-panel-v1.js'), true, 'missing canonical Native data panel');
+const nativeDataPanel = await text('assets/cloudflare-native-data-panel-v1.js');
+assert.match(nativeDataPanel, /CloudflareNativeQueryBridge/);
+assert.match(nativeDataPanel, /credentialMode:\s*'cloudflare-access-session'/);
+assert.match(nativeDataPanel, /cloudflare_native_raw_import_not_migrated/);
+assert.doesNotMatch(nativeDataPanel, /sessionStorage|X-Dashboard-Password|amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.dev/);
+
 const allowlist = await text('scripts/enforce-cloudflare-native-asset-allowlist.mjs');
-assert.match(allowlist, /explicit-file-allowlist-v1/);
+assert.match(allowlist, /explicit-file-allowlist-v2/);
 assert.match(allowlist, /forbiddenAssets/);
 assert.match(allowlist, /private-cloud-query-v1\.js/);
 assert.match(allowlist, /private-cloud-warehouse-v3\.js/);
+assert.match(allowlist, /private-cloud-warehouse-v4\.js/);
+assert.match(allowlist, /generated\/inline-script-09\.js/);
+assert.match(allowlist, /generated\/inline-script-11\.js/);
+assert.match(allowlist, /cloudflare-native-data-panel-v1\.js/);
 
 const canonicalCi = await text('.github/workflows/cloudflare-native-canonical-ci.yml');
 assert.match(canonicalCi, /Cloudflare Native Canonical CI/);
 assert.match(canonicalCi, /consolidation\/\*\*/);
+assert.match(canonicalCi, /Validate Native cloud loader strangler boundary/);
+assert.match(canonicalCi, /test-native-cloud-loader-strangler-contract\.mjs/);
 assert.match(canonicalCi, /Validate Phase E producer and ingestion regressions/);
 assert.match(canonicalCi, /Validate R2 provenance Gate 24-27 regressions/);
 assert.match(canonicalCi, /Validate dormant Amazon transport regressions without deployment/);
@@ -136,11 +155,13 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v4',
+  contract: 'architecture-convergence-phase0-v5',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
+  nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
   rootWranglerAbsent: true,
   legacyWarehouseProxyInactive: true,
+  legacyBrowserCloudLoadersForbiddenFromArtifact: true,
   legacyPagesInactive: true,
   granularCiRetired: true,
   directDeployAliasesBlocked: true,

@@ -14,6 +14,7 @@ const required = [
   'assets/cloudflare-native-audit-console-v1.js',
   'assets/cloudflare-native-access-console-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
+  'assets/cloudflare-native-data-panel-v1.js',
   'assets/cloudflare-gate6-acceptance-v1.js',
   'assets/cloudflare-gate7-ui-acceptance-v1.js',
 ];
@@ -98,6 +99,7 @@ vm.runInNewContext(accessConsoleSource, { window: accessSandboxWindow, console }
 if (!accessSandboxWindow.CloudflareAccessConsole || accessSandboxWindow.CloudflareAccessConsole.version !== '1.2.0') {
   throw new Error('Access console public contract was not installed');
 }
+await auditSandboxWindow.CloudflareAuditConsole.listEvents({ limit: 1 });
 await accessSandboxWindow.CloudflareAccessConsole.listRoles();
 await accessSandboxWindow.CloudflareAccessConsole.listUsers();
 await accessSandboxWindow.CloudflareAccessConsole.createUser(' new.user@example.test ', ' New User ');
@@ -128,7 +130,16 @@ if (!accessCalls.some((call) => call.method === 'put' && call.body.roleKey === '
   throw new Error('Access console must delegate store membership writes to CloudflareNativeAPI');
 }
 if (!accessCalls.some((call) => call.method === 'delete' && call.userId === 'user-dev-01')) {
-  throw new Error('Access console must delegate member removal to CloudflareNativeAPI');
+  throw new Error('Access console must delegate member removal through CloudflareNativeAPI');
+}
+
+const dataPanelSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-data-panel-v1.js'), 'utf8');
+new vm.Script(dataPanelSource, { filename: 'cloudflare-native-data-panel-v1.js' });
+if (/sessionStorage|X-Dashboard-Password|amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.dev/.test(dataPanelSource)) {
+  throw new Error('Native data panel must not retain Warehouse password/session transport');
+}
+if (!/CloudflareNativeQueryBridge/.test(dataPanelSource) || !/cloudflare_native_raw_import_not_migrated/.test(dataPanelSource)) {
+  throw new Error('Native data panel must delegate to the native query bridge and fail closed for cloud Raw import');
 }
 
 await rm(outputDir, { recursive: true, force: true });
@@ -150,21 +161,43 @@ if (!/connect-src\s+'self';/i.test(nativeIndex)) {
   throw new Error('Failed to enforce same-origin connect-src in native build');
 }
 
-// The native runtime owns the Query Client transport. Strip the previous browser query client
-// from the deployment artifact only; the repository source remains untouched for rollback.
-const legacyQueryScriptPattern = /<script\b[^>]*src=["'][^"']*assets\/private-cloud-query-v1\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi;
-const legacyQueryMatches = nativeIndex.match(legacyQueryScriptPattern) || [];
-nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
+// The native runtime owns all cloud-query and cloud-data browser transports.
+// Strip the old query client plus both generations of Warehouse browser loaders from the artifact.
+const retiredScriptPatterns = [
+  {
+    name: 'private-cloud-query-v1',
+    pattern: /<script\b[^>]*src=["'][^"']*assets\/private-cloud-query-v1\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi,
+  },
+  {
+    name: 'generated-inline-script-09',
+    pattern: /<script\b[^>]*src=["'][^"']*assets\/generated\/inline-script-09\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi,
+  },
+  {
+    name: 'generated-inline-script-11',
+    pattern: /<script\b[^>]*src=["'][^"']*assets\/generated\/inline-script-11\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi,
+  },
+  {
+    name: 'private-cloud-warehouse-v4',
+    pattern: /<script\b[^>]*src=["'][^"']*assets\/private-cloud-warehouse-v4\.js[^"']*["'][^>]*>\s*<\/script>\s*/gi,
+  },
+];
+const retiredScriptTagsRemoved = {};
+for (const entry of retiredScriptPatterns) {
+  const matches = nativeIndex.match(entry.pattern) || [];
+  retiredScriptTagsRemoved[entry.name] = matches.length;
+  nativeIndex = nativeIndex.replace(entry.pattern, '');
+}
 
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
 const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
 const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.js"></script>';
 const accessConsoleTag = '<script src="assets/cloudflare-native-access-console-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
+const nativeDataPanelTag = '<script src="assets/cloudflare-native-data-panel-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
@@ -174,10 +207,11 @@ if (
   || !nativeIndex.includes(auditConsoleTag)
   || !nativeIndex.includes(accessConsoleTag)
   || !nativeIndex.includes(nativeBridgeTag)
+  || !nativeIndex.includes(nativeDataPanelTag)
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/governance/audit/access/query bridge/Gate 6/Gate 7 clients');
+  throw new Error('Failed to inject the native browser API/governance/audit/access/query/data-panel/Gate clients');
 }
 if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
   throw new Error('Audit console client must be injected exactly once');
@@ -185,8 +219,13 @@ if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
 if ((nativeIndex.split(accessConsoleTag).length - 1) !== 1) {
   throw new Error('Access console client must be injected exactly once');
 }
-if (legacyQueryScriptPattern.test(nativeIndex)) {
-  throw new Error('Legacy private cloud query client remains in native index');
+if ((nativeIndex.split(nativeDataPanelTag).length - 1) !== 1) {
+  throw new Error('Native data panel must be injected exactly once');
+}
+for (const entry of retiredScriptPatterns) {
+  if ((nativeIndex.match(entry.pattern) || []).length) {
+    throw new Error(`Retired cloud loader remains in native index: ${entry.name}`);
+  }
 }
 
 await writeFile(path.join(outputDir, 'index.html'), nativeIndex, 'utf8');
@@ -229,7 +268,9 @@ console.log(JSON.stringify({
   accessConsoleClient: 'assets/cloudflare-native-access-console-v1.js',
   accessConsoleContract: 'user-provisioning-lifecycle-and-store-membership',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
+  nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
+  nativeDataPanelContract: 'same-origin-query-and-raw-fail-closed',
   gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',
-  legacyQueryScriptTagsRemoved: legacyQueryMatches.length,
+  retiredScriptTagsRemoved,
 }, null, 2));
