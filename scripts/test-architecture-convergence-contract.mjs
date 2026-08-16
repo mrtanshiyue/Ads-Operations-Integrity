@@ -113,18 +113,17 @@ assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/
 assert.equal(
   packageJson.scripts?.['provision:cf-sync:dev:amazon-secrets'],
   'node scripts/block-dormant-amazon-execution.mjs provision:cf-sync:dev:amazon-secrets',
-  'Amazon credential provisioning npm entrypoint must remain blocked during convergence',
+  'Amazon credential provisioning npm entrypoint must remain blocked until controlled Store 01 activation',
 );
 
 const deployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 assert.match(deployBlocker, /Direct Cloudflare deployment is disabled/);
 assert.match(deployBlocker, /CI-gated and exact-commit controlled/);
 const amazonBlocker = await text('scripts/block-dormant-amazon-execution.mjs');
-assert.match(amazonBlocker, /Amazon live execution is paused during Architecture Convergence Phase 0/);
-assert.match(amazonBlocker, /Do not provision Amazon credentials/);
+assert.match(amazonBlocker, /Amazon live execution remains paused until controlled Store 01 activation is explicitly authorized/);
+assert.match(amazonBlocker, /Security Integrity and intermediate platform phases do not authorize Amazon credential provisioning/);
 assert.match(amazonBlocker, /deterministic regression coverage only/);
 
-// Dormant implementation stays available for deterministic regression tests; only its live package entrypoint is blocked.
 const amazonProvisionHelper = await text('scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs');
 assert.match(amazonProvisionHelper, /wrangler', 'secret', 'bulk/);
 assert.match(amazonProvisionHelper, /runCloudflareAmazonAdsCredentialSmoke/);
@@ -162,7 +161,12 @@ assert.match(allowlist, /cloudflare-native-data-panel-v1\.js/);
 
 const canonicalCi = await text('.github/workflows/cloudflare-native-canonical-ci.yml');
 assert.match(canonicalCi, /Cloudflare Native Canonical CI/);
+assert.match(canonicalCi, /name:\s*Static site and security invariants/);
 assert.match(canonicalCi, /consolidation\/\*\*/);
+assert.match(canonicalCi, /feature\/\*\*/);
+assert.match(canonicalCi, /fix\/\*\*/);
+assert.match(canonicalCi, /security-integrity-\*/);
+assert.match(canonicalCi, /pull_request:[\s\S]*branches:[\s\S]*- main/);
 assert.match(canonicalCi, /Validate Native cloud loader strangler boundary/);
 assert.match(canonicalCi, /test-native-cloud-loader-strangler-contract\.mjs/);
 assert.match(canonicalCi, /Validate Phase E producer and ingestion regressions/);
@@ -174,7 +178,7 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v7',
+  contract: 'canonical-architecture-v8',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
@@ -187,6 +191,8 @@ console.log(JSON.stringify({
   granularCiRetired: true,
   directDeployAliasesBlocked: true,
   amazonLivePackageEntryBlocked: true,
+  canonicalShortLivedBranchCoverage: true,
+  mainProtectionContextPreserved: true,
   legacyArchived: true,
   canonicalCoverageParityLocked: true,
   nativeAssetAllowlistEnforced: true,
