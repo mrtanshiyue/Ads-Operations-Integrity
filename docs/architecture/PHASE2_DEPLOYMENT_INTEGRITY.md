@@ -21,7 +21,8 @@ Phase 0 Architecture Convergence = COMPLETE + MERGED
 Phase 1 Security Integrity = COMPLETE + MERGED
 Phase 2 Deployment Integrity = FOUNDATION PASS
                                DEV LIVE DEPLOYMENT INTEGRITY PASS
-                               POST-ACCEPTANCE GOVERNANCE IN PROGRESS
+                               PREVIEW URL HARDENING LIVE PASS
+                               POST-ACCEPTANCE GOVERNANCE COMPLETE
                                NOT MERGED TO MAIN
 
 Gate 2.0 = PASS
@@ -29,7 +30,7 @@ Gate 2.1 = PASS — IMPLEMENTED + LIVE
 Gate 2.2 = PASS
 Gate 2.3 = PASS — IMPLEMENTED + LIVE READ-ONLY DISCOVERY
 Gate 2.4 = COMPLETE — EXACT-SHA DEV DEPLOYMENT ACCEPTED
-Gate 2.5 = PREFLIGHT COMPLETE — RETIREMENT DESIGN IN PROGRESS
+Gate 2.5 = PREFLIGHT COMPLETE — RETIREMENT DEFINITION FROZEN / DESTRUCTIVE RETIREMENT NOT AUTHORIZED
 ```
 
 Production remains out of scope and NOT READY. Amazon Ads API remains DORMANT.
@@ -92,7 +93,7 @@ Immutable repository evidence:
 docs/architecture/PHASE2_GATE24_DEPLOYMENT_RECEIPT.json
 ```
 
-That receipt remains tied to `27da62ee...`. A later governance or hardening commit must never rewrite the Gate 2.4 accepted SHA.
+That receipt remains tied to `27da62ee...`. Later governance and hardening work must never rewrite the Gate 2.4 accepted SHA.
 
 ## Gate 2.3 live discovery — PASS
 
@@ -126,6 +127,7 @@ Current historical evidence remains frozen:
 Git branch: __manual_ci_gated_deploy__
 Frozen SHA: ce59e4cc43413338f35a34cb44622a7aa26f9875
 Workers Builds trigger UUID: 33a47d45-4103-43d7-bca4-7d9096c4abfb
+Trigger deleted_on: null
 ```
 
 Do not delete the trigger object or Git branch during current Phase 2 governance work.
@@ -137,9 +139,9 @@ scripts/promote-cloudflare-sync-dev-trigger.mjs
 scripts/deploy-cloudflare-sync-dev.mjs
 ```
 
-## Preview URL hardening
+## Preview URL hardening — LIVE PASS
 
-Read-only assessment established:
+The read-only assessment initially established:
 
 ```text
 canonical workers.dev hostname = Cloudflare Access protected
@@ -148,18 +150,58 @@ protected API bypass = NOT FOUND
 D1 data bypass = NOT FOUND
 ```
 
-The Worker itself still uses `ACCESS_MODE=enforce` and protects `/api/*` except the deliberately retained `/api/health` acceptance route.
-
-Repository hardening policy is now:
+Repository policy was changed to:
 
 ```text
 cloudflare/runtime/wrangler.native.jsonc
 preview_urls = false
 ```
 
-This disables versioned and aliased preview URLs without disabling the canonical `workers.dev` route. Repository implementation can pass before live activation; live Preview URL closure requires a later controlled Dev exact-SHA deployment and acceptance.
+The hardening candidate was accepted only after full Canonical CI success:
 
-`GET /api/health` remains required until an equivalent Access-authenticated canonical acceptance path fully replaces it.
+```text
+Candidate SHA: 0d1115da98282e6874ce2b8128a14fb05a1ac968
+Canonical CI Run: 31940028696
+Required context: Static site and security invariants
+Result: SUCCESS
+```
+
+Exact-SHA Dev hardening deployment lineage:
+
+```text
+Git SHA: 0d1115da98282e6874ce2b8128a14fb05a1ac968
+Trigger UUID: 33a47d45-4103-43d7-bca4-7d9096c4abfb
+Build UUID: 006a7123-4204-499d-bae7-4138284bf30d
+Build status/outcome: stopped / success
+Build commit SHA: 0d1115da98282e6874ce2b8128a14fb05a1ac968
+Worker version ID: 1264fc03-c111-4037-9029-e21ba57a84b2
+Deployment ID: 46993acd-cc8f-46fb-bd6c-c1a3b7f41bcb
+Traffic: 100%, exactly one active version
+workers.dev enabled: true
+preview URLs enabled: false
+```
+
+Version→build reverse correlation resolves `1264fc03...` back to build `006a7123...` and exact commit `0d1115da...`.
+
+The live Worker version retains:
+
+```text
+ACCESS_MODE=enforce
+SYNC_TRIGGER_ENABLED=false
+CF_VERSION_METADATA binding present
+```
+
+Cloudflare Access remains attached to the canonical Dev hostname with application `ads-operations-web-dev access` and the `Dev owner only` allow policy. Therefore preview hardening did not remove the canonical Access control plane.
+
+An independent Browser Rendering HTTP probe was attempted after deployment but Cloudflare returned API error `2001 Rate limit exceeded`. This is recorded as an observation limitation, not treated as an application failure and not substituted with fabricated HTTP evidence. Live runtime identity in the receipt is accepted from Cloudflare's active deployment at 100% traffic plus version→build correlation and enabled canonical `workers.dev` routing.
+
+Immutable hardening receipt:
+
+```text
+docs/architecture/PHASE2_PREVIEW_HARDENING_DEPLOYMENT_RECEIPT.json
+```
+
+`GET /api/health` remains part of the runtime contract. A future acceptance refinement may use an authenticated canonical-host request when an Access-authenticated execution path is available.
 
 ## Deployment Integrity control-plane libraries
 
@@ -186,7 +228,7 @@ scripts/deployment-integrity-receipt.mjs
 scripts/test-deployment-integrity-receipt.mjs
 ```
 
-Receipt creation fails closed unless build outcome is successful, build commit equals candidate commit, and live runtime version equals correlated Worker version.
+Receipt creation fails closed unless build outcome is successful, build commit equals candidate commit, and accepted live runtime version equals the correlated Worker version.
 
 ## Governance invariants
 
@@ -200,6 +242,7 @@ Canonical CI must continue to prove:
 - Workers Builds trigger object remains preserved while exact-SHA execution depends on it;
 - preview URLs are disabled in canonical runtime config;
 - Gate 2.4 immutable receipt remains unchanged;
+- Preview hardening immutable receipt remains tied to `0d1115da...`;
 - `SYNC_TRIGGER_ENABLED=false`;
 - `AMAZON_ADS_ENABLED=false`;
 - Production placeholders remain present.

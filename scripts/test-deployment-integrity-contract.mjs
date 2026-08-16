@@ -19,6 +19,7 @@ const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.m
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
 const gate24Receipt = JSON.parse(await text('docs/architecture/PHASE2_GATE24_DEPLOYMENT_RECEIPT.json'));
+const previewHardeningReceipt = JSON.parse(await text('docs/architecture/PHASE2_PREVIEW_HARDENING_DEPLOYMENT_RECEIPT.json'));
 
 // Phase 2 validates itself on push without changing the historical required context name.
 assert.match(canonicalCi, /deployment-integrity-\*/);
@@ -72,8 +73,11 @@ assert.match(phase2Definition, /deployment receipt/i);
 assert.match(nativeWrangler, /"preview_urls"\s*:\s*false/);
 assert.doesNotMatch(nativeWrangler, /"preview_urls"\s*:\s*true/);
 assert.doesNotMatch(nativeWrangler, /"workers_dev"\s*:\s*false/);
+assert.match(phase2Definition, /Preview URL hardening — LIVE PASS/i);
+assert.match(phase2Definition, /preview URLs enabled: false/i);
+assert.match(phase2Definition, /workers\.dev enabled: true/i);
 
-// Version metadata is both bound and exposed through the canonical health route.
+// Version metadata is both bound and exposed through the canonical health route contract.
 assert.match(nativeWrangler, /"version_metadata"\s*:\s*\{\s*"binding"\s*:\s*"CF_VERSION_METADATA"\s*\}/s);
 assert.match(webEntry, /handleDeploymentHealthRoute/);
 assert.match(webEntry, /deployment-health\.js/);
@@ -135,6 +139,21 @@ assert.equal(gate24Receipt.deploymentId, 'e6ab548a-b070-4a03-ab7a-b17c255face5')
 assert.equal(gate24Receipt.liveRuntimeVersionId, gate24Receipt.versionId);
 assert.equal(gate24Receipt.buildOutcome, 'success');
 
+// Preview hardening receipt is a second immutable deployment record and must stay tied to its deployed candidate SHA.
+assert.equal(previewHardeningReceipt.schemaVersion, 'cloudflare-deployment-receipt-v1');
+assert.equal(previewHardeningReceipt.commitSha, '0d1115da98282e6874ce2b8128a14fb05a1ac968');
+assert.equal(previewHardeningReceipt.buildCommitSha, previewHardeningReceipt.commitSha);
+assert.equal(previewHardeningReceipt.githubWorkflowRunId, 31940028696);
+assert.equal(previewHardeningReceipt.githubRequiredContext, 'Static site and security invariants');
+assert.equal(previewHardeningReceipt.workerName, 'ads-operations-web-dev');
+assert.equal(previewHardeningReceipt.workerTag, 'ab2b4da6c8be41a5a72223384c32b71c');
+assert.equal(previewHardeningReceipt.triggerUuid, '33a47d45-4103-43d7-bca4-7d9096c4abfb');
+assert.equal(previewHardeningReceipt.buildUuid, '006a7123-4204-499d-bae7-4138284bf30d');
+assert.equal(previewHardeningReceipt.versionId, '1264fc03-c111-4037-9029-e21ba57a84b2');
+assert.equal(previewHardeningReceipt.deploymentId, '46993acd-cc8f-46fb-bd6c-c1a3b7f41bcb');
+assert.equal(previewHardeningReceipt.liveRuntimeVersionId, previewHardeningReceipt.versionId);
+assert.equal(previewHardeningReceipt.buildOutcome, 'success');
+
 // Amazon remains dormant.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
@@ -155,7 +174,7 @@ assert.match(phase2Definition, /Production remains out of scope/i);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-post-acceptance-v6',
+  contract: 'deployment-integrity-post-hardening-v7',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   canonicalCiPerformsLiveCloudflareMutation: false,
@@ -167,6 +186,7 @@ console.log(JSON.stringify({
   readOnlyCloudflareDiscoveryLibraryOnly: true,
   failClosedDeploymentReceipt: true,
   gate24ImmutableReceiptPreserved: true,
+  previewHardeningImmutableReceiptPreserved: true,
   buildUuidRequired: true,
   versionDeploymentCorrelationRequired: true,
   runtimeVersionMetadataRequired: true,
