@@ -12,6 +12,7 @@ const required = [
   'assets/cloudflare-native-api-v1.js',
   'assets/cloudflare-native-negative-governance-v1.js',
   'assets/cloudflare-native-audit-console-v1.js',
+  'assets/cloudflare-native-access-console-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
   'assets/cloudflare-gate6-acceptance-v1.js',
   'assets/cloudflare-gate7-ui-acceptance-v1.js',
@@ -45,6 +46,62 @@ if (auditCalls.length !== 1 || auditCalls[0].storeId !== 'store-dev-01' || audit
   throw new Error('Audit console must delegate reads to CloudflareNativeAPI.auditEvents');
 }
 
+const accessConsolePath = path.join(repoRoot, 'assets/cloudflare-native-access-console-v1.js');
+const accessConsoleSource = await readFile(accessConsolePath, 'utf8');
+new vm.Script(accessConsoleSource, { filename: 'cloudflare-native-access-console-v1.js' });
+if (/AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(|user_global_roles|role_scope\s*=\s*['"]global/.test(accessConsoleSource)) {
+  throw new Error('Access console must remain isolated from Amazon/sync/global-role write transports');
+}
+const accessCalls = [];
+const accessSandboxWindow = {
+  CloudflareNativeAPI: {
+    accessRoles(params) {
+      accessCalls.push({ method: 'roles', params: { ...params } });
+      return Promise.resolve({ roles: [] });
+    },
+    accessUsers(params) {
+      accessCalls.push({ method: 'users', params: { ...params } });
+      return Promise.resolve({ items: [] });
+    },
+    storeMembers(storeId, params) {
+      accessCalls.push({ method: 'members', storeId, params: { ...params } });
+      return Promise.resolve({ items: [] });
+    },
+    putStoreMember(storeId, userId, body) {
+      accessCalls.push({ method: 'put', storeId, userId, body: { ...body } });
+      return Promise.resolve({ member: { userId, roleKey: body.roleKey } });
+    },
+    deleteStoreMember(storeId, userId) {
+      accessCalls.push({ method: 'delete', storeId, userId });
+      return Promise.resolve({ deleted: true });
+    },
+  },
+};
+vm.runInNewContext(accessConsoleSource, { window: accessSandboxWindow, console }, { filename: 'cloudflare-native-access-console-v1.js' });
+if (!accessSandboxWindow.CloudflareAccessConsole || accessSandboxWindow.CloudflareAccessConsole.version !== '1.0.0') {
+  throw new Error('Access console public contract was not installed');
+}
+await accessSandboxWindow.CloudflareAccessConsole.listRoles();
+await accessSandboxWindow.CloudflareAccessConsole.listUsers();
+await accessSandboxWindow.CloudflareAccessConsole.listMembers('store-dev-01');
+await accessSandboxWindow.CloudflareAccessConsole.putMember('store-dev-01', 'user-dev-01', 'analyst');
+await accessSandboxWindow.CloudflareAccessConsole.deleteMember('store-dev-01', 'user-dev-01');
+if (!accessCalls.some((call) => call.method === 'roles' && call.params.scope === 'store')) {
+  throw new Error('Access console must read store-scoped role catalog');
+}
+if (!accessCalls.some((call) => call.method === 'users' && call.params.status === 'active' && call.params.limit === 200)) {
+  throw new Error('Access console must read active users through CloudflareNativeAPI');
+}
+if (!accessCalls.some((call) => call.method === 'members' && call.storeId === 'store-dev-01' && call.params.limit === 200)) {
+  throw new Error('Access console must read store members through CloudflareNativeAPI');
+}
+if (!accessCalls.some((call) => call.method === 'put' && call.body.roleKey === 'analyst')) {
+  throw new Error('Access console must delegate store membership writes to CloudflareNativeAPI');
+}
+if (!accessCalls.some((call) => call.method === 'delete' && call.userId === 'user-dev-01')) {
+  throw new Error('Access console must delegate member removal to CloudflareNativeAPI');
+}
+
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 
@@ -73,11 +130,12 @@ nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
 const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
 const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.js"></script>';
+const accessConsoleTag = '<script src="assets/cloudflare-native-access-console-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
@@ -85,14 +143,18 @@ if (
   !nativeIndex.includes(nativeClientTag)
   || !nativeIndex.includes(negativeGovernanceTag)
   || !nativeIndex.includes(auditConsoleTag)
+  || !nativeIndex.includes(accessConsoleTag)
   || !nativeIndex.includes(nativeBridgeTag)
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/governance/audit/query bridge/Gate 6/Gate 7 clients');
+  throw new Error('Failed to inject the native browser API/governance/audit/access/query bridge/Gate 6/Gate 7 clients');
 }
 if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
   throw new Error('Audit console client must be injected exactly once');
+}
+if ((nativeIndex.split(accessConsoleTag).length - 1) !== 1) {
+  throw new Error('Access console client must be injected exactly once');
 }
 if (legacyQueryScriptPattern.test(nativeIndex)) {
   throw new Error('Legacy private cloud query client remains in native index');
@@ -135,6 +197,8 @@ console.log(JSON.stringify({
   negativeGovernanceClient: 'assets/cloudflare-native-negative-governance-v1.js',
   auditConsoleClient: 'assets/cloudflare-native-audit-console-v1.js',
   auditConsoleContract: 'read-only-native-api',
+  accessConsoleClient: 'assets/cloudflare-native-access-console-v1.js',
+  accessConsoleContract: 'store-membership-only',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
   gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',
