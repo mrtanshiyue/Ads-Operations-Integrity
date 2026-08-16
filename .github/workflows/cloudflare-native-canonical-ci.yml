@@ -22,7 +22,7 @@ jobs:
   validate:
     name: Canonical Cloudflare Native validation
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout exact commit
@@ -50,16 +50,133 @@ jobs:
       - name: Validate foundation regressions
         run: npm run test:cf-foundation
 
+      - name: Validate Phase E producer and ingestion regressions
+        run: |
+          node --check cloudflare/runtime/canonical-json.js
+          node --check cloudflare/runtime/sync-intent-contract.js
+          node --check cloudflare/runtime/sync-producer-capability.js
+          node --check cloudflare/runtime/sync-producer-bootstrap.js
+          node --check cloudflare/runtime/sync-run-completion.js
+          node --check cloudflare/runtime/sync-report-cycle.js
+          node --check cloudflare/runtime/sync-report-cycle-snapshot.js
+          node --check cloudflare/runtime/sync-report-cycle-executor.js
+          node --check cloudflare/runtime/sync-report-cycle-runtime.js
+          node --check cloudflare/runtime/sync-report-cycle-acquisition-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-finalize-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-finalize-runtime.js
+          node --check cloudflare/runtime/sync-report-cycle-ingestion-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-ingestion-runtime.js
+          node --check cloudflare/runtime/r2-raw-object-reader.js
+          node --check cloudflare/runtime/amazon-numeric.js
+          node --check cloudflare/runtime/amazon-profile-contract.js
+          node --check cloudflare/runtime/amazon-report-contract.js
+          node --check cloudflare/runtime/amazon-producer-state.js
+          node --check cloudflare/runtime/amazon-search-term-parser.js
+          node --check cloudflare/runtime/amazon-raw-object-contract.js
+          node --check cloudflare/runtime/amazon-report-acquisition.js
+          node --check cloudflare/runtime/web-sync-orchestration.js
+          node --check cloudflare/runtime/sync-workflow-orchestration.js
+          node --check cloudflare/runtime/sync-api.js
+          node --check cloudflare/runtime/amazon-profile-producer.js
+          node --check cloudflare/runtime/amazon-report-producer.js
+          node --check cloudflare/runtime/search-term-fact-stage-producer.js
+          node --check cloudflare/runtime/search-term-fact-stage-repository.js
+          node --check cloudflare/runtime/search-term-ingestion.js
+          node --check cloudflare/runtime/search-term-ingestion-runtime.js
+          node --check cloudflare/runtime/search-term-fact-publisher.js
+          node --check cloudflare/runtime/amazon-entity-contract.js
+          node --check cloudflare/runtime/amazon-entity-mirror-producer.js
+          node scripts/test-phase-e-contracts.mjs
+          node scripts/test-web-sync-orchestration.mjs
+          node scripts/test-sync-workflow-orchestration.mjs
+          node scripts/test-sync-producer-capability.mjs
+          node scripts/test-sync-producer-bootstrap.mjs
+          node scripts/test-sync-report-plan-bootstrap.mjs
+          node scripts/test-sync-run-completion.mjs
+          node scripts/test-sync-report-cycle.mjs
+          node scripts/test-sync-report-cycle-executor.mjs
+          node scripts/test-sync-report-cycle-runtime.mjs
+          node scripts/test-sync-report-cycle-acquisition-freshness.mjs
+          node scripts/test-sync-report-cycle-finalize-freshness.mjs
+          node scripts/test-sync-report-cycle-finalize-runtime.mjs
+          node scripts/test-sync-report-cycle-ingestion-freshness.mjs
+          node scripts/test-sync-report-cycle-ingestion-runtime.mjs
+          node scripts/test-r2-raw-object-reader.mjs
+          node scripts/test-amazon-search-term-parser.mjs
+          node scripts/test-amazon-raw-object-contract.mjs
+          node scripts/test-amazon-report-acquisition.mjs
+          node scripts/test-amazon-report-plan-receipt.mjs
+          node scripts/test-phase-e-runtime-integration.mjs
+          node scripts/test-amazon-profile-producer.mjs
+          node scripts/test-amazon-report-producer.mjs
+          node scripts/test-search-term-fact-stage-producer.mjs
+          node scripts/test-search-term-fact-stage-repository.mjs
+          node scripts/test-search-term-ingestion.mjs
+          node scripts/test-search-term-ingestion-runtime.mjs
+          node scripts/test-search-term-fact-publisher.mjs
+          node scripts/test-amazon-entity-contract.mjs
+          node scripts/test-amazon-entity-mirror-producer.mjs
+          python3 scripts/test-phase-e-migrations.py
+          python3 scripts/test-phase-e-report-receipt-migrations.py
+          python3 scripts/test-phase-e-report-plan-migrations.py
+          python3 scripts/test-phase-e-report-plan-membership-migrations.py
+          python3 scripts/test-phase-e-report-plan-duplicate-guard-migrations.py
+          python3 scripts/test-phase-e-report-fact-stage-receipt-migrations.py
+          python3 scripts/test-phase-e-sync-completion-migrations.py
+          python3 scripts/test-phase-e-entity-migrations.py
+
+      - name: Validate R2 provenance Gate 24-27 regressions
+        run: |
+          node --check cloudflare/runtime/source-object-byte-size.js
+          node --check cloudflare/runtime/store-daily-source-object-byte-size-api.js
+          node --check cloudflare/runtime/source-object-upload-timestamp.js
+          node --check cloudflare/runtime/store-daily-source-object-upload-timestamp-api.js
+          node --check cloudflare/runtime/source-object-version.js
+          node --check cloudflare/runtime/store-daily-source-object-version-api.js
+          node --check cloudflare/runtime/source-object-etag.js
+          node --check cloudflare/runtime/store-daily-source-object-etag-api.js
+          node --check scripts/test-search-term-r2-object-byte-size-contract.mjs
+          node --check scripts/test-search-term-r2-object-upload-timestamp-contract.mjs
+          node --check scripts/test-search-term-r2-object-version-contract.mjs
+          node --check scripts/test-search-term-r2-object-etag-contract.mjs
+          node scripts/test-search-term-r2-object-byte-size-contract.mjs
+          node scripts/test-search-term-r2-object-upload-timestamp-contract.mjs
+          node scripts/test-search-term-r2-object-version-contract.mjs
+          node scripts/test-search-term-r2-object-etag-contract.mjs
+
       - name: Validate access governance regressions
         run: |
           node scripts/test-user-provisioning-contract.mjs
           node scripts/test-user-lifecycle-contract.mjs
           node scripts/test-global-role-governance-contract.mjs
 
-      - name: Validate dormant Amazon transport regressions
+      - name: Validate dormant Amazon transport regressions without deployment
         run: |
+          node --check cloudflare/runtime/amazon-ads-credential-provider.js
+          node --check cloudflare/runtime/amazon-ads-credential-smoke.js
+          node --check cloudflare/runtime/amazon-ads-report-transport.js
+          node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
+          node --check cloudflare/runtime/amazon-ads-sync-runtime.js
+          node --check cloudflare/runtime/sync-worker.js
+          node --check scripts/deploy-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-deploy.mjs
+          node --check scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs
+          node --check scripts/test-amazon-ads-credential-smoke.mjs
+          node --check scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
+          node --check scripts/promote-cloudflare-sync-dev-trigger.mjs
+          node --check scripts/test-promote-cloudflare-sync-dev-trigger.mjs
+          node --check scripts/smoke-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
           node scripts/test-amazon-ads-credential-smoke.mjs
+          node scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
           node scripts/test-amazon-ads-report-transport.mjs
           node scripts/test-amazon-ads-bootstrap-transport.mjs
           node scripts/test-amazon-ads-sync-runtime.mjs
+          node scripts/test-cloudflare-sync-dev-deploy.mjs
+          node scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node scripts/test-promote-cloudflare-sync-dev-trigger.mjs
+          node scripts/test-cloudflare-sync-dev-smoke.mjs
+          node scripts/test-phase-e-runtime-integration.mjs
