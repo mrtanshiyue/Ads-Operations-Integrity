@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -5,6 +6,13 @@ const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
 const DEFAULT_ATTEMPTS = 24;
 const DEFAULT_DELAY_MS = 5_000;
 const DEFAULT_TIMEOUT_MS = 3_000;
+
+export const DEPLOYMENT_EQUIVALENCE_PATHS = Object.freeze([
+  'cloudflare/runtime',
+  'cloudflare/foundation/migrations',
+  'scripts/deploy-cloudflare-sync-dev.mjs',
+  'package.json',
+]);
 
 export class CloudflareSyncDevSmokeError extends Error {
   constructor(code, options = {}) {
@@ -21,6 +29,9 @@ export function validateCloudflareSyncDevHealth(payload, expectedCommit) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_HEALTH_BODY_INVALID');
   }
+
+  // Safety conditions are validated before deployment equivalence. A stale-but-equivalent
+  // deployment is never allowed to hide an enabled Amazon execution switch or missing binding.
   if (payload.amazonAdsEnabled !== false) {
     throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_KILL_SWITCH_NOT_DISABLED', { retryable:false });
   }
@@ -30,16 +41,6 @@ export function validateCloudflareSyncDevHealth(payload, expectedCommit) {
   }
   if (payload.environment !== 'development') {
     throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_ENVIRONMENT_MISMATCH');
-  }
-
-  const version = payload.runtimeVersion;
-  if (!version || typeof version !== 'object' || Array.isArray(version)) {
-    throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_RUNTIME_VERSION_MISSING');
-  }
-  const versionId = requiredText(version.id, 'CF_SYNC_DEV_RUNTIME_VERSION_ID_MISSING');
-  const versionTag = requiredText(version.tag, 'CF_SYNC_DEV_RUNTIME_VERSION_TAG_MISSING').toLowerCase();
-  if (versionTag !== expected) {
-    throw new CloudflareSyncDevSmokeError(`CF_SYNC_DEV_RUNTIME_TAG_MISMATCH:${versionTag}:${expected}`);
   }
 
   const dependencies = payload.dependencies;
@@ -53,15 +54,57 @@ export function validateCloudflareSyncDevHealth(payload, expectedCommit) {
     throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_STORE_DB_MISSING');
   }
 
+  const version = payload.runtimeVersion;
+  if (!version || typeof version !== 'object' || Array.isArray(version)) {
+    throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_RUNTIME_VERSION_MISSING');
+  }
+  const versionId = requiredText(version.id, 'CF_SYNC_DEV_RUNTIME_VERSION_ID_MISSING');
+  const versionTag = requiredCommitShaWithCode(version.tag, 'CF_SYNC_DEV_RUNTIME_VERSION_TAG_INVALID');
+
   return Object.freeze({
     ok:true,
     expectedCommit:expected,
     runtimeVersionId:versionId,
     runtimeVersionTag:versionTag,
     runtimeVersionTimestamp:version.timestamp == null ? null : String(version.timestamp),
+    deploymentExact:versionTag === expected,
     amazonAdsEnabled:false,
     storeDatabases:dependencies.storeDatabases,
   });
+}
+
+// A CI/test-only commit may intentionally not produce a new Worker version. In that case the
+// active tagged commit is acceptable only when it is an ancestor of HEAD and the entire
+// deployment-relevant payload is byte-identical across the two commits.
+export function isGitDeploymentEquivalent(options = {}) {
+  const deployedCommit = requiredCommitShaWithCode(
+    options.deployedCommit,
+    'CF_SYNC_DEV_DEPLOYED_SHA_INVALID',
+  );
+  const expectedCommit = requiredCommitSha(options.expectedCommit);
+  if (deployedCommit === expectedCommit) return true;
+
+  const spawn = options.spawn ?? spawnSync;
+  const cwd = options.cwd ?? process.cwd();
+  if (typeof spawn !== 'function') {
+    throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_GIT_SPAWN_INVALID', { retryable:false });
+  }
+
+  const ancestor = runGitCheck(
+    spawn,
+    ['merge-base', '--is-ancestor', deployedCommit, expectedCommit],
+    cwd,
+    'CF_SYNC_DEV_GIT_ANCESTRY_CHECK_FAILED',
+  );
+  if (ancestor === 1) return false;
+
+  const diff = runGitCheck(
+    spawn,
+    ['diff', '--quiet', deployedCommit, expectedCommit, '--', ...DEPLOYMENT_EQUIVALENCE_PATHS],
+    cwd,
+    'CF_SYNC_DEV_GIT_DEPLOYMENT_DIFF_FAILED',
+  );
+  return diff === 0;
 }
 
 export async function fetchCloudflareSyncDevHealth(options = {}) {
@@ -106,7 +149,30 @@ export async function fetchCloudflareSyncDevHealth(options = {}) {
   } catch (error) {
     throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_HEALTH_JSON_INVALID', { cause:error });
   }
-  return validateCloudflareSyncDevHealth(payload, expectedCommit);
+
+  const health = validateCloudflareSyncDevHealth(payload, expectedCommit);
+  if (health.deploymentExact) {
+    return Object.freeze({ ...health, deploymentEquivalent:true });
+  }
+
+  const equivalent = typeof options.deploymentEquivalent === 'function'
+    ? await options.deploymentEquivalent({
+      deployedCommit:health.runtimeVersionTag,
+      expectedCommit,
+    })
+    : isGitDeploymentEquivalent({
+      deployedCommit:health.runtimeVersionTag,
+      expectedCommit,
+      cwd:options.cwd,
+      spawn:options.spawn,
+    });
+
+  if (!equivalent) {
+    throw new CloudflareSyncDevSmokeError(
+      `CF_SYNC_DEV_RUNTIME_TAG_NOT_EQUIVALENT:${health.runtimeVersionTag}:${expectedCommit}`,
+    );
+  }
+  return Object.freeze({ ...health, deploymentEquivalent:true });
 }
 
 export async function waitForCloudflareSyncDevHealth(options = {}) {
@@ -124,11 +190,28 @@ export async function waitForCloudflareSyncDevHealth(options = {}) {
       if (!(error instanceof CloudflareSyncDevSmokeError) || error.retryable === false || attempt === attempts) {
         throw error;
       }
-      console.log(`[sync-dev-smoke] attempt ${attempt}/${attempts} waiting for exact deployment: ${error.code}`);
+      console.log(`[sync-dev-smoke] attempt ${attempt}/${attempts} waiting for acceptable deployment: ${error.code}`);
       await sleep(delayMs);
     }
   }
   throw lastError || new CloudflareSyncDevSmokeError('CF_SYNC_DEV_SMOKE_EXHAUSTED');
+}
+
+function runGitCheck(spawn, args, cwd, code) {
+  const result = spawn('git', args, {
+    cwd,
+    encoding:'utf8',
+    stdio:'pipe',
+    shell:false,
+  });
+  if (result?.error) {
+    throw new CloudflareSyncDevSmokeError(code, { retryable:false, cause:result.error });
+  }
+  const status = Number(result?.status);
+  if (status === 0 || status === 1) return status;
+  throw new CloudflareSyncDevSmokeError(`${code}:${Number.isFinite(status) ? status : 'UNKNOWN'}`, {
+    retryable:false,
+  });
 }
 
 function requiredHealthUrl(value) {
@@ -145,9 +228,13 @@ function requiredHealthUrl(value) {
 }
 
 function requiredCommitSha(value) {
+  return requiredCommitShaWithCode(value, 'CF_SYNC_DEV_EXPECTED_SHA_INVALID');
+}
+
+function requiredCommitShaWithCode(value, code) {
   const sha = String(value ?? '').trim().toLowerCase();
   if (!GIT_SHA_PATTERN.test(sha)) {
-    throw new CloudflareSyncDevSmokeError('CF_SYNC_DEV_EXPECTED_SHA_INVALID', { retryable:false });
+    throw new CloudflareSyncDevSmokeError(code, { retryable:false });
   }
   return sha;
 }

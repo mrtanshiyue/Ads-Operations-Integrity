@@ -99,13 +99,15 @@ jobs:
       SYNC_DEV_SMOKE_DELAY_MS: '5000'
       SYNC_DEV_SMOKE_TIMEOUT_MS: '3000'
     steps:
-      - name: Checkout
+      - name: Checkout deployment history
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Verify exact Dev deployment is disabled and bound
+      - name: Verify disabled Dev deployment safety and payload equivalence
         run: node scripts/smoke-cloudflare-sync-dev.mjs
