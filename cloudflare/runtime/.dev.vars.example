@@ -1,0 +1,16 @@
+# Runtime values for local development only.
+# Copy to .dev.vars and never commit the real file.
+TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+ACCESS_AUD=replace-with-access-application-audience
+ACCESS_MODE=observe
+APP_ENV=development
+
+# Sync Worker only. Keep AMAZON_ADS_ENABLED=false until disabled smoke validation passes.
+AMAZON_ADS_ENABLED=false
+AMAZON_ADS_CLIENT_ID=replace-with-amazon-ads-client-id
+AMAZON_ADS_CLIENT_SECRET=replace-with-amazon-ads-client-secret
+AMAZON_ADS_REFRESH_TOKEN=replace-with-amazon-ads-refresh-token
+# Optional report safety policy overrides.
+# AMAZON_ADS_MAX_COMPRESSED_REPORT_BYTES=8388608
+# AMAZON_ADS_MAX_DECOMPRESSED_REPORT_BYTES=33554432
+# AMAZON_ADS_REPORT_POLL_INTERVAL_MS=30000

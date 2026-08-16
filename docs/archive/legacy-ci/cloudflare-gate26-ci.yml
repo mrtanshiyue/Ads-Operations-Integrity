@@ -1,0 +1,67 @@
+name: Cloudflare Gate 26 Contract CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/runtime/source-object-version.js'
+      - 'cloudflare/runtime/store-daily-source-object-version-api.js'
+      - 'cloudflare/runtime/store-daily-source-object-upload-timestamp-api.js'
+      - 'cloudflare/runtime/web-entry.js'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
+      - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
+      - 'scripts/test-r2-raw-object-writer.mjs'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+      - '.github/workflows/cloudflare-gate26-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/runtime/source-object-version.js'
+      - 'cloudflare/runtime/store-daily-source-object-version-api.js'
+      - 'cloudflare/runtime/store-daily-source-object-upload-timestamp-api.js'
+      - 'cloudflare/runtime/web-entry.js'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
+      - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
+      - 'scripts/test-r2-raw-object-writer.mjs'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+      - '.github/workflows/cloudflare-gate26-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-gate26-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate26-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Static syntax checks
+        run: |
+          node --check cloudflare/runtime/source-object-version.js
+          node --check cloudflare/runtime/store-daily-source-object-version-api.js
+          node --check cloudflare/runtime/web-entry.js
+          node --check scripts/test-search-term-r2-object-version-contract.mjs
+
+      - name: Gate 24 regression
+        run: node scripts/test-search-term-r2-object-byte-size-contract.mjs
+
+      - name: Gate 25 regression
+        run: node scripts/test-search-term-r2-object-upload-timestamp-contract.mjs
+
+      - name: Gate 26 deterministic contract tests
+        run: node scripts/test-search-term-r2-object-version-contract.mjs

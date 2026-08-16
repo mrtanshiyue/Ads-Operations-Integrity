@@ -1,0 +1,167 @@
+name: Cloudflare Amazon Report Transport CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'package.json'
+      - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-credential-smoke.js'
+      - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
+      - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
+      - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
+      - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
+      - 'cloudflare/runtime/sync-worker.js'
+      - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'cloudflare/runtime/.dev.vars.example'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs'
+      - 'scripts/test-amazon-ads-credential-smoke.mjs'
+      - 'scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
+      - 'scripts/test-amazon-ads-credential-provider.mjs'
+      - 'scripts/test-amazon-ads-report-transport.mjs'
+      - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
+      - 'scripts/test-amazon-ads-sync-runtime.mjs'
+      - 'scripts/test-phase-e-runtime-integration.mjs'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'cloudflare/runtime/amazon-ads-credential-provider.js'
+      - 'cloudflare/runtime/amazon-ads-credential-smoke.js'
+      - 'cloudflare/runtime/amazon-ads-report-transport.js'
+      - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
+      - 'cloudflare/runtime/amazon-ads-sync-runtime.js'
+      - 'cloudflare/runtime/sync-report-cycle-acquisition-transports.js'
+      - 'cloudflare/runtime/sync-report-cycle-cloudflare-runtime.js'
+      - 'cloudflare/runtime/sync-worker.js'
+      - 'cloudflare/runtime/wrangler.sync.jsonc'
+      - 'cloudflare/runtime/.dev.vars.example'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs'
+      - 'scripts/test-amazon-ads-credential-smoke.mjs'
+      - 'scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
+      - 'scripts/test-amazon-ads-credential-provider.mjs'
+      - 'scripts/test-amazon-ads-report-transport.mjs'
+      - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
+      - 'scripts/test-amazon-ads-sync-runtime.mjs'
+      - 'scripts/test-phase-e-runtime-integration.mjs'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cloudflare-amazon-report-transport-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate Amazon Ads transport and sync composition
+        run: |
+          node --check cloudflare/runtime/amazon-ads-credential-provider.js
+          node --check cloudflare/runtime/amazon-ads-credential-smoke.js
+          node --check cloudflare/runtime/amazon-ads-report-transport.js
+          node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
+          node --check cloudflare/runtime/amazon-ads-sync-runtime.js
+          node --check cloudflare/runtime/sync-worker.js
+          node --check scripts/deploy-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-deploy.mjs
+          node --check scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/smoke-cloudflare-amazon-ads-credentials-dev.mjs
+          node --check scripts/test-amazon-ads-credential-smoke.mjs
+          node --check scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
+          node --check scripts/promote-cloudflare-sync-dev-trigger.mjs
+          node --check scripts/test-promote-cloudflare-sync-dev-trigger.mjs
+          node --check scripts/smoke-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-smoke.mjs
+          node scripts/test-amazon-ads-credential-provider.mjs
+          node scripts/test-amazon-ads-credential-smoke.mjs
+          node scripts/test-cloudflare-amazon-ads-credentials-dev-smoke.mjs
+          node scripts/test-amazon-ads-report-transport.mjs
+          node scripts/test-amazon-ads-bootstrap-transport.mjs
+          node scripts/test-amazon-ads-sync-runtime.mjs
+          node scripts/test-cloudflare-sync-dev-deploy.mjs
+          node scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node scripts/test-promote-cloudflare-sync-dev-trigger.mjs
+          node scripts/test-cloudflare-sync-dev-smoke.mjs
+          node scripts/test-phase-e-runtime-integration.mjs
+
+  promote-dev-trigger:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      CF_SYNC_DEV_PROMOTION_ATTEMPTS: '60'
+      CF_SYNC_DEV_PROMOTION_DELAY_MS: '5000'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Promote exact SHA after Foundation succeeds
+        run: node scripts/promote-cloudflare-sync-dev-trigger.mjs
+
+  disabled-dev-smoke:
+    if: github.event_name == 'push'
+    needs: promote-dev-trigger
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SYNC_DEV_HEALTH_URL: https://ads-operations-sync-dev.tanshiyuesir.workers.dev/health
+      EXPECTED_GIT_SHA: ${{ github.sha }}
+      SYNC_DEV_SMOKE_ATTEMPTS: '24'
+      SYNC_DEV_SMOKE_DELAY_MS: '5000'
+      SYNC_DEV_SMOKE_TIMEOUT_MS: '3000'
+      CF_SYNC_DEV_REQUIRE_EXACT: 'true'
+    steps:
+      - name: Checkout deployment history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact disabled Dev deployment
+        run: node scripts/smoke-cloudflare-sync-dev.mjs

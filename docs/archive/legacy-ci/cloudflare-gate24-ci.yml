@@ -1,0 +1,51 @@
+name: Cloudflare Gate 24 Contract CI
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/runtime/source-object-byte-size.js'
+      - 'cloudflare/runtime/store-daily-source-object-byte-size-api.js'
+      - 'cloudflare/runtime/store-daily-source-object-operational-metadata-api.js'
+      - 'cloudflare/runtime/web-entry.js'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/runtime/source-object-byte-size.js'
+      - 'cloudflare/runtime/store-daily-source-object-byte-size-api.js'
+      - 'cloudflare/runtime/store-daily-source-object-operational-metadata-api.js'
+      - 'cloudflare/runtime/web-entry.js'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-gate24-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate24-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Static syntax checks
+        run: |
+          node --check cloudflare/runtime/source-object-byte-size.js
+          node --check cloudflare/runtime/store-daily-source-object-byte-size-api.js
+          node --check cloudflare/runtime/web-entry.js
+          node --check scripts/test-search-term-r2-object-byte-size-contract.mjs
+
+      - name: Gate 24 deterministic contract tests
+        run: node scripts/test-search-term-r2-object-byte-size-contract.mjs

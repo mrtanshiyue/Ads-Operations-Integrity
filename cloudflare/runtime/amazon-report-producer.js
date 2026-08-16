@@ -1,0 +1,451 @@
+import { canonicalJson } from './canonical-json.js';
+import {
+  resolveReportContract,
+  planReportChunks,
+  buildAmazonReportRequest,
+  computeRequestFingerprint,
+  computeReportAcquisitionIdentity,
+} from './amazon-report-contract.js';
+import { amazonCreateDecision } from './amazon-producer-state.js';
+
+export class ReportProducerError extends Error {
+  constructor(code, cause = null) {
+    super(code);
+    this.name = 'ReportProducerError';
+    this.code = code;
+    this.cause = cause;
+  }
+}
+
+export async function planReportJobs({ workflowInstanceId, intent, profile }) {
+  const instanceId = requiredText(workflowInstanceId, 'WORKFLOW_INSTANCE_ID_REQUIRED');
+  const storeId = requiredText(intent?.storeId, 'STORE_ID_REQUIRED');
+  const profileId = requiredText(profile?.profileId, 'PROFILE_ID_REQUIRED');
+  const accountType = requiredText(profile?.accountType, 'PROFILE_ACCOUNT_TYPE_REQUIRED').toLowerCase();
+  const datasets = Array.isArray(intent?.datasets) ? intent.datasets : [];
+  if (!datasets.length) throw new ReportProducerError('SYNC_DATASETS_REQUIRED');
+
+  const jobs = [];
+  for (const datasetKey of datasets) {
+    const contract = resolveReportContract(datasetKey, accountType);
+    const chunks = planReportChunks(intent.startDate, intent.endDate, contract.maxPeriodDays);
+    for (const chunk of chunks) {
+      const request = buildAmazonReportRequest(contract, chunk);
+      const requestFingerprint = await computeRequestFingerprint({ contract, storeId, profileId, chunk });
+      const acquisition = await computeReportAcquisitionIdentity({
+        workflowInstanceId: instanceId,
+        requestFingerprint,
+      });
+      jobs.push(Object.freeze({
+        jobId: acquisition.jobId,
+        runId: instanceId,
+        datasetKey,
+        profileId,
+        adProduct: contract.adProduct,
+        reportType: contract.reportTypeId,
+        startDate: chunk.startDate,
+        endDate: chunk.endDate,
+        status: 'queued',
+        idempotencyKey: acquisition.idempotencyKey,
+        requestFingerprint,
+        requestJson: canonicalJson(request),
+        contractId: contract.contractId,
+      }));
+    }
+  }
+  return Object.freeze(jobs);
+}
+
+export async function computeReportPlanReceipt(plans) {
+  const identities = reportPlanIdentities(plans);
+  const fingerprint = await sha256Hex(canonicalJson({
+    schemaVersion: 'amazon-report-plan-v1',
+    jobs: identities,
+  }));
+  return Object.freeze({ fingerprint, jobCount: identities.length });
+}
+
+export function buildReportPlanMembershipRows(plans, fingerprint) {
+  if (!/^[0-9a-f]{64}$/.test(String(fingerprint || ''))) {
+    throw new ReportProducerError('REPORT_PLAN_FINGERPRINT_INVALID');
+  }
+  return Object.freeze(reportPlanIdentities(plans).map((identity) => Object.freeze({
+    ...identity,
+    reportPlanFingerprint: fingerprint,
+  })));
+}
+
+export function assertRunReportPlanReceipt(row, expected) {
+  if (!row) throw new ReportProducerError('REPORT_PLAN_RECEIPT_MISSING');
+  if (row.run_id !== expected.runId) throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:run_id');
+  if (row.profile_id !== expected.profileId) throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:profile_id');
+  if (row.status !== 'running') throw new ReportProducerError('REPORT_PLAN_RECEIPT_RUN_NOT_RUNNING');
+  if (!/^[0-9a-f]{64}$/.test(String(row.report_plan_fingerprint || ''))) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_FINGERPRINT_INVALID');
+  }
+  if (!Number.isSafeInteger(row.report_plan_job_count) || row.report_plan_job_count < 1) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_JOB_COUNT_INVALID');
+  }
+  if (row.report_plan_fingerprint !== expected.fingerprint) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:fingerprint');
+  }
+  if (row.report_plan_job_count !== expected.jobCount) {
+    throw new ReportProducerError('REPORT_PLAN_RECEIPT_CONFLICT:job_count');
+  }
+  return true;
+}
+
+export function assertCompatibleReportPlanMembershipSubset(rows, plans, fingerprint) {
+  if (!Array.isArray(rows)) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_SET_INVALID');
+  const expected = buildReportPlanMembershipRows(plans, fingerprint);
+  if (rows.length > expected.length) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:count');
+  const byJobId = new Map(expected.map((item) => [item.jobId, item]));
+  const seen = new Set();
+  for (const row of rows) {
+    const jobId = String(row?.job_id || '');
+    const plan = byJobId.get(jobId);
+    if (!plan) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:extra_job');
+    if (seen.has(jobId)) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:duplicate_job');
+    seen.add(jobId);
+    assertReportPlanMembershipRow(row, plan);
+  }
+  return true;
+}
+
+export function assertExactReportPlanMembership(rows, plans, fingerprint) {
+  assertCompatibleReportPlanMembershipSubset(rows, plans, fingerprint);
+  if (rows.length !== plans.length) throw new ReportProducerError('REPORT_PLAN_MEMBERSHIP_CONFLICT:count');
+  return true;
+}
+
+export function assertCompatibleReportJobSubset(rows, plans) {
+  if (!Array.isArray(rows)) throw new ReportProducerError('REPORT_PLAN_JOB_SET_INVALID');
+  if (!Array.isArray(plans) || plans.length < 1) throw new ReportProducerError('REPORT_PLAN_EMPTY');
+  if (rows.length > plans.length) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:count');
+  const planByKey = new Map(plans.map((plan) => [plan.idempotencyKey, plan]));
+  const seen = new Set();
+  for (const row of rows) {
+    const key = String(row?.idempotency_key || '');
+    const plan = planByKey.get(key);
+    if (!plan) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:extra_job');
+    if (seen.has(key)) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:duplicate_job');
+    seen.add(key);
+    assertReservedReportJob(row, plan);
+  }
+  return true;
+}
+
+export function assertExactReportJobSet(rows, plans) {
+  assertCompatibleReportJobSubset(rows, plans);
+  if (rows.length !== plans.length) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:count');
+  const rowByKey = new Map(rows.map((row) => [row.idempotency_key, row]));
+  const ordered = [];
+  for (const plan of plans) {
+    const row = rowByKey.get(plan.idempotencyKey);
+    if (!row) throw new ReportProducerError('REPORT_PLAN_JOB_SET_CONFLICT:missing_job');
+    ordered.push(row);
+  }
+  return Object.freeze(ordered);
+}
+
+export async function reserveReportJob(repository, plan) {
+  await repository.insertQueued(plan);
+  const row = await repository.loadByIdempotencyKey(plan.idempotencyKey);
+  assertReservedReportJob(row, plan);
+  return row;
+}
+
+export function assertReservedReportJob(row, plan) {
+  if (!row) throw new ReportProducerError('REPORT_JOB_RESERVATION_RECEIPT_MISSING');
+  const fields = [
+    ['job_id', 'jobId'],
+    ['run_id', 'runId'],
+    ['profile_id', 'profileId'],
+    ['ad_product', 'adProduct'],
+    ['report_type', 'reportType'],
+    ['start_date', 'startDate'],
+    ['end_date', 'endDate'],
+    ['idempotency_key', 'idempotencyKey'],
+    ['request_fingerprint', 'requestFingerprint'],
+    ['request_json', 'requestJson'],
+  ];
+  for (const [dbField, planField] of fields) {
+    if (row[dbField] !== plan[planField]) {
+      throw new ReportProducerError(`REPORT_JOB_RESERVATION_CONFLICT:${dbField}`);
+    }
+  }
+  return true;
+}
+
+// Call this function inside one Workflow step.do callback. It deliberately never retries createReport.
+export async function createAmazonReportOnce({ repository, jobId, createReport }) {
+  let job = await repository.loadByJobId(jobId);
+  const initialDecision = amazonCreateDecision(job);
+  if (initialDecision === 'REUSE_AMAZON_REPORT' || initialDecision === 'TERMINAL') return job;
+  if (initialDecision !== 'ARM_AND_CREATE_ONCE') throw new ReportProducerError('AMAZON_REPORT_CREATE_DECISION_INVALID');
+
+  const armedByThisCallback = await repository.armCreate(jobId);
+  job = await repository.loadByJobId(jobId);
+  if (!armedByThisCallback) return resolveLostCreateArmRace(job);
+  if (job?.status !== 'requested' || job?.amazon_report_id != null) {
+    throw new ReportProducerError('AMAZON_REPORT_CREATE_ARM_RECEIPT_INVALID');
+  }
+
+  let response;
+  try {
+    response = await createReport(JSON.parse(job.request_json));
+  } catch (error) {
+    throw new ReportProducerError('AMAZON_REPORT_CREATE_OUTCOME_UNKNOWN', error);
+  }
+
+  const amazonReportId = requiredText(response?.reportId, 'AMAZON_REPORT_ID_INVALID');
+  const amazonCreatedAt = requiredText(response?.createdAt, 'AMAZON_REPORT_CREATED_AT_REQUIRED');
+  await repository.persistAmazonReportReceipt(jobId, amazonReportId, amazonCreatedAt);
+  job = await repository.loadByJobId(jobId);
+  if (job?.status !== 'processing' || job?.amazon_report_id !== amazonReportId || job?.amazon_created_at !== amazonCreatedAt) {
+    throw new ReportProducerError('AMAZON_REPORT_CREATE_RECEIPT_PERSIST_FAILED');
+  }
+  return job;
+}
+
+function resolveLostCreateArmRace(job) {
+  const decision = amazonCreateDecision(job);
+  if (decision === 'REUSE_AMAZON_REPORT' || decision === 'TERMINAL') return job;
+  throw new ReportProducerError('AMAZON_REPORT_CREATE_ARM_NOT_OWNED');
+}
+
+export function createD1ReportJobRepository(db) {
+  return {
+    async loadRunPlanReceipt(runId) {
+      return db.prepare(`
+        SELECT run_id, profile_id, status, report_plan_fingerprint, report_plan_job_count
+        FROM sync_runs
+        WHERE run_id = ?1
+        LIMIT 1
+      `).bind(runId).first();
+    },
+
+    async listRunPlanMembership(runId) {
+      const result = await db.prepare(`
+        SELECT run_id, job_id, profile_id, report_plan_fingerprint, dataset_key, contract_id,
+               ad_product, report_type, start_date, end_date, idempotency_key,
+               request_fingerprint, request_json
+        FROM sync_report_plan_jobs
+        WHERE run_id = ?1
+        ORDER BY job_id
+      `).bind(runId).all();
+      return result.results || [];
+    },
+
+    async persistRunPlanReceipt(runId, profileId, planReceipt, plans) {
+      const current = await db.prepare(`
+        SELECT report_plan_fingerprint, report_plan_job_count
+        FROM sync_runs WHERE run_id = ?1 LIMIT 1
+      `).bind(runId).first();
+      if (current?.report_plan_fingerprint != null || current?.report_plan_job_count != null) return false;
+
+      const membership = buildReportPlanMembershipRows(plans, planReceipt.fingerprint);
+      const statements = membership.map((item) => db.prepare(`
+        INSERT OR IGNORE INTO sync_report_plan_jobs(
+          run_id, job_id, profile_id, report_plan_fingerprint, dataset_key, contract_id,
+          ad_product, report_type, start_date, end_date, idempotency_key,
+          request_fingerprint, request_json
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+      `).bind(
+        item.runId, item.jobId, item.profileId, item.reportPlanFingerprint,
+        item.datasetKey, item.contractId, item.adProduct, item.reportType,
+        item.startDate, item.endDate, item.idempotencyKey,
+        item.requestFingerprint, item.requestJson,
+      ));
+      statements.push(db.prepare(`
+        UPDATE sync_runs
+        SET report_plan_fingerprint = ?3,
+            report_plan_job_count = ?4
+        WHERE run_id = ?1
+          AND profile_id = ?2
+          AND status = 'running'
+          AND report_plan_fingerprint IS NULL
+          AND report_plan_job_count IS NULL
+      `).bind(runId, profileId, planReceipt.fingerprint, planReceipt.jobCount));
+
+      try {
+        await db.batch(statements);
+        return true;
+      } catch (error) {
+        const raced = await db.prepare(`
+          SELECT report_plan_fingerprint, report_plan_job_count
+          FROM sync_runs WHERE run_id = ?1 LIMIT 1
+        `).bind(runId).first();
+        if (raced?.report_plan_fingerprint != null || raced?.report_plan_job_count != null) return false;
+        throw error;
+      }
+    },
+
+    async listByRunId(runId) {
+      const result = await db.prepare(`${REPORT_JOB_SELECT} WHERE run_id = ?1 ORDER BY job_id`).bind(runId).all();
+      return result.results || [];
+    },
+
+    async insertQueued(plan) {
+      await db.prepare(`
+        INSERT INTO report_jobs(
+          job_id, run_id, profile_id, ad_product, report_type, start_date, end_date,
+          status, idempotency_key, request_fingerprint, request_json, created_at, updated_at
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, 'queued', ?8, ?9, ?10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(idempotency_key) DO NOTHING
+      `).bind(
+        plan.jobId, plan.runId, plan.profileId, plan.adProduct, plan.reportType,
+        plan.startDate, plan.endDate, plan.idempotencyKey, plan.requestFingerprint, plan.requestJson,
+      ).run();
+    },
+
+    async loadByIdempotencyKey(idempotencyKey) {
+      return db.prepare(`${REPORT_JOB_SELECT} WHERE idempotency_key = ?1 LIMIT 1`).bind(idempotencyKey).first();
+    },
+
+    async loadByJobId(jobId) {
+      return db.prepare(`${REPORT_JOB_SELECT} WHERE job_id = ?1 LIMIT 1`).bind(jobId).first();
+    },
+
+    async armCreate(jobId) {
+      const result = await db.prepare(`
+        UPDATE report_jobs
+        SET status = 'requested', updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1 AND status = 'queued' AND amazon_report_id IS NULL
+      `).bind(jobId).run();
+      return Number(result?.meta?.changes || 0) === 1;
+    },
+
+    async persistAmazonReportReceipt(jobId, amazonReportId, amazonCreatedAt) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET amazon_report_id = ?2,
+            amazon_created_at = ?3,
+            status = 'processing',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1 AND status = 'requested' AND amazon_report_id IS NULL
+      `).bind(jobId, amazonReportId, amazonCreatedAt).run();
+    },
+
+    async markReady(jobId) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET status = 'ready', updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1 AND status = 'processing' AND amazon_report_id IS NOT NULL
+      `).bind(jobId).run();
+      return this.loadByJobId(jobId);
+    },
+
+    async markFailed(jobId, errorCode, errorMessage = null) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET status = 'failed', error_code = ?2, error_message = ?3, updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1 AND status = 'processing' AND amazon_report_id IS NOT NULL
+      `).bind(jobId, errorCode, errorMessage).run();
+      return this.loadByJobId(jobId);
+    },
+
+    async persistRawExpectedAuthority(jobId, { r2ObjectKey, contentSha256, contentBytes }) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET r2_object_key = ?2, content_sha256 = ?3, content_bytes = ?4, updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1
+          AND status = 'ready'
+          AND (r2_object_key IS NULL OR r2_object_key = ?2)
+          AND (content_sha256 IS NULL OR content_sha256 = ?3)
+          AND (content_bytes IS NULL OR content_bytes = ?4)
+      `).bind(jobId, r2ObjectKey, contentSha256, contentBytes).run();
+      return this.loadByJobId(jobId);
+    },
+
+    async persistInitialR2Receipt(jobId, { r2InitialVersion, r2InitialEtag, downloadedAt }) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET r2_initial_version = ?2, r2_initial_etag = ?3, downloaded_at = ?4,
+            status = 'downloaded', updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1
+          AND status = 'ready'
+          AND r2_object_key IS NOT NULL
+          AND content_sha256 IS NOT NULL
+          AND content_bytes IS NOT NULL
+      `).bind(jobId, r2InitialVersion, r2InitialEtag, downloadedAt).run();
+      return this.loadByJobId(jobId);
+    },
+
+    async persistRawRowCount(jobId, rawRowCount) {
+      await db.prepare(`
+        UPDATE report_jobs
+        SET raw_row_count = ?2, updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = ?1
+          AND status = 'downloaded'
+          AND (raw_row_count IS NULL OR raw_row_count = ?2)
+      `).bind(jobId, rawRowCount).run();
+      return this.loadByJobId(jobId);
+    },
+  };
+}
+
+const REPORT_JOB_SELECT = `
+  SELECT job_id, run_id, profile_id, amazon_report_id, ad_product, report_type,
+         start_date, end_date, status, idempotency_key, request_fingerprint, request_json,
+         r2_object_key, content_sha256, content_bytes, r2_initial_version, r2_initial_etag,
+         raw_row_count, row_count, amazon_created_at, downloaded_at, ingested_at,
+         error_code, error_message, created_at, updated_at
+  FROM report_jobs
+`;
+
+function reportPlanIdentities(plans) {
+  if (!Array.isArray(plans) || plans.length < 1) throw new ReportProducerError('REPORT_PLAN_EMPTY');
+  const identities = plans.map(reportPlanIdentity).sort((left, right) => left.jobId.localeCompare(right.jobId));
+  if (new Set(identities.map((item) => item.jobId)).size !== identities.length) {
+    throw new ReportProducerError('REPORT_PLAN_DUPLICATE_JOB_ID');
+  }
+  if (new Set(identities.map((item) => item.idempotencyKey)).size !== identities.length) {
+    throw new ReportProducerError('REPORT_PLAN_DUPLICATE_IDEMPOTENCY_KEY');
+  }
+  return identities;
+}
+
+function reportPlanIdentity(plan) {
+  return Object.freeze({
+    jobId: requiredText(plan?.jobId, 'REPORT_PLAN_JOB_ID_REQUIRED'),
+    runId: requiredText(plan?.runId, 'REPORT_PLAN_RUN_ID_REQUIRED'),
+    datasetKey: requiredText(plan?.datasetKey, 'REPORT_PLAN_DATASET_REQUIRED'),
+    profileId: requiredText(plan?.profileId, 'REPORT_PLAN_PROFILE_ID_REQUIRED'),
+    adProduct: requiredText(plan?.adProduct, 'REPORT_PLAN_AD_PRODUCT_REQUIRED'),
+    reportType: requiredText(plan?.reportType, 'REPORT_PLAN_REPORT_TYPE_REQUIRED'),
+    startDate: requiredText(plan?.startDate, 'REPORT_PLAN_START_DATE_REQUIRED'),
+    endDate: requiredText(plan?.endDate, 'REPORT_PLAN_END_DATE_REQUIRED'),
+    idempotencyKey: requiredText(plan?.idempotencyKey, 'REPORT_PLAN_IDEMPOTENCY_KEY_REQUIRED'),
+    requestFingerprint: requiredText(plan?.requestFingerprint, 'REPORT_PLAN_REQUEST_FINGERPRINT_REQUIRED'),
+    requestJson: requiredText(plan?.requestJson, 'REPORT_PLAN_REQUEST_JSON_REQUIRED'),
+    contractId: requiredText(plan?.contractId, 'REPORT_PLAN_CONTRACT_ID_REQUIRED'),
+  });
+}
+
+function assertReportPlanMembershipRow(row, plan) {
+  const fields = [
+    ['run_id','runId'], ['job_id','jobId'], ['profile_id','profileId'],
+    ['report_plan_fingerprint','reportPlanFingerprint'], ['dataset_key','datasetKey'],
+    ['contract_id','contractId'], ['ad_product','adProduct'], ['report_type','reportType'],
+    ['start_date','startDate'], ['end_date','endDate'], ['idempotency_key','idempotencyKey'],
+    ['request_fingerprint','requestFingerprint'], ['request_json','requestJson'],
+  ];
+  for (const [dbField, planField] of fields) {
+    if (row?.[dbField] !== plan[planField]) {
+      throw new ReportProducerError(`REPORT_PLAN_MEMBERSHIP_CONFLICT:${dbField}`);
+    }
+  }
+  return true;
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function requiredText(value, code) {
+  const text = String(value ?? '').trim();
+  if (!text) throw new ReportProducerError(code);
+  return text;
+}

@@ -1,0 +1,309 @@
+name: Cloudflare Foundation CI
+# Keep Gate contract files listed explicitly so test-only changes trigger exact-commit CI.
+# Phase E ingestion freshness fixture is explicitly locked into exact-commit CI.
+
+on:
+  push:
+    branches:
+      - cloudflare-foundation-v1
+    paths:
+      - 'cloudflare/**'
+      - 'src/access.js'
+      - 'src/access-actor.js'
+      - 'scripts/build-cloudflare-native.mjs'
+      - 'scripts/provision-cloudflare-dev.mjs'
+      - 'scripts/bootstrap-cloudflare-dev.mjs'
+      - 'scripts/smoke-cloudflare-native.mjs'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
+      - 'scripts/cloudflare-d1-rest-adapter.mjs'
+      - 'scripts/accept-cloudflare-rollup-dev.mjs'
+      - 'scripts/test-d1-rest-adapter.mjs'
+      - 'scripts/test-access-contract.mjs'
+      - 'scripts/test-native-ui-contract.mjs'
+      - 'scripts/test-gate6-browser-acceptance.mjs'
+      - 'scripts/test-gate7-browser-acceptance.mjs'
+      - 'scripts/test-store-product-identity-contract.mjs'
+      - 'scripts/test-product-keyword-governance-contract.mjs'
+      - 'scripts/test-product-keyword-governance-write-contract.mjs'
+      - 'scripts/test-store-product-identity-write-contract.mjs'
+      - 'scripts/test-store-targeting-source-provenance-contract.mjs'
+      - 'scripts/test-current-bid-snapshot-provenance-contract.mjs'
+      - 'scripts/test-targeting-source-timestamp-provenance-contract.mjs'
+      - 'scripts/test-search-term-fact-mirror-provenance-contract.mjs'
+      - 'scripts/test-search-term-source-report-lineage-contract.mjs'
+      - 'scripts/test-search-term-amazon-report-identity-contract.mjs'
+      - 'scripts/test-search-term-r2-object-provenance-contract.mjs'
+      - 'scripts/test-search-term-source-content-sha256-provenance-contract.mjs'
+      - 'scripts/test-search-term-r2-object-head-existence-contract.mjs'
+      - 'scripts/test-search-term-r2-object-metadata-sha256-contract.mjs'
+      - 'scripts/test-search-term-r2-object-native-sha256-contract.mjs'
+      - 'scripts/test-search-term-r2-object-operational-metadata-contract.mjs'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
+      - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-search-term-r2-object-etag-contract.mjs'
+      - 'scripts/test-phase-e-contracts.mjs'
+      - 'scripts/test-phase-e-migrations.py'
+      - 'scripts/test-phase-e-report-receipt-migrations.py'
+      - 'scripts/test-phase-e-report-plan-migrations.py'
+      - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-report-plan-duplicate-guard-migrations.py'
+      - 'scripts/test-phase-e-report-fact-stage-receipt-migrations.py'
+      - 'scripts/test-phase-e-sync-completion-migrations.py'
+      - 'scripts/test-web-sync-orchestration.mjs'
+      - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-sync-producer-capability.mjs'
+      - 'scripts/test-sync-producer-bootstrap.mjs'
+      - 'scripts/test-sync-report-plan-bootstrap.mjs'
+      - 'scripts/test-sync-run-completion.mjs'
+      - 'scripts/test-sync-report-cycle.mjs'
+      - 'scripts/test-sync-report-cycle-executor.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
+      - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-runtime.mjs'
+      - 'scripts/test-r2-raw-object-reader.mjs'
+      - 'scripts/test-amazon-search-term-parser.mjs'
+      - 'scripts/test-amazon-raw-object-contract.mjs'
+      - 'scripts/test-amazon-report-acquisition.mjs'
+      - 'scripts/test-amazon-report-plan-receipt.mjs'
+      - 'scripts/test-phase-e-runtime-integration.mjs'
+      - 'scripts/test-amazon-profile-producer.mjs'
+      - 'scripts/test-amazon-report-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-repository.mjs'
+      - 'scripts/test-search-term-ingestion.mjs'
+      - 'scripts/test-search-term-ingestion-runtime.mjs'
+      - 'scripts/test-search-term-fact-publisher.mjs'
+      - 'scripts/test-amazon-entity-contract.mjs'
+      - 'scripts/test-amazon-entity-mirror-producer.mjs'
+      - 'scripts/test-phase-e-entity-migrations.py'
+      - 'scripts/test-cloudflare-foundation.py'
+      - 'scripts/test-rollup-contract.mjs'
+      - 'scripts/test-rollup-observability.mjs'
+      - 'scripts/validate-cloudflare-native.mjs'
+      - 'package.json'
+      - 'index.html'
+      - 'assets/**'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+      - '.github/workflows/cloudflare-gate25-ci.yml'
+      - '.github/workflows/cloudflare-gate26-ci.yml'
+      - '.github/workflows/cloudflare-gate27-ci.yml'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/**'
+      - 'src/access.js'
+      - 'src/access-actor.js'
+      - 'scripts/build-cloudflare-native.mjs'
+      - 'scripts/provision-cloudflare-dev.mjs'
+      - 'scripts/bootstrap-cloudflare-dev.mjs'
+      - 'scripts/smoke-cloudflare-native.mjs'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/test-promote-cloudflare-sync-dev-trigger.mjs'
+      - 'scripts/smoke-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
+      - 'scripts/cloudflare-d1-rest-adapter.mjs'
+      - 'scripts/accept-cloudflare-rollup-dev.mjs'
+      - 'scripts/test-d1-rest-adapter.mjs'
+      - 'scripts/test-access-contract.mjs'
+      - 'scripts/test-native-ui-contract.mjs'
+      - 'scripts/test-gate6-browser-acceptance.mjs'
+      - 'scripts/test-gate7-browser-acceptance.mjs'
+      - 'scripts/test-store-product-identity-contract.mjs'
+      - 'scripts/test-product-keyword-governance-contract.mjs'
+      - 'scripts/test-product-keyword-governance-write-contract.mjs'
+      - 'scripts/test-store-product-identity-write-contract.mjs'
+      - 'scripts/test-store-targeting-source-provenance-contract.mjs'
+      - 'scripts/test-current-bid-snapshot-provenance-contract.mjs'
+      - 'scripts/test-targeting-source-timestamp-provenance-contract.mjs'
+      - 'scripts/test-search-term-fact-mirror-provenance-contract.mjs'
+      - 'scripts/test-search-term-source-report-lineage-contract.mjs'
+      - 'scripts/test-search-term-amazon-report-identity-contract.mjs'
+      - 'scripts/test-search-term-r2-object-provenance-contract.mjs'
+      - 'scripts/test-search-term-source-content-sha256-provenance-contract.mjs'
+      - 'scripts/test-search-term-r2-object-head-existence-contract.mjs'
+      - 'scripts/test-search-term-r2-object-metadata-sha256-contract.mjs'
+      - 'scripts/test-search-term-r2-object-native-sha256-contract.mjs'
+      - 'scripts/test-search-term-r2-object-operational-metadata-contract.mjs'
+      - 'scripts/test-search-term-r2-object-byte-size-contract.mjs'
+      - 'scripts/test-search-term-r2-object-upload-timestamp-contract.mjs'
+      - 'scripts/test-search-term-r2-object-version-contract.mjs'
+      - 'scripts/test-search-term-r2-object-etag-contract.mjs'
+      - 'scripts/test-phase-e-contracts.mjs'
+      - 'scripts/test-phase-e-migrations.py'
+      - 'scripts/test-phase-e-report-receipt-migrations.py'
+      - 'scripts/test-phase-e-report-plan-migrations.py'
+      - 'scripts/test-phase-e-report-plan-membership-migrations.py'
+      - 'scripts/test-phase-e-report-plan-duplicate-guard-migrations.py'
+      - 'scripts/test-phase-e-report-fact-stage-receipt-migrations.py'
+      - 'scripts/test-phase-e-sync-completion-migrations.py'
+      - 'scripts/test-web-sync-orchestration.mjs'
+      - 'scripts/test-sync-workflow-orchestration.mjs'
+      - 'scripts/test-sync-producer-capability.mjs'
+      - 'scripts/test-sync-producer-bootstrap.mjs'
+      - 'scripts/test-sync-report-plan-bootstrap.mjs'
+      - 'scripts/test-sync-run-completion.mjs'
+      - 'scripts/test-sync-report-cycle.mjs'
+      - 'scripts/test-sync-report-cycle-executor.mjs'
+      - 'scripts/test-sync-report-cycle-runtime.mjs'
+      - 'scripts/test-sync-report-cycle-acquisition-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-finalize-runtime.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-freshness.mjs'
+      - 'scripts/test-sync-report-cycle-ingestion-runtime.mjs'
+      - 'scripts/test-r2-raw-object-reader.mjs'
+      - 'scripts/test-amazon-search-term-parser.mjs'
+      - 'scripts/test-amazon-raw-object-contract.mjs'
+      - 'scripts/test-amazon-report-acquisition.mjs'
+      - 'scripts/test-amazon-report-plan-receipt.mjs'
+      - 'scripts/test-phase-e-runtime-integration.mjs'
+      - 'scripts/test-amazon-profile-producer.mjs'
+      - 'scripts/test-amazon-report-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-producer.mjs'
+      - 'scripts/test-search-term-fact-stage-repository.mjs'
+      - 'scripts/test-search-term-ingestion.mjs'
+      - 'scripts/test-search-term-ingestion-runtime.mjs'
+      - 'scripts/test-search-term-fact-publisher.mjs'
+      - 'scripts/test-amazon-entity-contract.mjs'
+      - 'scripts/test-amazon-entity-mirror-producer.mjs'
+      - 'scripts/test-phase-e-entity-migrations.py'
+      - 'scripts/test-cloudflare-foundation.py'
+      - 'scripts/test-rollup-contract.mjs'
+      - 'scripts/test-rollup-observability.mjs'
+      - 'scripts/validate-cloudflare-native.mjs'
+      - 'package.json'
+      - 'index.html'
+      - 'assets/**'
+      - '.github/workflows/cloudflare-gate24-ci.yml'
+      - '.github/workflows/cloudflare-gate25-ci.yml'
+      - '.github/workflows/cloudflare-gate26-ci.yml'
+      - '.github/workflows/cloudflare-gate27-ci.yml'
+      - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
+      - '.github/workflows/cloudflare-foundation-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Phase E producer contract tests
+        run: |
+          node --check cloudflare/runtime/canonical-json.js
+          node --check cloudflare/runtime/sync-intent-contract.js
+          node --check cloudflare/runtime/sync-producer-capability.js
+          node --check cloudflare/runtime/sync-producer-bootstrap.js
+          node --check cloudflare/runtime/sync-run-completion.js
+          node --check cloudflare/runtime/sync-report-cycle.js
+          node --check cloudflare/runtime/sync-report-cycle-snapshot.js
+          node --check cloudflare/runtime/sync-report-cycle-executor.js
+          node --check cloudflare/runtime/sync-report-cycle-runtime.js
+          node --check cloudflare/runtime/sync-report-cycle-acquisition-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-finalize-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-finalize-runtime.js
+          node --check cloudflare/runtime/sync-report-cycle-ingestion-adapter.js
+          node --check cloudflare/runtime/sync-report-cycle-ingestion-runtime.js
+          node --check cloudflare/runtime/r2-raw-object-reader.js
+          node --check cloudflare/runtime/amazon-numeric.js
+          node --check cloudflare/runtime/amazon-profile-contract.js
+          node --check cloudflare/runtime/amazon-report-contract.js
+          node --check cloudflare/runtime/amazon-producer-state.js
+          node --check cloudflare/runtime/amazon-search-term-parser.js
+          node --check cloudflare/runtime/amazon-raw-object-contract.js
+          node --check cloudflare/runtime/amazon-report-acquisition.js
+          node --check cloudflare/runtime/web-sync-orchestration.js
+          node --check cloudflare/runtime/sync-workflow-orchestration.js
+          node --check cloudflare/runtime/sync-api.js
+          node --check cloudflare/runtime/amazon-profile-producer.js
+          node --check cloudflare/runtime/amazon-report-producer.js
+          node --check cloudflare/runtime/search-term-fact-stage-producer.js
+          node --check cloudflare/runtime/search-term-fact-stage-repository.js
+          node --check cloudflare/runtime/search-term-ingestion.js
+          node --check cloudflare/runtime/search-term-ingestion-runtime.js
+          node --check cloudflare/runtime/search-term-fact-publisher.js
+          node --check cloudflare/runtime/amazon-entity-contract.js
+          node --check cloudflare/runtime/amazon-entity-mirror-producer.js
+          node scripts/test-phase-e-contracts.mjs
+          node scripts/test-web-sync-orchestration.mjs
+          node scripts/test-sync-workflow-orchestration.mjs
+          node scripts/test-sync-producer-capability.mjs
+          node scripts/test-sync-producer-bootstrap.mjs
+          node scripts/test-sync-report-plan-bootstrap.mjs
+          node scripts/test-sync-run-completion.mjs
+          node scripts/test-sync-report-cycle.mjs
+          node scripts/test-sync-report-cycle-executor.mjs
+          node scripts/test-sync-report-cycle-runtime.mjs
+          node scripts/test-sync-report-cycle-acquisition-freshness.mjs
+          node scripts/test-sync-report-cycle-finalize-freshness.mjs
+          node scripts/test-sync-report-cycle-finalize-runtime.mjs
+          node scripts/test-sync-report-cycle-ingestion-freshness.mjs
+          node scripts/test-sync-report-cycle-ingestion-runtime.mjs
+          node scripts/test-r2-raw-object-reader.mjs
+          node scripts/test-amazon-search-term-parser.mjs
+          node scripts/test-amazon-raw-object-contract.mjs
+          node scripts/test-amazon-report-acquisition.mjs
+          node scripts/test-amazon-report-plan-receipt.mjs
+          node scripts/test-phase-e-runtime-integration.mjs
+          node scripts/test-amazon-profile-producer.mjs
+          node scripts/test-amazon-report-producer.mjs
+          node scripts/test-search-term-fact-stage-producer.mjs
+          node scripts/test-search-term-fact-stage-repository.mjs
+          node scripts/test-search-term-ingestion.mjs
+          node scripts/test-search-term-ingestion-runtime.mjs
+          node scripts/test-search-term-fact-publisher.mjs
+          node scripts/test-amazon-entity-contract.mjs
+          node scripts/test-amazon-entity-mirror-producer.mjs
+          python3 scripts/test-phase-e-migrations.py
+          python3 scripts/test-phase-e-report-receipt-migrations.py
+          python3 scripts/test-phase-e-report-plan-migrations.py
+          python3 scripts/test-phase-e-report-plan-membership-migrations.py
+          python3 scripts/test-phase-e-report-plan-duplicate-guard-migrations.py
+          python3 scripts/test-phase-e-report-fact-stage-receipt-migrations.py
+          python3 scripts/test-phase-e-sync-completion-migrations.py
+          python3 scripts/test-phase-e-entity-migrations.py
+
+      - name: Database foundation tests
+        run: npm run test:cf-foundation
+
+      - name: Cloudflare native checks
+        run: npm run check:cf-native
