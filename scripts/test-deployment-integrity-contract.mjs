@@ -22,6 +22,7 @@ assert.match(canonicalCi, /test-deployment-integrity-contract\.mjs/);
 // Canonical CI remains validation-only. No repository path may silently restore direct deployment.
 assert.doesNotMatch(canonicalCi, /wrangler\s+deploy/);
 assert.doesNotMatch(canonicalCi, /^\s*node scripts\/promote-cloudflare-sync-dev-trigger\.mjs\s*$/m);
+assert.doesNotMatch(canonicalCi, /^\s*node scripts\/deploy-cloudflare-sync-dev\.mjs\s*$/m);
 
 const directDeployScripts = [
   'deploy:cloudflare',
@@ -60,7 +61,6 @@ assert.match(nativeWrangler, /"version_metadata"\s*:\s*\{\s*"binding"\s*:\s*"CF_
 // Amazon stays phase-independently dormant. Sync Worker deployment is not part of Phase 2 foundation.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
-assert.doesNotMatch(canonicalCi, /deploy-cloudflare-sync-dev\.mjs/);
 
 // Production remains explicitly non-ready; Phase 2 foundation must not erase provisioning placeholders.
 assert.match(nativeWrangler, /REPLACE_PROD_CONTROL_D1_ID/);
