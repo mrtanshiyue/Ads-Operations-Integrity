@@ -4,6 +4,8 @@
 
 ## Repository status
 
+Architecture Convergence Phase 0 remains COMPLETE + MERGED. Security Integrity Phase 1 remains COMPLETE + MERGED.
+
 ```text
 Canonical main: d644ab22706d3b722ced1fc1bc92509a44600926
 Phase 2 branch: deployment-integrity-phase2
@@ -101,7 +103,7 @@ This disables versioned/aliased preview URLs while retaining the canonical `work
 
 `GET /api/health` remains in place for deployment/version acceptance. Protected `/api/*` routes remain guarded by `ACCESS_MODE=enforce` and actor validation.
 
-## Runtime and security
+## Runtime and architecture convergence markers
 
 Canonical Web runtime:
 
@@ -111,7 +113,25 @@ cloudflare/runtime/wrangler.native.jsonc
 → cloudflare/runtime/web-worker.js + modular APIs
 ```
 
-Runtime version evidence:
+Canonical browser data panel remains:
+
+```text
+assets/cloudflare-native-data-panel-v1.js
+```
+
+Retired browser loader implementations remain recoverable only as archive/reference material under:
+
+```text
+docs/archive/legacy-browser-loaders/
+```
+
+Cloud Raw import remains explicitly fail-closed with:
+
+```text
+cloudflare_native_raw_import_not_migrated
+```
+
+Runtime version evidence remains:
 
 ```text
 GET /api/health
@@ -132,6 +152,8 @@ AMAZON_ADS_ENABLED=false
 No credential provisioning, LWA live smoke, profile bootstrap, report creation/poll/download, real Amazon sync or Sync Worker deployment is authorized.
 
 ## Production state
+
+The final Cloudflare Native Production deployment contract is **not established yet**.
 
 Production remains NOT READY and untouched.
 
