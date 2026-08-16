@@ -2,6 +2,10 @@ import { WorkflowEntrypoint } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { createAmazonAdsAccessTokenProviderFromEnv } from './amazon-ads-credential-provider.js';
 import {
+  AMAZON_ADS_CREDENTIAL_SMOKE_PATH,
+  handleAmazonAdsCredentialSmoke,
+} from './amazon-ads-credential-smoke.js';
+import {
   advanceAmazonAdsReportCycle,
   amazonAdsExecutionEnabled,
   prepareAmazonAdsProducerRuntime,
@@ -22,6 +26,9 @@ const AMAZON_STEP_CONFIG = Object.freeze({
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === AMAZON_ADS_CREDENTIAL_SMOKE_PATH) {
+      return handleAmazonAdsCredentialSmoke(request, env);
+    }
     if (url.pathname !== '/health') return new Response('Not found', { status: 404 });
 
     return Response.json({
