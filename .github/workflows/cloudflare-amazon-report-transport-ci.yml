@@ -14,6 +14,8 @@ on:
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
       - 'cloudflare/runtime/.dev.vars.example'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
@@ -31,6 +33,8 @@ on:
       - 'cloudflare/runtime/sync-worker.js'
       - 'cloudflare/runtime/wrangler.sync.jsonc'
       - 'cloudflare/runtime/.dev.vars.example'
+      - 'scripts/deploy-cloudflare-sync-dev.mjs'
+      - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
       - 'scripts/test-amazon-ads-report-transport.mjs'
       - 'scripts/test-amazon-ads-bootstrap-transport.mjs'
@@ -65,8 +69,11 @@ jobs:
           node --check cloudflare/runtime/amazon-ads-bootstrap-transport.js
           node --check cloudflare/runtime/amazon-ads-sync-runtime.js
           node --check cloudflare/runtime/sync-worker.js
+          node --check scripts/deploy-cloudflare-sync-dev.mjs
+          node --check scripts/test-cloudflare-sync-dev-deploy.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
           node scripts/test-amazon-ads-report-transport.mjs
           node scripts/test-amazon-ads-bootstrap-transport.mjs
           node scripts/test-amazon-ads-sync-runtime.mjs
+          node scripts/test-cloudflare-sync-dev-deploy.mjs
           node scripts/test-phase-e-runtime-integration.mjs
