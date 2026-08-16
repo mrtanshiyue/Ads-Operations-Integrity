@@ -60,12 +60,14 @@ assert.equal(resolveCurrentGitCommit({
   const spawnCalls = [];
   const smokeCalls = [];
   const releaseCalls = [];
+  const credentialSmokeCalls = [];
   const result = await runAmazonAdsDevSecretProvision({
     cwd:'/repo',
     env:{
       ...secrets,
       CLOUDFLARE_API_TOKEN:'cloudflare-token',
       SYNC_DEV_HEALTH_URL:'https://sync.example.workers.dev/health',
+      SYNC_DEV_CREDENTIAL_SMOKE_URL:'https://sync.example.workers.dev/health/amazon-credentials',
     },
     commitSha:sha,
     spawn(command, args, options) {
@@ -88,6 +90,14 @@ assert.equal(resolveCurrentGitCommit({
     },
     release(options) {
       releaseCalls.push(options);
+    },
+    async credentialSmoke(options) {
+      credentialSmokeCalls.push(options);
+      return {
+        ok:true,
+        lwaTokenRefresh:'pass',
+        amazonAdsEnabled:false,
+      };
     },
   });
 
@@ -118,18 +128,29 @@ assert.equal(resolveCurrentGitCommit({
   for (const name of AMAZON_ADS_DEV_SECRET_NAMES) {
     assert.equal(Object.prototype.hasOwnProperty.call(releaseCalls[0].env, name), false);
   }
+
+  assert.equal(credentialSmokeCalls.length, 1);
+  assert.equal(credentialSmokeCalls[0].refreshToken, secrets.AMAZON_ADS_REFRESH_TOKEN);
+  assert.equal(credentialSmokeCalls[0].expectedCommit, sha);
+  assert.equal(
+    credentialSmokeCalls[0].url,
+    'https://sync.example.workers.dev/health/amazon-credentials',
+  );
+
   assert.deepEqual(result, {
     ok:true,
     commitSha:sha,
     secretNames:[...AMAZON_ADS_DEV_SECRET_NAMES].sort(),
     amazonAdsEnabled:false,
     runtimeVersionId:'version-after-secrets',
+    lwaTokenRefresh:'pass',
   });
 }
 
 {
   let smokeCalls = 0;
   let spawnCalls = 0;
+  let credentialSmokeCalls = 0;
   await assert.rejects(
     () => runAmazonAdsDevSecretProvision({
       env:secrets,
@@ -145,15 +166,21 @@ assert.equal(resolveCurrentGitCommit({
       release() {
         throw new Error('release must not run');
       },
+      async credentialSmoke() {
+        credentialSmokeCalls += 1;
+        return { lwaTokenRefresh:'pass' };
+      },
     }),
     /AMAZON_ADS_DEV_SECRET_BULK_FAILED:17/,
   );
   assert.equal(smokeCalls, 1);
   assert.equal(spawnCalls, 1);
+  assert.equal(credentialSmokeCalls, 0);
 }
 
 {
   let releaseCalls = 0;
+  let credentialSmokeCalls = 0;
   await assert.rejects(
     () => runAmazonAdsDevSecretProvision({
       env:secrets,
@@ -165,11 +192,39 @@ assert.equal(resolveCurrentGitCommit({
         throw new Error(`unexpected command ${command}`);
       },
       release() { releaseCalls += 1; },
+      async credentialSmoke() {
+        credentialSmokeCalls += 1;
+        return { lwaTokenRefresh:'pass' };
+      },
     }),
     (error) => error instanceof AmazonAdsDevSecretProvisionError
       && error.code.startsWith('AMAZON_ADS_DEV_SECRET_LIST_MISSING:'),
   );
   assert.equal(releaseCalls, 0);
+  assert.equal(credentialSmokeCalls, 0);
+}
+
+{
+  await assert.rejects(
+    () => runAmazonAdsDevSecretProvision({
+      env:secrets,
+      commitSha:sha,
+      async smoke() { return { deploymentExact:true, runtimeVersionId:'version-after-secrets' }; },
+      spawn(command, args) {
+        if (args.includes('bulk')) return { status:0 };
+        if (args.includes('list')) {
+          return {
+            status:0,
+            stdout:JSON.stringify(AMAZON_ADS_DEV_SECRET_NAMES.map((name) => ({ name, type:'secret_text' }))),
+          };
+        }
+        throw new Error(`unexpected command ${command}`);
+      },
+      release() {},
+      async credentialSmoke() { return { lwaTokenRefresh:'fail' }; },
+    }),
+    /AMAZON_ADS_DEV_CREDENTIAL_SMOKE_NOT_PASS/,
+  );
 }
 
 console.log('Cloudflare Amazon Ads Dev secret provisioning tests: PASS');
