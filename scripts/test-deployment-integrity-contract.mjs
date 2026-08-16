@@ -14,6 +14,7 @@ const webEntry = await text('cloudflare/runtime/web-entry.js');
 const deploymentHealth = await text('cloudflare/runtime/deployment-health.js');
 const buildsClient = await text('scripts/cloudflare-workers-builds-client.mjs');
 const discoveryClient = await text('scripts/cloudflare-deployment-discovery-client.mjs');
+const deploymentReceipt = await text('scripts/deployment-integrity-receipt.mjs');
 const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
@@ -25,6 +26,7 @@ assert.match(canonicalCi, /test-deployment-integrity-contract\.mjs/);
 assert.match(canonicalCi, /test-deployment-health-contract\.mjs/);
 assert.match(canonicalCi, /test-cloudflare-workers-builds-client\.mjs/);
 assert.match(canonicalCi, /test-cloudflare-deployment-discovery-client\.mjs/);
+assert.match(canonicalCi, /test-deployment-integrity-receipt\.mjs/);
 
 // Canonical CI remains validation-only. No repository path may silently restore direct deployment.
 assert.doesNotMatch(canonicalCi, /wrangler\s+deploy/);
@@ -99,6 +101,17 @@ assert.doesNotMatch(discoveryClient, /process\.argv/);
 assert.doesNotMatch(discoveryClient, /process\.env/);
 assert.doesNotMatch(discoveryClient, /CLOUDFLARE_API_TOKEN/);
 
+// Deployment receipts are evidence-only and fail closed on commit/version mismatch.
+assert.match(deploymentReceipt, /cloudflare-deployment-receipt-v1/);
+assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_COMMIT_MISMATCH/);
+assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_LIVE_VERSION_MISMATCH/);
+assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_BUILD_NOT_SUCCESS/);
+assert.match(deploymentReceipt, /buildCommitSha\s*!==\s*commitSha/);
+assert.match(deploymentReceipt, /liveRuntimeVersionId\s*!==\s*versionId/);
+assert.doesNotMatch(deploymentReceipt, /process\.argv/);
+assert.doesNotMatch(deploymentReceipt, /process\.env/);
+assert.doesNotMatch(deploymentReceipt, /CLOUDFLARE_API_TOKEN|AMAZON_CLIENT_SECRET|AMAZON_ADS_CLIENT_SECRET/);
+
 // Amazon stays phase-independently dormant. Sync Worker deployment is not part of Phase 2 foundation.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
@@ -112,7 +125,7 @@ assert.match(phase2Definition, /Production remains out of scope/i);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-foundation-v4',
+  contract: 'deployment-integrity-foundation-v5',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   directDeployBlocked: true,
@@ -120,6 +133,7 @@ console.log(JSON.stringify({
   exactCommitBuildContractDefined: true,
   exactCommitBuildClientLibraryOnly: true,
   readOnlyCloudflareDiscoveryLibraryOnly: true,
+  failClosedDeploymentReceipt: true,
   buildUuidRequired: true,
   versionDeploymentCorrelationRequired: true,
   runtimeVersionMetadataRequired: true,
