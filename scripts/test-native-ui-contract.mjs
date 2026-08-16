@@ -3,11 +3,147 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { handleAuditApiRoute } from '../cloudflare/runtime/audit-api.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const nativeApiSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-api-v1.js'), 'utf8');
 const bridgeSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-query-bridge-v1.js'), 'utf8');
 const negativeGovernanceSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-negative-governance-v1.js'), 'utf8');
+const webEntrySource = await readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8');
+const auditApiSource = await readFile(path.join(repoRoot, 'cloudflare/runtime/audit-api.js'), 'utf8');
 const builtIndex = await readFile(path.join(repoRoot, 'dist-cloudflare-native/index.html'), 'utf8');
+
+function createAuditDb({ globalRead = true, storeRead = false, storeExists = true, rows } = {}) {
+  const events = rows || [
+    {
+      event_id: 'event-02',
+      occurred_at: '2026-08-16 10:42:00',
+      actor_user_id: 'user-dev-owner',
+      actor_email: 'owner@example.test',
+      actor_display_name: 'Development Owner',
+      store_id: 'store-dev-01',
+      store_code: 'DEV01',
+      store_display_name: 'Development Store',
+      action: 'negative_product_scope.upsert',
+      entity_type: 'negative_product_scope',
+      entity_id: 'store-dev-01:product-dev:negative-dev',
+      request_id: 'audit-ray-02',
+      cf_ray: 'audit-ray-02',
+      details_json: '{"status":"active"}',
+    },
+    {
+      event_id: 'event-01',
+      occurred_at: '2026-08-16 10:41:00',
+      actor_user_id: 'user-dev-owner',
+      actor_email: 'owner@example.test',
+      actor_display_name: 'Development Owner',
+      store_id: null,
+      store_code: null,
+      store_display_name: null,
+      action: 'keyword.update',
+      entity_type: 'keyword',
+      entity_id: 'keyword-dev',
+      request_id: 'audit-ray-01',
+      cf_ray: 'audit-ray-01',
+      details_json: '{broken-json',
+    },
+  ];
+
+  return {
+    prepare(sql) {
+      return {
+        bind(...params) {
+          return {
+            async first() {
+              if (sql.includes('FROM user_global_roles ugr')) return globalRead ? { ok: 1 } : null;
+              if (sql.includes('FROM store_members sm')) return storeRead ? { ok: 1 } : null;
+              if (sql.includes('FROM stores')) {
+                return storeExists && params[0] === 'store-dev-01' ? { store_id: 'store-dev-01' } : null;
+              }
+              throw new Error(`unexpected audit first query: ${sql}`);
+            },
+            async all() {
+              if (sql.includes('FROM audit_log a')) return { results: events };
+              throw new Error(`unexpected audit all query: ${sql}`);
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+const auditActor = { user_id: 'user-dev-owner' };
+const auditRequest = new Request('https://example.test/api/v1/audit/events?storeId=store-dev-01&action=negative_product_scope.upsert&from=2026-08-16&to=2026-08-16&limit=1', {
+  headers: { 'cf-ray': 'audit-query-ray' },
+});
+const auditResponse = await handleAuditApiRoute({
+  request: auditRequest,
+  env: { CONTROL_DB: createAuditDb() },
+  actor: auditActor,
+  url: new URL(auditRequest.url),
+});
+assert.equal(auditResponse.status, 200);
+assert.equal(auditResponse.headers.get('cache-control'), 'no-store');
+assert.equal(auditResponse.headers.get('x-request-id'), 'audit-query-ray');
+const auditPayload = await auditResponse.json();
+assert.equal(auditPayload.items.length, 1);
+assert.equal(auditPayload.items[0].eventId, 'event-02');
+assert.equal(auditPayload.items[0].actor.email, 'owner@example.test');
+assert.equal(auditPayload.items[0].store.storeId, 'store-dev-01');
+assert.deepEqual(auditPayload.items[0].details, { status: 'active' });
+assert.equal(typeof auditPayload.nextCursor, 'string');
+assert.equal(auditPayload.filters.from, '2026-08-16 00:00:00');
+assert.equal(auditPayload.filters.to, '2026-08-16 23:59:59');
+
+const scopedAuditRequest = new Request('https://example.test/api/v1/audit/events?storeId=store-dev-01');
+const scopedAuditResponse = await handleAuditApiRoute({
+  request: scopedAuditRequest,
+  env: { CONTROL_DB: createAuditDb({ globalRead: false, storeRead: true, rows: [] }) },
+  actor: { user_id: 'store-auditor' },
+  url: new URL(scopedAuditRequest.url),
+});
+assert.equal(scopedAuditResponse.status, 200);
+assert.equal((await scopedAuditResponse.json()).items.length, 0);
+
+const deniedAuditRequest = new Request('https://example.test/api/v1/audit/events');
+const deniedAuditResponse = await handleAuditApiRoute({
+  request: deniedAuditRequest,
+  env: { CONTROL_DB: createAuditDb({ globalRead: false, storeRead: true }) },
+  actor: { user_id: 'store-auditor' },
+  url: new URL(deniedAuditRequest.url),
+});
+assert.equal(deniedAuditResponse.status, 403);
+assert.deepEqual(await deniedAuditResponse.json(), { error: 'forbidden', permission: 'audit.read' });
+
+const missingStoreRequest = new Request('https://example.test/api/v1/audit/events?storeId=missing-store');
+const missingStoreResponse = await handleAuditApiRoute({
+  request: missingStoreRequest,
+  env: { CONTROL_DB: createAuditDb({ storeExists: false }) },
+  actor: auditActor,
+  url: new URL(missingStoreRequest.url),
+});
+assert.equal(missingStoreResponse.status, 404);
+assert.deepEqual(await missingStoreResponse.json(), { error: 'store_not_found' });
+
+const invalidAuditRequest = new Request('https://example.test/api/v1/audit/events?from=2026-02-31');
+const invalidAuditResponse = await handleAuditApiRoute({
+  request: invalidAuditRequest,
+  env: { CONTROL_DB: createAuditDb() },
+  actor: auditActor,
+  url: new URL(invalidAuditRequest.url),
+});
+assert.equal(invalidAuditResponse.status, 400);
+assert.deepEqual(await invalidAuditResponse.json(), { error: 'invalid_audit_from' });
+
+assert.match(webEntrySource, /handleAuditApiRoute/);
+assert.match(webEntrySource, /AUDIT_ROUTE_PATTERN/);
+assert.match(nativeApiSource, /auditEvents:\s*\(params\)/);
+assert.match(auditApiSource, /audit\.read/);
+assert.match(auditApiSource, /FROM audit_log a/);
+assert.match(auditApiSource, /ORDER BY a\.occurred_at DESC, a\.event_id DESC/);
+assert.doesNotMatch(auditApiSource, /INSERT INTO|UPDATE audit_log|DELETE FROM audit_log/);
+assert.doesNotMatch(auditApiSource, /AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/);
 
 const nativeApiCalls = [];
 const events = [];
@@ -260,6 +396,11 @@ try {
 console.log(JSON.stringify({
   ok: true,
   contracts: [
+    'audit-read-global-permission',
+    'audit-read-store-permission-isolation',
+    'audit-read-cursor-pagination',
+    'audit-read-date-normalization',
+    'audit-read-only-no-sync',
     'negative-governance-native-client',
     'negative-governance-store-scope',
     'negative-governance-product-scope',

@@ -11,6 +11,7 @@ import { createStoreDailySourceObjectEtagLayer } from './store-daily-source-obje
 import { handleStoreProductsApiRoute } from './store-products-api.js';
 import { handleProductKeywordsApiRoute } from './product-keywords-api.js';
 import { handleNegativeKeywordScopesApiRoute } from './negative-keyword-scopes-api.js';
+import { handleAuditApiRoute } from './audit-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
@@ -28,6 +29,7 @@ const NEGATIVE_KEYWORD_SCOPE_ROUTE_PATTERNS = [
   /^\/api\/v1\/stores\/[^/]+\/negative-keywords(?:\/[^/]+)?$/,
   /^\/api\/v1\/stores\/[^/]+\/products\/[^/]+\/negative-keywords(?:\/[^/]+)?$/,
 ];
+const AUDIT_ROUTE_PATTERN = /^\/api\/v1\/audit\/events$/;
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
@@ -45,6 +47,7 @@ export default {
       || STORE_PRODUCTS_ROUTE_PATTERN.test(url.pathname)
       || PRODUCT_KEYWORDS_ROUTE_PATTERN.test(url.pathname)
       || isNegativeKeywordScopeRoute(url.pathname)
+      || AUDIT_ROUTE_PATTERN.test(url.pathname)
       || STORE_ROUTE_PATTERN.test(url.pathname)
       || SYNC_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname);
@@ -85,6 +88,10 @@ export default {
       }
       if (isNegativeKeywordScopeRoute(url.pathname)) {
         const response = await handleNegativeKeywordScopesApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
+      if (AUDIT_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleAuditApiRoute({ request, env, actor, url });
         if (response) return response;
       }
       if (STORE_ROUTE_PATTERN.test(url.pathname)) {
