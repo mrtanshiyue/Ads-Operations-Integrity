@@ -20,6 +20,9 @@
         "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
         "ACCESS_AUD": "37435e34dd56c73c5c8d64a9bac3319f27389d8a953379cdab2ccaa4965cdaee"
       },
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA"
+      },
       "d1_databases": [
         {
           "binding": "CONTROL_DB",
@@ -57,6 +60,9 @@
         "SYNC_TRIGGER_ENABLED": "false",
         "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
         "ACCESS_AUD": "REPLACE_ME"
+      },
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA"
       },
       "d1_databases": [
         {
