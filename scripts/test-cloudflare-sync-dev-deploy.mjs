@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   DEV_SYNC_RELEASE_STEPS,
+  buildDevSyncReleaseSteps,
   runCloudflareSyncDevRelease,
 } from './deploy-cloudflare-sync-dev.mjs';
 
@@ -20,11 +21,29 @@ assert.deepEqual(DEV_SYNC_RELEASE_STEPS[1].args, [
   '--remote', '--env', 'dev', '--config', config,
 ]);
 assert.deepEqual(DEV_SYNC_RELEASE_STEPS[2].args, [
-  '--no-install', 'wrangler', 'deploy', '--env', 'dev', '--config', config,
+  '--no-install', 'wrangler', 'deploy', '--strict', '--env', 'dev', '--config', config,
 ]);
 assert(DEV_SYNC_RELEASE_STEPS.every((step) => step.command === 'npx'));
 assert(DEV_SYNC_RELEASE_STEPS.every((step) => step.args.includes('dev')));
 assert(DEV_SYNC_RELEASE_STEPS.every((step) => !step.args.includes('production')));
+
+const buildSha = 'abcdef0123456789abcdef0123456789abcdef01';
+const workerBuildSteps = buildDevSyncReleaseSteps({
+  WORKERS_CI:'1',
+  WORKERS_CI_COMMIT_SHA:buildSha.toUpperCase(),
+});
+assert.deepEqual(workerBuildSteps[2].args, [
+  '--no-install', 'wrangler', 'deploy', '--strict', '--env', 'dev', '--config', config,
+  '--tag', buildSha,
+]);
+assert.throws(
+  () => buildDevSyncReleaseSteps({ WORKERS_CI:'1' }),
+  /CF_SYNC_DEV_RELEASE_COMMIT_SHA_INVALID/,
+);
+assert.throws(
+  () => buildDevSyncReleaseSteps({ WORKERS_CI:'1', WORKERS_CI_COMMIT_SHA:'not-a-sha' }),
+  /CF_SYNC_DEV_RELEASE_COMMIT_SHA_INVALID/,
+);
 
 {
   const calls = [];
@@ -42,8 +61,26 @@ assert(DEV_SYNC_RELEASE_STEPS.every((step) => !step.args.includes('production'))
   assert(calls[0].args.includes('ads-ops-control-dev'));
   assert(calls[1].args.includes('ads-ops-store-dev'));
   assert(calls[2].args.includes('deploy'));
+  assert(calls[2].args.includes('--strict'));
+  assert.equal(calls[2].args.includes('--tag'), false);
   assert(calls.every((call) => call.options.shell === false));
   assert(calls.every((call) => call.options.cwd === '/repo'));
+}
+
+{
+  const calls = [];
+  runCloudflareSyncDevRelease({
+    cwd:'/repo',
+    env:{ WORKERS_CI:'1', WORKERS_CI_COMMIT_SHA:buildSha },
+    spawn(command, args, options) {
+      calls.push({ command, args, options });
+      return { status:0 };
+    },
+  });
+  assert.equal(calls.length, 3);
+  const deploy = calls[2].args;
+  assert.equal(deploy[deploy.indexOf('--tag') + 1], buildSha);
+  assert(deploy.includes('--strict'));
 }
 
 {
