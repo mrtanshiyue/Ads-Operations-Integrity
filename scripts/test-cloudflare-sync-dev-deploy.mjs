@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   DEV_SYNC_RELEASE_STEPS,
   buildDevSyncReleaseSteps,
@@ -44,6 +45,16 @@ assert.throws(
   () => buildDevSyncReleaseSteps({ WORKERS_CI:'1', WORKERS_CI_COMMIT_SHA:'not-a-sha' }),
   /CF_SYNC_DEV_RELEASE_COMMIT_SHA_INVALID/,
 );
+
+const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const syncDevScript = String(packageJson.scripts?.['deploy:cf-sync:dev'] || '');
+const stackDevScript = String(packageJson.scripts?.['deploy:cf-stack:dev'] || '');
+assert.match(syncDevScript, /node scripts\/deploy-cloudflare-sync-dev\.mjs/);
+assert.doesNotMatch(syncDevScript, /wrangler deploy[^&]*wrangler\.sync\.jsonc/);
+assert.match(stackDevScript, /npm run deploy:cf-sync:dev/);
+assert.doesNotMatch(stackDevScript, /wrangler deploy[^&]*wrangler\.sync\.jsonc/);
+assert.match(String(packageJson.scripts?.['deploy:cf-sync:prod'] || ''), /wrangler deploy --env production/);
+assert.doesNotMatch(String(packageJson.scripts?.['deploy:cf-sync:prod'] || ''), /deploy-cloudflare-sync-dev/);
 
 {
   const calls = [];

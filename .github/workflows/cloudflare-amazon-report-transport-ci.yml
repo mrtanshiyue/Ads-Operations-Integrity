@@ -5,6 +5,7 @@ on:
     branches:
       - cloudflare-foundation-v1
     paths:
+      - 'package.json'
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
@@ -24,6 +25,7 @@ on:
       - '.github/workflows/cloudflare-amazon-report-transport-ci.yml'
   pull_request:
     paths:
+      - 'package.json'
       - 'cloudflare/runtime/amazon-ads-credential-provider.js'
       - 'cloudflare/runtime/amazon-ads-report-transport.js'
       - 'cloudflare/runtime/amazon-ads-bootstrap-transport.js'
