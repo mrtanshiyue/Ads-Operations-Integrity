@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "cloudflare-deployment-receipt-v1",
+  "repository": "mrtanshiyue/Ads-Operations-Integrity",
+  "commitSha": "27da62ee2b064c685df35bf76dc395f349f68aba",
+  "githubWorkflowRunId": 31938209069,
+  "githubRequiredContext": "Static site and security invariants",
+  "cloudflareAccountId": "19cd528b5c32e8da423da3cf66a9f05d",
+  "workerName": "ads-operations-web-dev",
+  "workerTag": "ab2b4da6c8be41a5a72223384c32b71c",
+  "triggerUuid": "33a47d45-4103-43d7-bca4-7d9096c4abfb",
+  "buildUuid": "f064ee48-6e28-43d2-a575-883c9a45bca1",
+  "buildOutcome": "success",
+  "buildCommitSha": "27da62ee2b064c685df35bf76dc395f349f68aba",
+  "versionId": "96710600-9968-4e1f-88d4-cd84cc546ca0",
+  "deploymentId": "e6ab548a-b070-4a03-ab7a-b17c255face5",
+  "liveRuntimeVersionId": "96710600-9968-4e1f-88d4-cd84cc546ca0",
+  "acceptedAt": "2026-08-16T09:28:24.000Z"
+}

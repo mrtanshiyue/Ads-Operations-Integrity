@@ -9,6 +9,7 @@ on:
       - 'feature/**'
       - 'fix/**'
       - 'security-integrity-*'
+      - 'deployment-integrity-*'
   pull_request:
     branches:
       - main
@@ -48,6 +49,23 @@ jobs:
 
       - name: Lock architecture convergence boundaries
         run: node scripts/test-architecture-convergence-contract.mjs
+
+      - name: Lock Deployment Integrity foundation boundaries
+        run: |
+          node --check scripts/test-deployment-integrity-contract.mjs
+          node scripts/test-deployment-integrity-contract.mjs
+          node --check cloudflare/runtime/deployment-health.js
+          node --check scripts/test-deployment-health-contract.mjs
+          node scripts/test-deployment-health-contract.mjs
+          node --check scripts/cloudflare-workers-builds-client.mjs
+          node --check scripts/test-cloudflare-workers-builds-client.mjs
+          node scripts/test-cloudflare-workers-builds-client.mjs
+          node --check scripts/cloudflare-deployment-discovery-client.mjs
+          node --check scripts/test-cloudflare-deployment-discovery-client.mjs
+          node scripts/test-cloudflare-deployment-discovery-client.mjs
+          node --check scripts/deployment-integrity-receipt.mjs
+          node --check scripts/test-deployment-integrity-receipt.mjs
+          node scripts/test-deployment-integrity-receipt.mjs
 
       - name: Validate canonical Cloudflare Native runtime
         run: npm run check:cf-native
