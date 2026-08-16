@@ -1,29 +1,40 @@
 # Ads Operations Integrity — Current Platform Status
 
-> Authority: repository/platform status during Architecture Convergence Phase 0. This file is not a substitute for live GitHub or Cloudflare state. Always verify the exact SHA and deployment receipt before promotion.
+> Repository/platform status after Architecture Convergence and during Security Integrity acceptance. This file is not a substitute for live GitHub or Cloudflare state. Always verify the exact Git SHA, required CI and deployment receipt before any promotion.
 
-## Current strategy
+## Current strategic state
 
-The canonical target is Cloudflare Native. The historical GitHub Pages + TiDB + `amazon-warehouse-cloud-v4` architecture is retired from the active deployment model.
-
-Convergence started from:
+Architecture Convergence Phase 0 is complete and merged to canonical `main`:
 
 ```text
-cloudflare-foundation-v1
-b1828b8b6f62c167f8e0654175413e55f449c4bd
+main
+d83bd4dcabe8ed92d873902a463163191bf60382
 ```
 
-Active consolidation work is performed on:
+Phase 1 — Security Integrity is implemented on:
 
 ```text
-consolidation/architecture-convergence-phase0
+security-integrity-phase1
 ```
 
-`main` is intentionally not advanced during Phase 0 until the consolidated branch has passed the required CI and review.
+The accepted implementation candidate before final documentation commits is:
 
-## Runtime truth
+```text
+5ef2d455c33b73144b07d0333ed3a9ce8b22b203
+```
 
-Canonical web runtime:
+Its Canonical CI evidence is:
+
+```text
+Run 31931495846
+Static site and security invariants = SUCCESS
+```
+
+Final Phase 1 PR-ready status still requires the documentation tip to pass the same required check.
+
+## Canonical runtime truth
+
+Web runtime:
 
 ```text
 cloudflare/runtime/wrangler.native.jsonc
@@ -31,14 +42,14 @@ cloudflare/runtime/wrangler.native.jsonc
 → cloudflare/runtime/web-worker.js + modular APIs
 ```
 
-Canonical sync runtime remains dormant:
+Sync runtime remains dormant:
 
 ```text
 cloudflare/runtime/wrangler.sync.jsonc
 → cloudflare/runtime/sync-worker.js
 ```
 
-Canonical browser data path:
+Browser data path:
 
 ```text
 assets/cloudflare-native-api-v1.js
@@ -46,107 +57,132 @@ assets/cloudflare-native-api-v1.js
 → assets/cloudflare-native-data-panel-v1.js
 ```
 
-The Native browser uses same-origin API calls and the Cloudflare Access browser session. Warehouse dashboard passwords, `X-Dashboard-Password`, session-stored Warehouse credentials, and the Warehouse external browser transport are not part of the Native deployment artifact.
+Warehouse browser credentials, Warehouse external transport, the old root Worker and legacy root Wrangler deployment target are retired from active runtime/source ownership.
 
-Cloud Raw import is not yet migrated. It is explicitly fail-closed with `501 cloudflare_native_raw_import_not_migrated`; local file import remains available as a separate browser workflow.
-
-The old root Warehouse Service Binding Worker and Wrangler configuration have been archived and removed from active runtime paths.
-
-## Build truth
-
-Canonical build:
+Cloud Raw import remains explicitly fail-closed with:
 
 ```text
-npm run build
-→ scripts/build-cloudflare.mjs
-→ scripts/build-cloudflare-native.mjs
-→ dist-cloudflare-native/
+501 cloudflare_native_raw_import_not_migrated
 ```
 
-The Native build:
+## Security Integrity state
 
-- enforces `connect-src 'self'`;
-- injects the Native API, query bridge, governance, Access/audit clients and Native data panel;
-- strips legacy browser cloud-loader script tags from the deployment HTML;
-- enforces an explicit deployment-asset allowlist.
-
-Legacy Warehouse browser implementations are archived under:
+Control D1 now has append-only defense-in-depth migrations:
 
 ```text
-docs/archive/legacy-browser-loaders/
+0005_control_security_integrity.sql
+0006_control_access_recovery.sql
 ```
 
-They are not active source assets and are forbidden from `dist-cloudflare-native/`.
+They enforce single global role, global/store role-scope boundaries, active global-role lifecycle, global/store membership exclusivity, last-active-owner protection, immutable assigned role scope, and audited owner Access-subject recovery.
+
+Global Role governance and user lifecycle mutations now require D1 transaction batches so the governance mutation and audit event commit or roll back together. There is no sequential fallback.
+
+Security-critical CI includes a real local Cloudflare Workers/D1 harness. It applies actual Control D1 migrations and proves rollback behavior for:
+
+- Global Role grant/revoke audit failure;
+- user lifecycle audit failure;
+- break-glass owner Access recovery audit failure.
+
+The full Access request pipeline is also tested through the production `web-entry.js` with `ACCESS_MODE=enforce`, real generated RSA/RS256 JWTs, JWKS interception at the Node test boundary, strict actor binding, real local D1, RBAC and a governed Global Role mutation with audit evidence.
+
+No production authentication bypass or test identity header is introduced.
+
+## Break-glass recovery
+
+An out-of-band owner Access-subject recovery CLI exists:
+
+```text
+npm run security:break-glass:access-recovery -- ...
+```
+
+Important properties:
+
+- default behavior is dry-run;
+- it only rebinds an existing active owner's Cloudflare Access subject;
+- it cannot create, grant, revoke or replace a global role;
+- the Cloudflare API token is read only from `CLOUDFLARE_API_TOKEN`;
+- execution requires an exact confirmation string;
+- Production additionally requires `BREAK_GLASS_PRODUCTION_ENABLED=1` and a second exact Production confirmation;
+- the recovery ledger is immutable and audit-backed;
+- this repository work does **not** authorize executing Production recovery.
 
 ## CI truth
 
-The canonical workflow is:
+Canonical workflow:
 
 ```text
 .github/workflows/cloudflare-native-canonical-ci.yml
 ```
 
-It now covers:
+Required main branch check context must remain exactly:
 
-- Architecture Convergence boundary contracts;
-- Cloudflare Native build/runtime/UI/Gate regressions;
-- Native cloud-loader strangler regression;
-- foundation migrations and regressions;
-- Phase E producer/ingestion/migration regressions;
-- R2 provenance Gates 24–27;
+```text
+Static site and security invariants
+```
+
+The Canonical CI covers `main`, long-lived compatibility source where still needed, and short-lived `feature/**`, `fix/**`, `security-integrity-*` / convergence branches.
+
+It validates:
+
+- architecture boundaries;
+- Cloudflare Native runtime/build/UI;
+- foundation and Security Integrity migrations;
+- Phase E ingestion/producer regressions;
+- R2 provenance regressions;
 - Access/user/global-role governance;
-- dormant Amazon transport tests without deployment or promotion.
+- real local D1 security transactions;
+- full Access JWT/JWKS request pipeline;
+- dormant Amazon transport regressions without deployment or promotion.
 
-The former granular Foundation, Access, Amazon transport and Gate 24–27 workflows were retired only after coverage parity was demonstrated. Their exact historical files are archived under `docs/archive/legacy-ci/`.
-
-The historical GitHub Pages `pages.yml` and TiDB-era `ci-main.yml` are archived under `docs/archive/legacy-github-pages/` and are inactive.
+Historical granular Cloudflare workflows and GitHub Pages/TiDB workflows remain archived, not active.
 
 ## Deployment safety
 
-Repository `deploy:*` npm aliases are quarantined. They call `scripts/block-direct-cloudflare-deploy.mjs` and fail closed instead of running `wrangler deploy`.
+Repository `deploy:*` npm aliases remain fail-closed through `scripts/block-direct-cloudflare-deploy.mjs`.
 
-The previous deploy command map is archived under:
+The physical historical deployment trigger remains intentionally unchanged at the Phase 1 acceptance audit:
 
 ```text
-docs/archive/legacy-deploy/package-deploy-scripts.json
+__manual_ci_gated_deploy__
+ce59e4cc43413338f35a34cb44622a7aa26f9875
 ```
 
-No direct repository deployment path is authorized during Phase 0.
+Phase 1 does not move that branch and does not deploy any Worker.
 
 ## Amazon state
 
-Amazon integration is not being expanded during Phase 0.
+Amazon integration remains dormant. Existing credential, LWA smoke, report transport, acquisition, staging, fact publishing, provenance and Workflow code is retained under deterministic regression coverage only.
 
-Existing credential, LWA smoke, report transport, acquisition, staging, fact publishing, provenance and Workflow code is retained only as a dormant subsystem under regression coverage.
-
-Current controls remain:
+Controls remain:
 
 ```text
 SYNC_TRIGGER_ENABLED=false
 AMAZON_ADS_ENABLED=false
 ```
 
-No Amazon mutation or sync-worker deployment is authorized in this phase.
+Security Integrity and intermediate platform phases do not authorize Amazon credential provisioning, live LWA smoke, report transport activation, sync-trigger promotion or sync Worker deployment.
+
+Controlled Amazon activation begins later with Store 01 read-only only after deployment integrity and Dev exact-SHA baseline work are complete.
 
 ## Production state
 
-The final Cloudflare Native Production deployment contract is **not established yet**. Production placeholders and multi-store production configuration are planning material, not evidence that the Native production stack has been provisioned and accepted.
+The final Cloudflare Native Production deployment contract is **not established yet**. No Phase 1 work creates or alters Production DNS, Access, Worker, D1, R2 or Amazon resources.
 
-Do not create or alter Production resources during Architecture Convergence Phase 0.
+Production deployment, Production break-glass execution and Production readiness remain separate future decisions.
 
-The long-term production entrypoint should use a Cloudflare Custom Domain protected by Cloudflare Access.
+## Acceptance record
 
-## Phase 0 convergence state
+Phase 0:
 
-The following repository-level split-brain paths have now been removed or quarantined on the consolidation branch:
+```text
+docs/architecture/PHASE0_ACCEPTANCE.md
+```
 
-- root legacy Wrangler deployment entry;
-- GitHub Pages deployment workflow;
-- TiDB-era main CI;
-- granular Cloudflare CI topology after coverage parity;
-- unqualified/direct npm deploy aliases;
-- legacy `src/worker.js` Warehouse proxy;
-- Warehouse browser loaders/query client from the Native deployment artifact;
-- Warehouse browser loader implementations from active source ownership.
+Phase 1:
 
-Remaining work before Phase 0 can be considered ready for controlled PR review is primarily verification and consolidation hygiene, not expansion of Amazon or Production scope.
+```text
+docs/architecture/PHASE1_SECURITY_ACCEPTANCE.md
+```
+
+After the final Phase 1 documentation tip passes Canonical CI, the branch can be treated as PR-ready. Opening or merging that PR does not authorize deployment.
