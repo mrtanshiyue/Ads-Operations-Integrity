@@ -63,6 +63,9 @@ jobs:
           node --check scripts/cloudflare-deployment-discovery-client.mjs
           node --check scripts/test-cloudflare-deployment-discovery-client.mjs
           node scripts/test-cloudflare-deployment-discovery-client.mjs
+          node --check scripts/deployment-integrity-receipt.mjs
+          node --check scripts/test-deployment-integrity-receipt.mjs
+          node scripts/test-deployment-integrity-receipt.mjs
 
       - name: Validate canonical Cloudflare Native runtime
         run: npm run check:cf-native
