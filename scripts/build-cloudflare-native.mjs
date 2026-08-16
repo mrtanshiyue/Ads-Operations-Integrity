@@ -76,6 +76,10 @@ const accessSandboxWindow = {
         },
       });
     },
+    updateAccessUserStatus(userId, status) {
+      accessCalls.push({ method: 'user-status', userId, status });
+      return Promise.resolve({ changed: true, user: { userId, status } });
+    },
     storeMembers(storeId, params) {
       accessCalls.push({ method: 'members', storeId, params: { ...params } });
       return Promise.resolve({ items: [] });
@@ -91,20 +95,21 @@ const accessSandboxWindow = {
   },
 };
 vm.runInNewContext(accessConsoleSource, { window: accessSandboxWindow, console }, { filename: 'cloudflare-native-access-console-v1.js' });
-if (!accessSandboxWindow.CloudflareAccessConsole || accessSandboxWindow.CloudflareAccessConsole.version !== '1.1.0') {
+if (!accessSandboxWindow.CloudflareAccessConsole || accessSandboxWindow.CloudflareAccessConsole.version !== '1.2.0') {
   throw new Error('Access console public contract was not installed');
 }
 await accessSandboxWindow.CloudflareAccessConsole.listRoles();
 await accessSandboxWindow.CloudflareAccessConsole.listUsers();
 await accessSandboxWindow.CloudflareAccessConsole.createUser(' new.user@example.test ', ' New User ');
+await accessSandboxWindow.CloudflareAccessConsole.updateUserStatus('user-dev-01', 'disabled');
 await accessSandboxWindow.CloudflareAccessConsole.listMembers('store-dev-01');
 await accessSandboxWindow.CloudflareAccessConsole.putMember('store-dev-01', 'user-dev-01', 'analyst');
 await accessSandboxWindow.CloudflareAccessConsole.deleteMember('store-dev-01', 'user-dev-01');
 if (!accessCalls.some((call) => call.method === 'roles' && call.params.scope === 'store')) {
   throw new Error('Access console must read store-scoped role catalog');
 }
-if (!accessCalls.some((call) => call.method === 'users' && call.params.status === 'active' && call.params.limit === 200)) {
-  throw new Error('Access console must read active users through CloudflareNativeAPI');
+if (!accessCalls.some((call) => call.method === 'users' && !('status' in call.params) && call.params.limit === 200)) {
+  throw new Error('Access console must read the all-status user catalog through CloudflareNativeAPI');
 }
 const createUserCall = accessCalls.find((call) => call.method === 'create-user');
 if (!createUserCall || createUserCall.body.email !== 'new.user@example.test' || createUserCall.body.displayName !== 'New User') {
@@ -112,6 +117,9 @@ if (!createUserCall || createUserCall.body.email !== 'new.user@example.test' || 
 }
 if ('globalRoles' in createUserCall.body || 'roleKey' in createUserCall.body || 'status' in createUserCall.body) {
   throw new Error('Access console must not include privilege or lifecycle fields in user provisioning');
+}
+if (!accessCalls.some((call) => call.method === 'user-status' && call.userId === 'user-dev-01' && call.status === 'disabled')) {
+  throw new Error('Access console must delegate ordinary-user lifecycle updates to CloudflareNativeAPI');
 }
 if (!accessCalls.some((call) => call.method === 'members' && call.storeId === 'store-dev-01' && call.params.limit === 200)) {
   throw new Error('Access console must read store members through CloudflareNativeAPI');
@@ -219,7 +227,7 @@ console.log(JSON.stringify({
   auditConsoleClient: 'assets/cloudflare-native-audit-console-v1.js',
   auditConsoleContract: 'read-only-native-api',
   accessConsoleClient: 'assets/cloudflare-native-access-console-v1.js',
-  accessConsoleContract: 'user-provisioning-and-store-membership',
+  accessConsoleContract: 'user-provisioning-lifecycle-and-store-membership',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
   gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',
