@@ -1,4 +1,5 @@
 import legacyWebWorker from './web-worker.js';
+import { handleDeploymentHealthRoute } from './deployment-health.js';
 import { handleControlApiRoute } from './control-api.js';
 import { handleStoreApiRoute } from './store-api.js';
 import { handleStoreDailySourceObjectMetadataApiRoute } from './store-daily-source-object-metadata-api.js';
@@ -46,6 +47,9 @@ const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywo
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
+    const deploymentHealthResponse = handleDeploymentHealthRoute({ request, env, url });
+    if (deploymentHealthResponse) return deploymentHealthResponse;
 
     if (shouldApplyStrictAccessGuard(url.pathname, request.method, env)) {
       const guard = await strictAccessGuard(request, env);
