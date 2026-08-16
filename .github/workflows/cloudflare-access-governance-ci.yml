@@ -7,23 +7,27 @@ on:
     paths:
       - 'cloudflare/runtime/access-governance-api.js'
       - 'cloudflare/runtime/user-lifecycle-api.js'
+      - 'cloudflare/runtime/global-role-governance-api.js'
       - 'cloudflare/runtime/web-entry.js'
       - 'assets/cloudflare-native-api-v1.js'
       - 'assets/cloudflare-native-access-console-v1.js'
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-user-provisioning-contract.mjs'
       - 'scripts/test-user-lifecycle-contract.mjs'
+      - 'scripts/test-global-role-governance-contract.mjs'
       - '.github/workflows/cloudflare-access-governance-ci.yml'
   pull_request:
     paths:
       - 'cloudflare/runtime/access-governance-api.js'
       - 'cloudflare/runtime/user-lifecycle-api.js'
+      - 'cloudflare/runtime/global-role-governance-api.js'
       - 'cloudflare/runtime/web-entry.js'
       - 'assets/cloudflare-native-api-v1.js'
       - 'assets/cloudflare-native-access-console-v1.js'
       - 'scripts/test-access-contract.mjs'
       - 'scripts/test-user-provisioning-contract.mjs'
       - 'scripts/test-user-lifecycle-contract.mjs'
+      - 'scripts/test-global-role-governance-contract.mjs'
       - '.github/workflows/cloudflare-access-governance-ci.yml'
 
 permissions:
@@ -51,11 +55,13 @@ jobs:
         run: |
           node --check cloudflare/runtime/access-governance-api.js
           node --check cloudflare/runtime/user-lifecycle-api.js
+          node --check cloudflare/runtime/global-role-governance-api.js
           node --check cloudflare/runtime/web-entry.js
           node --check assets/cloudflare-native-api-v1.js
           node --check scripts/test-access-contract.mjs
           node --check scripts/test-user-provisioning-contract.mjs
           node --check scripts/test-user-lifecycle-contract.mjs
+          node --check scripts/test-global-role-governance-contract.mjs
 
       - name: Existing access governance regressions
         run: node scripts/test-access-contract.mjs
@@ -65,3 +71,6 @@ jobs:
 
       - name: User lifecycle contract
         run: node scripts/test-user-lifecycle-contract.mjs
+
+      - name: Global role governance contract
+        run: node scripts/test-global-role-governance-contract.mjs

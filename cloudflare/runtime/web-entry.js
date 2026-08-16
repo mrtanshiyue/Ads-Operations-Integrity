@@ -14,6 +14,7 @@ import { handleNegativeKeywordScopesApiRoute } from './negative-keyword-scopes-a
 import { handleAuditApiRoute } from './audit-api.js';
 import { handleAccessGovernanceApiRoute } from './access-governance-api.js';
 import { handleUserLifecycleApiRoute } from './user-lifecycle-api.js';
+import { handleGlobalRoleGovernanceApiRoute } from './global-role-governance-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
@@ -32,9 +33,11 @@ const NEGATIVE_KEYWORD_SCOPE_ROUTE_PATTERNS = [
   /^\/api\/v1\/stores\/[^/]+\/products\/[^/]+\/negative-keywords(?:\/[^/]+)?$/,
 ];
 const AUDIT_ROUTE_PATTERN = /^\/api\/v1\/audit\/events$/;
+const GLOBAL_ROLE_GOVERNANCE_ROUTE_PATTERN = /^\/api\/v1\/access\/users\/[^/]+\/global-roles\/[^/]+$/;
 const ACCESS_GOVERNANCE_ROUTE_PATTERNS = [
   /^\/api\/v1\/access\/(roles|users)$/,
   /^\/api\/v1\/stores\/[^/]+\/members(?:\/[^/]+)?$/,
+  GLOBAL_ROLE_GOVERNANCE_ROUTE_PATTERN,
 ];
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
@@ -102,6 +105,10 @@ export default {
         if (response) return response;
       }
       if (isAccessGovernanceRoute(url.pathname)) {
+        if (GLOBAL_ROLE_GOVERNANCE_ROUTE_PATTERN.test(url.pathname)) {
+          const globalRoleResponse = await handleGlobalRoleGovernanceApiRoute({ request, env, actor, url });
+          if (globalRoleResponse) return globalRoleResponse;
+        }
         if (url.pathname === '/api/v1/access/users' && request.method.toUpperCase() === 'PATCH') {
           const lifecycleResponse = await handleUserLifecycleApiRoute({ request, env, actor, url });
           if (lifecycleResponse) return lifecycleResponse;
