@@ -9,6 +9,7 @@ const required = [
   'index.html',
   'assets',
   'assets/cloudflare-native-api-v1.js',
+  'assets/cloudflare-native-negative-governance-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
   'assets/cloudflare-gate6-acceptance-v1.js',
   'assets/cloudflare-gate7-ui-acceptance-v1.js',
@@ -44,21 +45,23 @@ const legacyQueryMatches = nativeIndex.match(legacyQueryScriptPattern) || [];
 nativeIndex = nativeIndex.replace(legacyQueryScriptPattern, '');
 
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
+const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${nativeBridgeTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, negativeGovernanceTag, nativeBridgeTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
 if (
   !nativeIndex.includes(nativeClientTag)
+  || !nativeIndex.includes(negativeGovernanceTag)
   || !nativeIndex.includes(nativeBridgeTag)
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/query bridge/Gate 6/Gate 7 acceptance clients');
+  throw new Error('Failed to inject the native browser API/negative governance/query bridge/Gate 6/Gate 7 clients');
 }
 if (legacyQueryScriptPattern.test(nativeIndex)) {
   throw new Error('Legacy private cloud query client remains in native index');
@@ -98,6 +101,7 @@ console.log(JSON.stringify({
   indexBytes: indexStat.size,
   browserConnectPolicy: "'self'",
   nativeApiClient: 'assets/cloudflare-native-api-v1.js',
+  negativeGovernanceClient: 'assets/cloudflare-native-negative-governance-v1.js',
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
   gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
   gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',

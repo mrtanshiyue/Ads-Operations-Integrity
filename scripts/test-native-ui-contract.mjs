@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const bridgeSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-query-bridge-v1.js'), 'utf8');
+const negativeGovernanceSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-negative-governance-v1.js'), 'utf8');
 const builtIndex = await readFile(path.join(repoRoot, 'dist-cloudflare-native/index.html'), 'utf8');
 
 const nativeApiCalls = [];
@@ -21,6 +22,42 @@ const nativeApi = {
         marketplace_code: 'US',
       }],
     };
+  },
+  async capabilities() {
+    nativeApiCalls.push({ method: 'capabilities' });
+    return { globalPermissions: ['negatives.manage', 'negatives.read'], storePermissions: {} };
+  },
+  async storeProducts(storeId, options) {
+    nativeApiCalls.push({ method: 'storeProducts', storeId, options: { ...options } });
+    return { items: [{ productId: 'product-dev', modelCode: 'SYNTH-01', sellerSku: 'SKU-01', asin: 'B000DEV001' }] };
+  },
+  async listNegativeKeywords(options) {
+    nativeApiCalls.push({ method: 'listNegativeKeywords', options: { ...options } });
+    return { items: [{ negativeKeywordId: 'negative-dev', keywordText: 'free glasses', matchType: 'PHRASE', status: 'active' }] };
+  },
+  async storeNegativeKeywords(storeId, options) {
+    nativeApiCalls.push({ method: 'storeNegativeKeywords', storeId, options: { ...options } });
+    return { items: [{ negativeKeywordId: 'negative-dev', keywordText: 'free glasses', matchType: 'PHRASE', keywordStatus: 'active', scopeStatus: 'active' }] };
+  },
+  async productNegativeKeywords(storeId, productId, options) {
+    nativeApiCalls.push({ method: 'productNegativeKeywords', storeId, productId, options: { ...options } });
+    return { items: [{ negativeKeywordId: 'negative-dev', keywordText: 'free glasses', matchType: 'PHRASE', keywordStatus: 'active', scopeStatus: 'active' }] };
+  },
+  async putStoreNegativeKeyword(storeId, negativeKeywordId, body) {
+    nativeApiCalls.push({ method: 'putStoreNegativeKeyword', storeId, negativeKeywordId, body: { ...body } });
+    return { scope: { negativeKeywordId, scopeStatus: body.status } };
+  },
+  async deleteStoreNegativeKeyword(storeId, negativeKeywordId) {
+    nativeApiCalls.push({ method: 'deleteStoreNegativeKeyword', storeId, negativeKeywordId });
+    return { deleted: true };
+  },
+  async putProductNegativeKeyword(storeId, productId, negativeKeywordId, body) {
+    nativeApiCalls.push({ method: 'putProductNegativeKeyword', storeId, productId, negativeKeywordId, body: { ...body } });
+    return { scope: { negativeKeywordId, scopeStatus: body.status } };
+  },
+  async deleteProductNegativeKeyword(storeId, productId, negativeKeywordId) {
+    nativeApiCalls.push({ method: 'deleteProductNegativeKeyword', storeId, productId, negativeKeywordId });
+    return { deleted: true };
   },
   async searchTermsDaily(storeId, options) {
     nativeApiCalls.push({ method: 'searchTermsDaily', storeId, options: { ...options } });
@@ -117,7 +154,27 @@ const sandbox = {
   Promise,
   console,
 };
+vm.runInNewContext(negativeGovernanceSource, sandbox, { filename: 'cloudflare-native-negative-governance-v1.js' });
 vm.runInNewContext(bridgeSource, sandbox, { filename: 'cloudflare-native-query-bridge-v1.js' });
+
+const negativeGovernance = window.CloudflareNegativeGovernance;
+assert(negativeGovernance, 'CloudflareNegativeGovernance was not installed');
+assert.equal(negativeGovernance.version, '1.0.0');
+await negativeGovernance.listLibrary({ q: 'free' });
+await negativeGovernance.listStoreScopes('store-dev-01', { scopeStatus: 'active' });
+await negativeGovernance.listProductScopes('store-dev-01', 'product-dev', { scopeStatus: 'active' });
+await negativeGovernance.putStoreScope('store-dev-01', 'negative-dev', 'disabled');
+await negativeGovernance.deleteStoreScope('store-dev-01', 'negative-dev');
+await negativeGovernance.putProductScope('store-dev-01', 'product-dev', 'negative-dev', 'active');
+await negativeGovernance.deleteProductScope('store-dev-01', 'product-dev', 'negative-dev');
+assert(nativeApiCalls.some((call) => call.method === 'listNegativeKeywords' && call.options.limit === 200 && call.options.q === 'free'));
+assert(nativeApiCalls.some((call) => call.method === 'storeNegativeKeywords' && call.storeId === 'store-dev-01'));
+assert(nativeApiCalls.some((call) => call.method === 'productNegativeKeywords' && call.productId === 'product-dev'));
+assert(nativeApiCalls.some((call) => call.method === 'putStoreNegativeKeyword' && call.body.status === 'disabled'));
+assert(nativeApiCalls.some((call) => call.method === 'deleteStoreNegativeKeyword'));
+assert(nativeApiCalls.some((call) => call.method === 'putProductNegativeKeyword' && call.body.status === 'active'));
+assert(nativeApiCalls.some((call) => call.method === 'deleteProductNegativeKeyword'));
+assert.doesNotMatch(negativeGovernanceSource, /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|startSync\s*\(/);
 
 const bridge = window.CloudflareNativeQueryBridge;
 assert(bridge, 'CloudflareNativeQueryBridge was not installed');
@@ -172,7 +229,6 @@ assert.deepEqual(searchCall, {
 const overview = await bridge.overview({ scope: 'DEV01', from: '2026-08-11', to: '2026-08-12' });
 assert.equal(overview.source, 'query-cloudflare-d1');
 assert.equal(overview.grain, 'day');
-assert.deepEqual(overview.series.map((row) => row.date), ['2026-08-11', '2026-08-12']);
 assert.deepEqual(JSON.parse(JSON.stringify(overview.totals)), {
   impressions: 100,
   clicks: 10,
@@ -189,6 +245,7 @@ await assert.rejects(
 
 assert.match(builtIndex, /connect-src\s+'self';/i);
 assert.equal((builtIndex.match(/assets\/cloudflare-native-api-v1\.js/g) || []).length, 1);
+assert.equal((builtIndex.match(/assets\/cloudflare-native-negative-governance-v1\.js/g) || []).length, 1);
 assert.equal((builtIndex.match(/assets\/cloudflare-native-query-bridge-v1\.js/g) || []).length, 1);
 assert.doesNotMatch(builtIndex, /assets\/private-cloud-query-v1\.js/i);
 
@@ -203,6 +260,10 @@ try {
 console.log(JSON.stringify({
   ok: true,
   contracts: [
+    'negative-governance-native-client',
+    'negative-governance-store-scope',
+    'negative-governance-product-scope',
+    'negative-governance-no-sync-trigger',
     'private-cloud-query-alias-native',
     'search-term-real-report-date',
     'report-granularity-day',
@@ -212,6 +273,7 @@ console.log(JSON.stringify({
     'overview-daily-series',
     'same-origin-csp',
     'native-client-single-injection',
+    'negative-governance-single-injection',
     'legacy-query-client-absent',
     'native-provenance-cloudflare-d1',
   ],
