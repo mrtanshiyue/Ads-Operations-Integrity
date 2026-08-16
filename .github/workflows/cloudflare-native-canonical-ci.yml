@@ -6,6 +6,9 @@ on:
       - main
       - cloudflare-foundation-v1
       - 'consolidation/**'
+      - 'feature/**'
+      - 'fix/**'
+      - 'security-integrity-*'
   pull_request:
     branches:
       - main
