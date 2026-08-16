@@ -17,6 +17,8 @@ export async function handleGlobalRoleGovernanceApiRoute({ request, env, actor, 
   }
 
   const db = env.CONTROL_DB;
+  requireAtomicBatch(db);
+
   const authority = await globalRoleActorAuthority(db, actor.user_id);
   const authorityError = actorAuthorityError(authority);
   if (authorityError) return json(request, authorityError.payload, 403);
@@ -55,7 +57,8 @@ async function grantGlobalRole(request, db, actorUserId, userId, roleKey) {
     return json(request, { error: 'store_membership_conflict' }, 409);
   }
 
-  const result = await db.prepare(`
+  const auditContext = buildAuditContext(request);
+  const mutation = db.prepare(`
     INSERT INTO user_global_roles(user_id, role_key, granted_by, granted_at)
     SELECT u.user_id, ?2, ?3, CURRENT_TIMESTAMP
     FROM users u
@@ -94,9 +97,60 @@ async function grantGlobalRole(request, db, actorUserId, userId, roleKey) {
             WHERE actor_role.user_id=actor_user.user_id AND actor_permission.permission_key='system.manage'
           )
       )
-  `).bind(userId, roleKey, actorUserId).run();
+  `).bind(userId, roleKey, actorUserId);
 
-  if (changedRows(result) !== 1) {
+  const auditStatement = db.prepare(`
+    INSERT INTO audit_log(
+      event_id, actor_user_id, store_id, action, entity_type, entity_id,
+      request_id, cf_ray, details_json
+    )
+    SELECT
+      ?1, ?2, NULL, 'user.global_role.grant', 'user_global_role', ?3,
+      ?4, ?5,
+      json_object(
+        'userId', ?6,
+        'roleKey', ?7,
+        'previousGlobalRoles', json('[]'),
+        'globalRoles', json_array(?7),
+        'grantedBy', ?2,
+        'privilegeEscalation', json('true'),
+        'activeOwnerCountBefore',
+          (SELECT COUNT(*)
+           FROM user_global_roles owner_role
+           JOIN users owner_user ON owner_user.user_id=owner_role.user_id
+           WHERE owner_role.role_key='owner' AND owner_user.status='active')
+          - CASE WHEN ?7='owner' THEN 1 ELSE 0 END,
+        'activeOwnerCountAfter',
+          (SELECT COUNT(*)
+           FROM user_global_roles owner_role
+           JOIN users owner_user ON owner_user.user_id=owner_role.user_id
+           WHERE owner_role.role_key='owner' AND owner_user.status='active')
+      )
+    WHERE changes()=1
+  `).bind(
+    auditContext.eventId,
+    actorUserId,
+    `${userId}:${roleKey}`,
+    auditContext.requestId,
+    auditContext.cfRay,
+    userId,
+    roleKey,
+  );
+
+  const ownerCountStatement = activeOwnerCountStatement(db);
+  const [mutationResult, auditResult, ownerCountResult] = await db.batch([
+    mutation,
+    auditStatement,
+    ownerCountStatement,
+  ]);
+
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) {
+    throw new Error('global_role_audit_atomicity_violation');
+  }
+
+  if (mutationChanges !== 1) {
     const currentAuthority = await globalRoleActorAuthority(db, actorUserId);
     const authorityError = actorAuthorityError(currentAuthority);
     if (authorityError) return json(request, authorityError.payload, 403);
@@ -105,7 +159,7 @@ async function grantGlobalRole(request, db, actorUserId, userId, roleKey) {
     if (!current) return json(request, { error: 'user_not_found' }, 404);
     const currentRoles = parseGlobalRoles(current.global_roles_csv);
     if (currentRoles.includes(roleKey) && currentRoles.length === 1) {
-      const activeOwnerCount = await countActiveOwners(db);
+      const activeOwnerCount = ownerCountFromBatch(ownerCountResult, await countActiveOwners(db));
       return json(request, { changed: false, userId, roleKey, globalRoles: currentRoles, activeOwnerCount }, 200);
     }
     if (current.status !== 'active') return json(request, { error: 'user_not_active' }, 409);
@@ -121,28 +175,12 @@ async function grantGlobalRole(request, db, actorUserId, userId, roleKey) {
     return json(request, { error: 'global_role_conflict' }, 409);
   }
 
-  const globalRoles = [roleKey];
-  const activeOwnerCountAfter = await countActiveOwners(db);
-  const activeOwnerCountBefore = roleKey === 'owner'
-    ? Math.max(0, activeOwnerCountAfter - 1)
-    : activeOwnerCountAfter;
-
-  await audit(db, request, actorUserId, 'user.global_role.grant', 'user_global_role', `${userId}:${roleKey}`, {
-    userId,
-    roleKey,
-    previousGlobalRoles,
-    globalRoles,
-    grantedBy: actorUserId,
-    privilegeEscalation: true,
-    activeOwnerCountBefore,
-    activeOwnerCountAfter,
-  });
-
+  const activeOwnerCountAfter = ownerCountFromBatch(ownerCountResult);
   return json(request, {
     changed: true,
     userId,
     roleKey,
-    globalRoles,
+    globalRoles: [roleKey],
     activeOwnerCount: activeOwnerCountAfter,
   }, 200);
 }
@@ -163,10 +201,28 @@ async function revokeGlobalRole(request, db, actorUserId, userId, roleKey) {
     }, 200);
   }
 
-  const deleteResult = await db.prepare(`
+  const relation = await globalRoleRelationById(db, userId, roleKey);
+  if (!relation) {
+    const current = await globalRoleTargetById(db, userId);
+    const currentRoles = parseGlobalRoles(current?.global_roles_csv);
+    const activeOwnerCount = await countActiveOwners(db);
+    return json(request, {
+      changed: false,
+      userId,
+      roleKey,
+      globalRoles: currentRoles,
+      activeOwnerCount,
+    }, 200);
+  }
+
+  const auditContext = buildAuditContext(request);
+  const mutation = db.prepare(`
     DELETE FROM user_global_roles
     WHERE user_id=?1
       AND role_key=?2
+      AND rowid=?4
+      AND granted_by IS ?5
+      AND granted_at=?6
       AND EXISTS (
         SELECT 1
         FROM users actor_user
@@ -204,16 +260,75 @@ async function revokeGlobalRole(request, db, actorUserId, userId, roleKey) {
           WHERE owner_role.role_key='owner' AND owner_user.status='active'
         ) > 1
       )
-    RETURNING user_id, role_key, granted_by, granted_at
-  `).bind(userId, roleKey, actorUserId).all();
+  `).bind(
+    userId,
+    roleKey,
+    actorUserId,
+    Number(relation.relation_rowid),
+    relation.granted_by ?? null,
+    relation.granted_at,
+  );
 
-  const revoked = (deleteResult.results || [])[0] || null;
-  if (!revoked) {
+  const auditStatement = db.prepare(`
+    INSERT INTO audit_log(
+      event_id, actor_user_id, store_id, action, entity_type, entity_id,
+      request_id, cf_ray, details_json
+    )
+    SELECT
+      ?1, ?2, NULL, 'user.global_role.revoke', 'user_global_role', ?3,
+      ?4, ?5,
+      json_object(
+        'userId', ?6,
+        'roleKey', ?7,
+        'previousGlobalRoles', json_array(?7),
+        'globalRoles', json('[]'),
+        'grantedBy', ?8,
+        'grantedAt', ?9,
+        'privilegeEscalation', json('false'),
+        'activeOwnerCountBefore',
+          (SELECT COUNT(*)
+           FROM user_global_roles owner_role
+           JOIN users owner_user ON owner_user.user_id=owner_role.user_id
+           WHERE owner_role.role_key='owner' AND owner_user.status='active')
+          + CASE WHEN ?7='owner' THEN 1 ELSE 0 END,
+        'activeOwnerCountAfter',
+          (SELECT COUNT(*)
+           FROM user_global_roles owner_role
+           JOIN users owner_user ON owner_user.user_id=owner_role.user_id
+           WHERE owner_role.role_key='owner' AND owner_user.status='active')
+      )
+    WHERE changes()=1
+  `).bind(
+    auditContext.eventId,
+    actorUserId,
+    `${userId}:${roleKey}`,
+    auditContext.requestId,
+    auditContext.cfRay,
+    userId,
+    roleKey,
+    relation.granted_by ?? null,
+    relation.granted_at,
+  );
+
+  const ownerCountStatement = activeOwnerCountStatement(db);
+  const [mutationResult, auditResult, ownerCountResult] = await db.batch([
+    mutation,
+    auditStatement,
+    ownerCountStatement,
+  ]);
+
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) {
+    throw new Error('global_role_audit_atomicity_violation');
+  }
+
+  if (mutationChanges !== 1) {
     const current = await globalRoleTargetById(db, userId);
     if (!current) return json(request, { error: 'user_not_found' }, 404);
     const currentRoles = parseGlobalRoles(current.global_roles_csv);
     if (!currentRoles.includes(roleKey)) {
-      const activeOwnerCount = await countActiveOwners(db);
+      const activeOwnerCount = ownerCountFromBatch(ownerCountResult, await countActiveOwners(db));
       return json(request, { changed: false, userId, roleKey, globalRoles: currentRoles, activeOwnerCount }, 200);
     }
     const currentAuthority = await globalRoleActorAuthority(db, actorUserId);
@@ -225,30 +340,12 @@ async function revokeGlobalRole(request, db, actorUserId, userId, roleKey) {
     return json(request, { error: 'global_role_conflict' }, 409);
   }
 
-  const globalRoles = previousGlobalRoles.filter((item) => item !== roleKey);
-  const activeOwnerCountAfter = await countActiveOwners(db);
-  const targetWasActiveOwner = roleKey === 'owner' && target.status === 'active';
-  const activeOwnerCountBefore = targetWasActiveOwner
-    ? activeOwnerCountAfter + 1
-    : activeOwnerCountAfter;
-
-  await audit(db, request, actorUserId, 'user.global_role.revoke', 'user_global_role', `${userId}:${roleKey}`, {
-    userId,
-    roleKey,
-    previousGlobalRoles,
-    globalRoles,
-    grantedBy: revoked.granted_by || null,
-    grantedAt: revoked.granted_at || null,
-    privilegeEscalation: false,
-    activeOwnerCountBefore,
-    activeOwnerCountAfter,
-  });
-
+  const activeOwnerCountAfter = ownerCountFromBatch(ownerCountResult);
   return json(request, {
     changed: true,
     userId,
     roleKey,
-    globalRoles,
+    globalRoles: [],
     activeOwnerCount: activeOwnerCountAfter,
   }, 200);
 }
@@ -312,6 +409,15 @@ async function globalRoleTargetById(db, userId) {
   `).bind(userId).first();
 }
 
+async function globalRoleRelationById(db, userId, roleKey) {
+  return db.prepare(`
+    SELECT rowid AS relation_rowid, user_id, role_key, granted_by, granted_at
+    FROM user_global_roles
+    WHERE user_id=?1 AND role_key=?2
+    LIMIT 1
+  `).bind(userId, roleKey).first();
+}
+
 async function countActiveOwners(db) {
   const row = await db.prepare(`
     SELECT COUNT(*) AS active_owner_count
@@ -322,20 +428,37 @@ async function countActiveOwners(db) {
   return Number(row?.active_owner_count || 0);
 }
 
-async function audit(db, request, actorUserId, action, entityType, entityId, details) {
-  await db.prepare(`
-    INSERT INTO audit_log(event_id, actor_user_id, store_id, action, entity_type, entity_id, request_id, cf_ray, details_json)
-    VALUES(?1,?2,NULL,?3,?4,?5,?6,?7,?8)
-  `).bind(
-    crypto.randomUUID(),
-    actorUserId,
-    action,
-    entityType,
-    entityId,
-    request.headers.get('cf-ray') || crypto.randomUUID(),
-    request.headers.get('cf-ray'),
-    JSON.stringify(details || {}),
-  ).run();
+function activeOwnerCountStatement(db) {
+  return db.prepare(`
+    SELECT COUNT(*) AS active_owner_count
+    FROM user_global_roles ugr
+    JOIN users u ON u.user_id=ugr.user_id
+    WHERE ugr.role_key='owner' AND u.status='active'
+  `);
+}
+
+function buildAuditContext(request) {
+  const cfRay = request.headers.get('cf-ray');
+  return {
+    eventId: crypto.randomUUID(),
+    requestId: cfRay || crypto.randomUUID(),
+    cfRay,
+  };
+}
+
+function requireAtomicBatch(db) {
+  if (!db || typeof db.batch !== 'function') {
+    throw new Error('control_d1_atomic_batch_required');
+  }
+}
+
+function ownerCountFromBatch(result, fallback = null) {
+  const row = (result?.results || [])[0] || null;
+  if (row && row.active_owner_count !== undefined && row.active_owner_count !== null) {
+    return Number(row.active_owner_count || 0);
+  }
+  if (fallback !== null && fallback !== undefined) return Number(fallback || 0);
+  throw new Error('active_owner_count_batch_result_missing');
 }
 
 function changedRows(result) {
