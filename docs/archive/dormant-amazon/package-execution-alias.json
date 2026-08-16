@@ -1,0 +1,9 @@
+{
+  "archivedAt": "2026-08-16",
+  "phase": "Architecture Convergence Phase 0",
+  "reason": "Amazon API live execution is intentionally paused until the later Amazon integration phase.",
+  "retiredPackageEntrypoint": {
+    "provision:cf-sync:dev:amazon-secrets": "node scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs"
+  },
+  "currentPolicy": "Helper implementations remain regression-testable, but Amazon credential provisioning and live execution are not part of the active Phase 0 execution surface."
+}
