@@ -60,6 +60,8 @@ for (const workflow of retiredGranularWorkflows) {
   );
 }
 assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing retired CI archive manifest');
+assert.equal(await exists('docs/archive/legacy-deploy/package-deploy-scripts.json'), true, 'missing direct deploy command archive');
+assert.equal(await exists('scripts/block-direct-cloudflare-deploy.mjs'), true, 'missing direct deploy blocker');
 
 const readme = await text('README.md');
 assert.match(readme, /Cloudflare Native/i);
@@ -73,6 +75,28 @@ assert.match(status, /final Cloudflare Native Production deployment contract is 
 
 const packageJson = JSON.parse(await text('package.json'));
 assert.equal(packageJson.scripts?.build, 'node scripts/build-cloudflare.mjs');
+assert.equal(packageJson.scripts?.['check:cloudflare'], 'npm run check:cf-native');
+const directDeployScripts = [
+  'deploy:cloudflare',
+  'deploy:cf-native:dev',
+  'deploy:cf-sync:dev',
+  'deploy:cf-stack:dev',
+  'deploy:cf-native:prod',
+  'deploy:cf-sync:prod',
+  'deploy:cf-stack:prod',
+];
+for (const scriptName of directDeployScripts) {
+  assert.match(
+    String(packageJson.scripts?.[scriptName] || ''),
+    /^node scripts\/block-direct-cloudflare-deploy\.mjs /,
+    `direct deploy alias must be blocked: ${scriptName}`,
+  );
+}
+assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/);
+
+const deployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
+assert.match(deployBlocker, /Direct Cloudflare deployment is disabled/);
+assert.match(deployBlocker, /CI-gated and exact-commit controlled/);
 
 const buildShim = await text('scripts/build-cloudflare.mjs');
 assert.match(buildShim, /build-cloudflare-native\.mjs/);
@@ -101,11 +125,12 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v2',
+  contract: 'architecture-convergence-phase0-v3',
   canonicalRuntime: 'cloudflare-native',
   rootWranglerAbsent: true,
   legacyPagesInactive: true,
   granularCiRetired: true,
+  directDeployAliasesBlocked: true,
   legacyArchived: true,
   canonicalCoverageParityLocked: true,
   nativeAssetAllowlistEnforced: true,
