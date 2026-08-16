@@ -117,6 +117,8 @@ assets/cloudflare-native-access-console-v1.js
 
 Phase 3 adds operator-facing product surfaces on top of those existing APIs rather than creating another backend architecture.
 
+Retired Warehouse/browser loader implementations remain recoverable only under `docs/archive/legacy-browser-loaders/`; they are archive/reference material and must not re-enter the active Native artifact.
+
 Cloud Raw import remains explicitly fail-closed:
 
 ```text
@@ -145,7 +147,7 @@ Historical Sync Dev runtime remains outside Phase 3 implementation scope. No Pha
 
 ## Production state
 
-Production remains **NOT READY**.
+Production remains **NOT READY**. The final Cloudflare Native Production deployment contract is **not established yet**.
 
 `cloudflare/runtime/wrangler.native.jsonc` still contains unresolved Production placeholders including:
 
