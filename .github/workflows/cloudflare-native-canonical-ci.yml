@@ -167,6 +167,11 @@ jobs:
           node --check scripts/test-security-integrity-d1-harness.mjs
           node scripts/test-security-integrity-d1-harness.mjs
 
+      - name: Validate full Access JWT request pipeline
+        run: |
+          node --check scripts/test-access-web-worker-integration.mjs
+          node scripts/test-access-web-worker-integration.mjs
+
       - name: Validate dormant Amazon transport regressions without deployment
         run: |
           node --check cloudflare/runtime/amazon-ads-credential-provider.js
