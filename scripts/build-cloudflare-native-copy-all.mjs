@@ -10,6 +10,7 @@ const required = [
   'index.html',
   'assets',
   'assets/cloudflare-native-api-v1.js',
+  'assets/cloudflare-native-keyword-governance-v1.js',
   'assets/cloudflare-native-negative-governance-v1.js',
   'assets/cloudflare-native-audit-console-v1.js',
   'assets/cloudflare-native-access-console-v1.js',
@@ -21,6 +22,16 @@ const required = [
 
 for (const entry of required) {
   await access(path.join(repoRoot, entry), constants.R_OK);
+}
+
+const keywordGovernancePath = path.join(repoRoot, 'assets/cloudflare-native-keyword-governance-v1.js');
+const keywordGovernanceSource = await readFile(keywordGovernancePath, 'utf8');
+new vm.Script(keywordGovernanceSource, { filename: 'cloudflare-native-keyword-governance-v1.js' });
+if (/AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(|wrangler\s+deploy/i.test(keywordGovernanceSource)) {
+  throw new Error('Keyword governance console must remain isolated from Amazon/sync/direct deployment transports');
+}
+if (!/CloudflareNativeAPI/.test(keywordGovernanceSource) || !/CloudflareKeywordGovernance/.test(keywordGovernanceSource)) {
+  throw new Error('Keyword governance console must expose its Native API delegated public contract');
 }
 
 const auditConsolePath = path.join(repoRoot, 'assets/cloudflare-native-audit-console-v1.js');
@@ -189,6 +200,7 @@ for (const entry of retiredScriptPatterns) {
 }
 
 const nativeClientTag = '<script src="assets/cloudflare-native-api-v1.js"></script>';
+const keywordGovernanceTag = '<script src="assets/cloudflare-native-keyword-governance-v1.js"></script>';
 const negativeGovernanceTag = '<script src="assets/cloudflare-native-negative-governance-v1.js"></script>';
 const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.js"></script>';
 const accessConsoleTag = '<script src="assets/cloudflare-native-access-console-v1.js"></script>';
@@ -196,13 +208,14 @@ const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.j
 const nativeDataPanelTag = '<script src="assets/cloudflare-native-data-panel-v1.js"></script>';
 const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
 const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${keywordGovernanceTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
+for (const tag of [nativeClientTag, keywordGovernanceTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
 if (
   !nativeIndex.includes(nativeClientTag)
+  || !nativeIndex.includes(keywordGovernanceTag)
   || !nativeIndex.includes(negativeGovernanceTag)
   || !nativeIndex.includes(auditConsoleTag)
   || !nativeIndex.includes(accessConsoleTag)
@@ -211,7 +224,10 @@ if (
   || !nativeIndex.includes(gate6AcceptanceTag)
   || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/governance/audit/access/query/data-panel/Gate clients');
+  throw new Error('Failed to inject the native browser API/keyword/negative/audit/access/query/data-panel/Gate clients');
+}
+if ((nativeIndex.split(keywordGovernanceTag).length - 1) !== 1) {
+  throw new Error('Keyword governance console client must be injected exactly once');
 }
 if ((nativeIndex.split(auditConsoleTag).length - 1) !== 1) {
   throw new Error('Audit console client must be injected exactly once');
@@ -262,6 +278,8 @@ console.log(JSON.stringify({
   indexBytes: indexStat.size,
   browserConnectPolicy: "'self'",
   nativeApiClient: 'assets/cloudflare-native-api-v1.js',
+  keywordGovernanceClient: 'assets/cloudflare-native-keyword-governance-v1.js',
+  keywordGovernanceContract: 'control-d1-native-api-no-amazon-sync',
   negativeGovernanceClient: 'assets/cloudflare-native-negative-governance-v1.js',
   auditConsoleClient: 'assets/cloudflare-native-audit-console-v1.js',
   auditConsoleContract: 'read-only-native-api',
