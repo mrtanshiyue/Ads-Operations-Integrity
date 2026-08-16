@@ -21,6 +21,7 @@ async function text(relativePath) {
 
 // Active repository paths must expose only the Cloudflare Native deployment model.
 assert.equal(await exists('wrangler.jsonc'), false, 'root wrangler.jsonc must remain absent');
+assert.equal(await exists('src/worker.js'), false, 'legacy Warehouse proxy worker must remain inactive');
 assert.equal(await exists('.github/workflows/pages.yml'), false, 'legacy GitHub Pages workflow must remain inactive');
 assert.equal(await exists('.github/workflows/ci-main.yml'), false, 'legacy TiDB-era main CI must remain inactive');
 
@@ -44,6 +45,7 @@ for (const workflow of retiredGranularWorkflows) {
 // Historical material must remain recoverable without remaining active.
 for (const archivedPath of [
   'docs/archive/legacy-warehouse-v4/wrangler.jsonc',
+  'docs/archive/legacy-warehouse-v4/src-worker.js',
   'docs/archive/legacy-github-pages/pages.yml',
   'docs/archive/legacy-github-pages/ci-main.yml',
   'docs/archive/legacy-github-pages/build-cloudflare.mjs',
@@ -62,6 +64,15 @@ for (const workflow of retiredGranularWorkflows) {
 assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing retired CI archive manifest');
 assert.equal(await exists('docs/archive/legacy-deploy/package-deploy-scripts.json'), true, 'missing direct deploy command archive');
 assert.equal(await exists('scripts/block-direct-cloudflare-deploy.mjs'), true, 'missing direct deploy blocker');
+
+const nativeWrangler = await text('cloudflare/runtime/wrangler.native.jsonc');
+assert.match(nativeWrangler, /"main"\s*:\s*"\.\/web-entry\.js"/);
+const webEntry = await text('cloudflare/runtime/web-entry.js');
+assert.match(webEntry, /from ['"]\.\/web-worker\.js['"]/);
+assert.doesNotMatch(webEntry, /src\/worker\.js/);
+const archivedWarehouseProxy = await text('docs/archive/legacy-warehouse-v4/src-worker.js');
+assert.match(archivedWarehouseProxy, /WAREHOUSE_BINDING_UNAVAILABLE/);
+assert.match(archivedWarehouseProxy, /amazon-warehouse-cloud-v4\.internal/);
 
 const readme = await text('README.md');
 assert.match(readme, /Cloudflare Native/i);
@@ -125,9 +136,11 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v3',
+  contract: 'architecture-convergence-phase0-v4',
   canonicalRuntime: 'cloudflare-native',
+  canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   rootWranglerAbsent: true,
+  legacyWarehouseProxyInactive: true,
   legacyPagesInactive: true,
   granularCiRetired: true,
   directDeployAliasesBlocked: true,
