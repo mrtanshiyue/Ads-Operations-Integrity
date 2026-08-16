@@ -50,6 +50,28 @@ export function buildDevSyncReleaseSteps(env = {}, options = {}) {
 
 export const DEV_SYNC_RELEASE_STEPS = buildDevSyncReleaseSteps();
 
+export function resolveCurrentGitCommit(options = {}) {
+  const spawn = options.spawn ?? spawnSync;
+  const cwd = options.cwd ?? process.cwd();
+  const result = spawn('git', ['rev-parse', 'HEAD'], {
+    cwd,
+    encoding:'utf8',
+    stdio:['ignore', 'pipe', 'inherit'],
+    shell:false,
+  });
+  if (result?.error) {
+    const error = new Error('CF_SYNC_DEV_RELEASE_GIT_HEAD_FAILED');
+    error.cause = result.error;
+    throw error;
+  }
+  if (result?.status !== 0) {
+    throw new Error(`CF_SYNC_DEV_RELEASE_GIT_HEAD_FAILED:${String(result?.status)}`);
+  }
+  const commitSha = optionalCommitSha(result?.stdout);
+  if (!commitSha) throw new Error('CF_SYNC_DEV_RELEASE_GIT_HEAD_INVALID');
+  return commitSha;
+}
+
 export function runCloudflareSyncDevRelease(options = {}) {
   const spawn = options.spawn ?? spawnSync;
   const cwd = options.cwd ?? process.cwd();
@@ -84,5 +106,6 @@ function optionalCommitSha(value) {
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
 if (invokedPath === import.meta.url) {
-  runCloudflareSyncDevRelease();
+  const commitSha = resolveCurrentGitCommit();
+  runCloudflareSyncDevRelease({ commitSha });
 }

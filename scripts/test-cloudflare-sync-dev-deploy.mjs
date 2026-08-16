@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import {
   DEV_SYNC_RELEASE_STEPS,
   buildDevSyncReleaseSteps,
+  resolveCurrentGitCommit,
   runCloudflareSyncDevRelease,
 } from './deploy-cloudflare-sync-dev.mjs';
 
@@ -55,6 +56,29 @@ assert.throws(
 
 const explicitSteps = buildDevSyncReleaseSteps({}, { commitSha:buildSha.toUpperCase() });
 assert.equal(explicitSteps[2].args[explicitSteps[2].args.indexOf('--tag') + 1], buildSha);
+
+assert.equal(resolveCurrentGitCommit({
+  cwd:'/repo',
+  spawn(command, args, options) {
+    assert.equal(command, 'git');
+    assert.deepEqual(args, ['rev-parse', 'HEAD']);
+    assert.equal(options.cwd, '/repo');
+    assert.equal(options.shell, false);
+    return { status:0, stdout:`${buildSha.toUpperCase()}\n` };
+  },
+}), buildSha);
+assert.throws(
+  () => resolveCurrentGitCommit({
+    spawn() { return { status:17, stdout:'' }; },
+  }),
+  /CF_SYNC_DEV_RELEASE_GIT_HEAD_FAILED:17/,
+);
+assert.throws(
+  () => resolveCurrentGitCommit({
+    spawn() { return { status:0, stdout:'not-a-sha\n' }; },
+  }),
+  /CF_SYNC_DEV_RELEASE_COMMIT_SHA_INVALID/,
+);
 
 const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const syncDevScript = String(packageJson.scripts?.['deploy:cf-sync:dev'] || '');
