@@ -30,6 +30,7 @@
     "test:cf-foundation": "python3 scripts/test-cloudflare-foundation.py && node scripts/test-rollup-contract.mjs && node scripts/test-rollup-observability.mjs && node scripts/test-d1-rest-adapter.mjs && npm run test:cf-access",
     "provision:cf-native:dev:dry": "node scripts/provision-cloudflare-dev.mjs --dry-run",
     "provision:cf-native:dev": "node scripts/provision-cloudflare-dev.mjs",
+    "provision:cf-sync:dev:amazon-secrets": "node scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs",
     "bootstrap:cf-native:dev": "node scripts/bootstrap-cloudflare-dev.mjs",
     "validate:cf-native:dev": "node scripts/validate-cloudflare-native.mjs --env dev",
     "validate:cf-native:prod": "node scripts/validate-cloudflare-native.mjs --env production",

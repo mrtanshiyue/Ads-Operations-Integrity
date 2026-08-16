@@ -17,6 +17,8 @@ on:
       - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/deploy-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
@@ -39,6 +41,8 @@ on:
       - 'cloudflare/runtime/.dev.vars.example'
       - 'scripts/deploy-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-deploy.mjs'
+      - 'scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs'
+      - 'scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs'
       - 'scripts/smoke-cloudflare-sync-dev.mjs'
       - 'scripts/test-cloudflare-sync-dev-smoke.mjs'
       - 'scripts/test-amazon-ads-credential-provider.mjs'
@@ -77,6 +81,8 @@ jobs:
           node --check cloudflare/runtime/sync-worker.js
           node --check scripts/deploy-cloudflare-sync-dev.mjs
           node --check scripts/test-cloudflare-sync-dev-deploy.mjs
+          node --check scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs
+          node --check scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
           node --check scripts/smoke-cloudflare-sync-dev.mjs
           node --check scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-amazon-ads-credential-provider.mjs
@@ -84,6 +90,7 @@ jobs:
           node scripts/test-amazon-ads-bootstrap-transport.mjs
           node scripts/test-amazon-ads-sync-runtime.mjs
           node scripts/test-cloudflare-sync-dev-deploy.mjs
+          node scripts/test-provision-cloudflare-amazon-ads-dev-secrets.mjs
           node scripts/test-cloudflare-sync-dev-smoke.mjs
           node scripts/test-phase-e-runtime-integration.mjs
 
