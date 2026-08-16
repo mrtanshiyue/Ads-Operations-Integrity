@@ -41,6 +41,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Lock architecture convergence boundaries
+        run: node scripts/test-architecture-convergence-contract.mjs
+
       - name: Validate canonical Cloudflare Native runtime
         run: npm run check:cf-native
 
