@@ -71,6 +71,12 @@
     listNegativeKeywords: (params) => request(query('/api/v1/negative-keywords', params)),
     createNegativeKeyword: (body) => request('/api/v1/negative-keywords', { method: 'POST', body }),
     updateNegativeKeyword: (id, body) => request(`/api/v1/negative-keywords/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+    storeNegativeKeywords: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/negative-keywords`, params)),
+    putStoreNegativeKeyword: (storeId, negativeKeywordId, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/negative-keywords/${encodeURIComponent(negativeKeywordId)}`, { method: 'PUT', body }),
+    deleteStoreNegativeKeyword: (storeId, negativeKeywordId) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/negative-keywords/${encodeURIComponent(negativeKeywordId)}`, { method: 'DELETE' }),
+    productNegativeKeywords: (storeId, productId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/negative-keywords`, params)),
+    putProductNegativeKeyword: (storeId, productId, negativeKeywordId, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/negative-keywords/${encodeURIComponent(negativeKeywordId)}`, { method: 'PUT', body }),
+    deleteProductNegativeKeyword: (storeId, productId, negativeKeywordId) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/negative-keywords/${encodeURIComponent(negativeKeywordId)}`, { method: 'DELETE' }),
 
     storeProducts: (storeId, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/products`, params)),
     putStoreProduct: (storeId, productId, sellerSku, body) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/products/${encodeURIComponent(productId)}/${encodeURIComponent(sellerSku)}`, { method: 'PUT', body }),
