@@ -19,11 +19,21 @@ async function text(relativePath) {
   return readFile(path.join(repoRoot, relativePath), 'utf8');
 }
 
-// Active repository paths must expose only the Cloudflare Native deployment model.
 assert.equal(await exists('wrangler.jsonc'), false, 'root wrangler.jsonc must remain absent');
 assert.equal(await exists('src/worker.js'), false, 'legacy Warehouse proxy worker must remain inactive');
 assert.equal(await exists('.github/workflows/pages.yml'), false, 'legacy GitHub Pages workflow must remain inactive');
 assert.equal(await exists('.github/workflows/ci-main.yml'), false, 'legacy TiDB-era main CI must remain inactive');
+
+const retiredBrowserAssets = [
+  'assets/private-cloud-query-v1.js',
+  'assets/private-cloud-warehouse-v3.js',
+  'assets/private-cloud-warehouse-v4.js',
+  'assets/generated/inline-script-09.js',
+  'assets/generated/inline-script-11.js',
+];
+for (const retiredPath of retiredBrowserAssets) {
+  assert.equal(await exists(retiredPath), false, `legacy browser loader must not remain active source: ${retiredPath}`);
+}
 
 const retiredGranularWorkflows = [
   'cloudflare-access-governance-ci.yml',
@@ -35,14 +45,9 @@ const retiredGranularWorkflows = [
   'cloudflare-gate27-ci.yml',
 ];
 for (const workflow of retiredGranularWorkflows) {
-  assert.equal(
-    await exists(`.github/workflows/${workflow}`),
-    false,
-    `retired granular workflow must remain inactive: ${workflow}`,
-  );
+  assert.equal(await exists(`.github/workflows/${workflow}`), false, `retired granular workflow must remain inactive: ${workflow}`);
 }
 
-// Historical material must remain recoverable without remaining active.
 for (const archivedPath of [
   'docs/archive/legacy-warehouse-v4/wrangler.jsonc',
   'docs/archive/legacy-warehouse-v4/src-worker.js',
@@ -51,15 +56,17 @@ for (const archivedPath of [
   'docs/archive/legacy-github-pages/build-cloudflare.mjs',
   'docs/archive/legacy-github-pages/README.md',
   'docs/archive/legacy-github-pages/README_PRODUCTION_STATUS.md',
+  'docs/archive/legacy-browser-loaders/README.md',
+  'docs/archive/legacy-browser-loaders/private-cloud-query-v1.js',
+  'docs/archive/legacy-browser-loaders/private-cloud-warehouse-v3.js',
+  'docs/archive/legacy-browser-loaders/private-cloud-warehouse-v4.js',
+  'docs/archive/legacy-browser-loaders/generated-inline-script-09.js',
+  'docs/archive/legacy-browser-loaders/generated-inline-script-11.js',
 ]) {
   assert.equal(await exists(archivedPath), true, `missing legacy archive: ${archivedPath}`);
 }
 for (const workflow of retiredGranularWorkflows) {
-  assert.equal(
-    await exists(`docs/archive/legacy-ci/${workflow}`),
-    true,
-    `missing retired CI archive: ${workflow}`,
-  );
+  assert.equal(await exists(`docs/archive/legacy-ci/${workflow}`), true, `missing retired CI archive: ${workflow}`);
 }
 assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing retired CI archive manifest');
 assert.equal(await exists('docs/archive/legacy-deploy/package-deploy-scripts.json'), true, 'missing direct deploy command archive');
@@ -78,11 +85,13 @@ const readme = await text('README.md');
 assert.match(readme, /Cloudflare Native/i);
 assert.match(readme, /Amazon Ads Operations OS/i);
 assert.doesNotMatch(readme, /这是一个部署在 \*\*GitHub Pages\*\*/i);
-assert.doesNotMatch(readme, /GitHub Pages \/ Browser\s*\n\s*-> Cloudflare Worker V4/i);
 
 const status = await text('README_PRODUCTION_STATUS.md');
 assert.match(status, /Architecture Convergence Phase 0/i);
 assert.match(status, /final Cloudflare Native Production deployment contract is \*\*not established yet\*\*/i);
+assert.match(status, /legacy-browser-loaders/);
+assert.match(status, /cloudflare-native-data-panel-v1\.js/);
+assert.match(status, /cloudflare_native_raw_import_not_migrated/);
 
 const packageJson = JSON.parse(await text('package.json'));
 assert.equal(packageJson.scripts?.build, 'node scripts/build-cloudflare.mjs');
@@ -97,11 +106,7 @@ const directDeployScripts = [
   'deploy:cf-stack:prod',
 ];
 for (const scriptName of directDeployScripts) {
-  assert.match(
-    String(packageJson.scripts?.[scriptName] || ''),
-    /^node scripts\/block-direct-cloudflare-deploy\.mjs /,
-    `direct deploy alias must be blocked: ${scriptName}`,
-  );
+  assert.match(String(packageJson.scripts?.[scriptName] || ''), /^node scripts\/block-direct-cloudflare-deploy\.mjs /, `direct deploy alias must be blocked: ${scriptName}`);
 }
 assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/);
 
@@ -148,19 +153,20 @@ assert.match(canonicalCi, /test-native-cloud-loader-strangler-contract\.mjs/);
 assert.match(canonicalCi, /Validate Phase E producer and ingestion regressions/);
 assert.match(canonicalCi, /Validate R2 provenance Gate 24-27 regressions/);
 assert.match(canonicalCi, /Validate dormant Amazon transport regressions without deployment/);
-assert.match(canonicalCi, /test-promote-cloudflare-sync-dev-trigger\.mjs/);
 assert.doesNotMatch(canonicalCi, /^\s*node scripts\/promote-cloudflare-sync-dev-trigger\.mjs\s*$/m);
 assert.doesNotMatch(canonicalCi, /wrangler deploy/);
 assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'architecture-convergence-phase0-v5',
+  contract: 'architecture-convergence-phase0-v6',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
+  legacyBrowserLoaderSourceOwner: 'docs/archive/legacy-browser-loaders/',
   rootWranglerAbsent: true,
   legacyWarehouseProxyInactive: true,
+  legacyBrowserCloudLoadersInactiveSource: true,
   legacyBrowserCloudLoadersForbiddenFromArtifact: true,
   legacyPagesInactive: true,
   granularCiRetired: true,

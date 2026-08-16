@@ -23,8 +23,8 @@ assert.doesNotMatch(dataPanelSource, /amazon-warehouse-cloud-v4\.tanshiyuesir\.w
 assert.doesNotMatch(dataPanelSource, /Authorization:\s*Bearer|headers\.set\(['"]Authorization/);
 assert.doesNotMatch(dataPanelSource, /\bfetch\s*\(/, 'native data panel must delegate transport instead of fetching directly');
 
-// Keep evidence for why the migration-era browser loaders are forbidden in the Native artifact.
-const legacyInline09 = await readFile(path.join(repoRoot, 'assets/generated/inline-script-09.js'), 'utf8');
+// Keep archived evidence for why the migration-era browser loaders are forbidden.
+const legacyInline09 = await readFile(path.join(repoRoot, 'docs/archive/legacy-browser-loaders/generated-inline-script-09.js'), 'utf8');
 assert.match(legacyInline09, /sessionStorage/);
 assert.match(legacyInline09, /lr_private_cloud_password/);
 assert.match(legacyInline09, /X-Dashboard-Password/);
@@ -32,7 +32,7 @@ assert.match(legacyInline09, /amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.
 assert.match(legacyInline09, /window\.PrivateCloudAds/);
 assert.match(legacyInline09, /lr:shop-change/);
 
-const legacyWarehouseV4 = await readFile(path.join(repoRoot, 'assets/private-cloud-warehouse-v4.js'), 'utf8');
+const legacyWarehouseV4 = await readFile(path.join(repoRoot, 'docs/archive/legacy-browser-loaders/private-cloud-warehouse-v4.js'), 'utf8');
 assert.match(legacyWarehouseV4, /amazon-warehouse-cloud-v4\.tanshiyuesir\.workers\.dev/);
 assert.match(legacyWarehouseV4, /window\.PrivateCloudAds/);
 assert.match(legacyWarehouseV4, /lr:shop-change/);
@@ -83,8 +83,9 @@ for (const relativePath of await collectJsFiles(distAssets)) {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'cloudflare-native-data-panel-strangler-v1',
+  contract: 'cloudflare-native-data-panel-strangler-v2',
   nativeController: 'assets/cloudflare-native-data-panel-v1.js',
+  legacySourceOwner: 'docs/archive/legacy-browser-loaders/',
   transport: 'CloudflareNativeQueryBridge',
   credentialMode: 'cloudflare-access-session',
   rawCloudImportReady: false,
