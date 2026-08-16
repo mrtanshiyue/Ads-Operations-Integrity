@@ -12,6 +12,7 @@ const nativeWrangler = await text('cloudflare/runtime/wrangler.native.jsonc');
 const syncWrangler = await text('cloudflare/runtime/wrangler.sync.jsonc');
 const webEntry = await text('cloudflare/runtime/web-entry.js');
 const deploymentHealth = await text('cloudflare/runtime/deployment-health.js');
+const buildsClient = await text('scripts/cloudflare-workers-builds-client.mjs');
 const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
@@ -21,6 +22,7 @@ assert.match(canonicalCi, /deployment-integrity-\*/);
 assert.match(canonicalCi, /name:\s*Static site and security invariants/);
 assert.match(canonicalCi, /test-deployment-integrity-contract\.mjs/);
 assert.match(canonicalCi, /test-deployment-health-contract\.mjs/);
+assert.match(canonicalCi, /test-cloudflare-workers-builds-client\.mjs/);
 
 // Canonical CI remains validation-only. No repository path may silently restore direct deployment.
 assert.doesNotMatch(canonicalCi, /wrangler\s+deploy/);
@@ -69,6 +71,19 @@ assert.match(deploymentHealth, /versionTimestamp/);
 assert.match(deploymentHealth, /\/api\/health/);
 assert.doesNotMatch(deploymentHealth, /CLOUDFLARE_API_TOKEN|AMAZON_CLIENT_SECRET|AMAZON_ADS_CLIENT_SECRET/);
 
+// Builds API support is library-only during foundation work. CI may test it only through injected fetch.
+assert.match(buildsClient, /builds\/triggers\/.*\/builds/);
+assert.match(buildsClient, /commit_hash/);
+assert.match(buildsClient, /build_uuid/);
+assert.match(buildsClient, /build_trigger_metadata/);
+assert.match(buildsClient, /trigger_uuid/);
+assert.match(buildsClient, /external_script_id/);
+assert.match(buildsClient, /fetchImpl/);
+assert.doesNotMatch(buildsClient, /process\.argv/);
+assert.doesNotMatch(buildsClient, /process\.env/);
+assert.doesNotMatch(buildsClient, /CLOUDFLARE_API_TOKEN/);
+assert.doesNotMatch(canonicalCi, /api\.cloudflare\.com/);
+
 // Amazon stays phase-independently dormant. Sync Worker deployment is not part of Phase 2 foundation.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
@@ -82,12 +97,13 @@ assert.match(phase2Definition, /Production remains out of scope/i);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-foundation-v2',
+  contract: 'deployment-integrity-foundation-v3',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   directDeployBlocked: true,
   legacyBranchPromotionNonCanonical: true,
   exactCommitBuildContractDefined: true,
+  exactCommitBuildClientLibraryOnly: true,
   buildUuidRequired: true,
   versionDeploymentCorrelationRequired: true,
   runtimeVersionMetadataRequired: true,
