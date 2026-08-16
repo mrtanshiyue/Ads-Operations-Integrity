@@ -1,14 +1,15 @@
 (function initCloudflareNativeAccessConsole(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const PAGE_LIMIT = 200;
   const state = {
     mounted: false,
     open: false,
     accessLoaded: false,
     canRead: false,
-    canWrite: false,
+    canProvision: false,
+    canWriteMembership: false,
     stores: [],
     storeId: '',
     roles: [],
@@ -35,6 +36,13 @@
     return api().accessUsers({ status: 'active', limit: PAGE_LIMIT, ...params });
   }
 
+  function createUser(email, displayName) {
+    const body = { email: String(email || '').trim() };
+    const normalizedDisplayName = String(displayName || '').trim();
+    if (normalizedDisplayName) body.displayName = normalizedDisplayName;
+    return api().createAccessUser(body);
+  }
+
   function listMembers(storeId, params = {}) {
     return api().storeMembers(storeId, { limit: PAGE_LIMIT, ...params });
   }
@@ -51,6 +59,7 @@
     version: VERSION,
     listRoles,
     listUsers,
+    createUser,
     listMembers,
     putMember,
     deleteMember,
@@ -86,7 +95,7 @@
     button.type = 'button';
     button.className = 'btn';
     button.textContent = '成员权限';
-    button.title = '管理店铺成员与店铺级角色';
+    button.title = '预置用户并管理店铺成员与店铺级角色';
     button.style.display = 'none';
     button.addEventListener('click', open);
     host.appendChild(button);
@@ -103,7 +112,7 @@
           <div>
             <div class="cfAccessEyebrow">CLOUDFLARE NATIVE ACCESS GOVERNANCE</div>
             <h2 id="nativeAccessConsoleTitle">成员与店铺权限</h2>
-            <div class="small">Phase A：只管理现有用户的店铺成员关系与 store role，不开放全局 owner/admin 角色写入。</div>
+            <div class="small">Phase B1：预置普通应用用户，并管理 store membership；不开放全局角色、用户状态或删除能力。</div>
           </div>
           <div class="cfAccessHeaderActions">
             <span id="cfAccessMode" class="cfAccessBadge">权限检查中</span>
@@ -115,11 +124,20 @@
           <div class="cfAccessContext">
             <label>店铺<select id="cfAccessStore"></select></label>
             <div class="cfAccessStat"><strong id="cfAccessMemberCount">0</strong><span>当前成员</span></div>
-            <div class="cfAccessStat"><strong id="cfAccessUserCount">0</strong><span>可分配用户</span></div>
+            <div class="cfAccessStat"><strong id="cfAccessUserCount">0</strong><span>Active 用户</span></div>
             <div class="cfAccessStat"><strong id="cfAccessRoleCount">0</strong><span>Store Roles</span></div>
           </div>
 
+          <div class="cfAccessProvision" id="cfAccessProvisionPanel">
+            <div class="cfAccessSectionTitle">预置用户</div>
+            <label>Email<input id="cfAccessNewEmail" type="email" maxlength="320" autocomplete="off" placeholder="operator@example.com"/></label>
+            <label>Display Name<input id="cfAccessNewDisplayName" type="text" maxlength="200" autocomplete="off" placeholder="Operator Name"/></label>
+            <button id="btnCfAccessProvision" class="btn" type="button">创建 Active 用户</button>
+            <div class="small cfAccessHint">创建后 <code>cf_access_sub</code> 保持未绑定，首次通过 Cloudflare Access 验证登录时再完成身份绑定。</div>
+          </div>
+
           <div class="cfAccessAssign" id="cfAccessAssignPanel">
+            <div class="cfAccessSectionTitle">店铺成员分配</div>
             <label>用户<select id="cfAccessUser"></select></label>
             <label>角色<select id="cfAccessRole"></select></label>
             <button id="btnCfAccessAssign" class="btn primary" type="button">分配 / 更新成员</button>
@@ -132,7 +150,7 @@
               <tbody id="cfAccessRows"></tbody>
             </table>
           </div>
-          <div class="small cfAccessFoot">读权限：global <code>users.manage</code>。写权限：global <code>users.manage + stores.manage</code>。本控制台不会创建用户或修改全局角色。</div>
+          <div class="small cfAccessFoot">用户预置与目录读取要求 global <code>users.manage</code>；店铺成员写入额外要求 global <code>stores.manage</code>。本控制台不修改全局角色、用户状态，也不删除用户。</div>
         </div>
       </div>`;
     global.document.body.appendChild(modal);
@@ -146,6 +164,7 @@
       state.storeId = String(event.target.value || '');
       await refreshMembers();
     });
+    global.document.querySelector('#btnCfAccessProvision')?.addEventListener('click', provisionUserFromForm);
     global.document.querySelector('#btnCfAccessAssign')?.addEventListener('click', assignSelectedMember);
     global.document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && state.open) close();
@@ -164,7 +183,8 @@
         ? capabilities.globalPermissions
         : [];
       state.canRead = globalPermissions.includes('users.manage');
-      state.canWrite = state.canRead && globalPermissions.includes('stores.manage');
+      state.canProvision = state.canRead;
+      state.canWriteMembership = state.canRead && globalPermissions.includes('stores.manage');
       state.stores = normalizeStores(storesPayload?.stores);
       if (!state.stores.some((store) => store.storeId === state.storeId)) {
         state.storeId = state.stores[0]?.storeId || '';
@@ -178,7 +198,8 @@
     } catch {
       state.accessLoaded = true;
       state.canRead = false;
-      state.canWrite = false;
+      state.canProvision = false;
+      state.canWriteMembership = false;
       const button = global.document.querySelector('#btnNativeAccessConsole');
       if (button) button.style.display = 'none';
     }
@@ -192,6 +213,8 @@
     if (!modal) return;
     state.open = true;
     modal.style.display = 'flex';
+    renderStores();
+    renderMode();
     await hydrateCatalogs();
     await refreshMembers();
   }
@@ -217,8 +240,7 @@
       ]);
       state.roles = (Array.isArray(rolesPayload?.roles) ? rolesPayload.roles : [])
         .filter((role) => role.roleScope === 'store');
-      state.users = (Array.isArray(usersPayload?.items) ? usersPayload.items : [])
-        .filter((user) => user.status === 'active');
+      state.users = activeUsers(usersPayload?.items);
       renderRoles();
       renderUsers();
       renderCounts();
@@ -230,13 +252,24 @@
     }
   }
 
+  async function refreshUsersCatalog(selectUserId) {
+    const usersPayload = await listUsers();
+    state.users = activeUsers(usersPayload?.items);
+    renderUsers();
+    if (selectUserId) {
+      const select = global.document.querySelector('#cfAccessUser');
+      if (select && state.users.some((user) => user.userId === selectUserId)) select.value = selectUserId;
+    }
+    renderCounts();
+  }
+
   async function refreshMembers() {
     if (!state.open) return;
     if (!state.storeId) {
       state.members = [];
       renderMembers();
       renderCounts();
-      setStatus('没有可用店铺', 'warn');
+      setStatus('没有可用店铺；仍可预置用户', 'warn');
       return;
     }
     const serial = ++state.requestSerial;
@@ -259,8 +292,35 @@
     }
   }
 
+  async function provisionUserFromForm() {
+    if (!state.canProvision || state.loading) return;
+    const emailInput = global.document.querySelector('#cfAccessNewEmail');
+    const displayInput = global.document.querySelector('#cfAccessNewDisplayName');
+    const email = String(emailInput?.value || '').trim();
+    const displayName = String(displayInput?.value || '').trim();
+    if (!email) {
+      setStatus('请输入用户 Email', 'warn');
+      emailInput?.focus();
+      return;
+    }
+
+    setBusy(true, '正在预置用户…');
+    try {
+      const payload = await createUser(email, displayName);
+      const createdUserId = payload?.user?.userId || '';
+      if (emailInput) emailInput.value = '';
+      if (displayInput) displayInput.value = '';
+      await refreshUsersCatalog(createdUserId);
+      setStatus(`用户已预置${payload?.user?.email ? ` · ${payload.user.email}` : ''}；尚未绑定 Cloudflare Access subject`, 'ok');
+    } catch (error) {
+      setStatus(errorText(error), 'bad');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function assignSelectedMember() {
-    if (!state.canWrite || state.loading) return;
+    if (!state.canWriteMembership || state.loading) return;
     const userId = String(global.document.querySelector('#cfAccessUser')?.value || '');
     const roleKey = String(global.document.querySelector('#cfAccessRole')?.value || '');
     if (!state.storeId || !userId || !roleKey) {
@@ -283,6 +343,15 @@
     const select = global.document.querySelector('#cfAccessStore');
     if (!select) return;
     select.replaceChildren();
+    if (!state.stores.length) {
+      const option = global.document.createElement('option');
+      option.value = '';
+      option.textContent = '无可用店铺';
+      select.appendChild(option);
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
     for (const store of state.stores) {
       const option = global.document.createElement('option');
       option.value = store.storeId;
@@ -295,6 +364,7 @@
   function renderUsers() {
     const select = global.document.querySelector('#cfAccessUser');
     if (!select) return;
+    const previous = select.value;
     select.replaceChildren();
     if (!state.users.length) {
       const option = global.document.createElement('option');
@@ -310,11 +380,13 @@
       option.textContent = `${user.displayName || user.email || user.userId} · ${user.email || user.userId}${roles}`;
       select.appendChild(option);
     }
+    if (state.users.some((user) => user.userId === previous)) select.value = previous;
   }
 
   function renderRoles() {
     const select = global.document.querySelector('#cfAccessRole');
     if (!select) return;
+    const previous = select.value;
     select.replaceChildren();
     for (const role of state.roles) {
       const option = global.document.createElement('option');
@@ -322,6 +394,7 @@
       option.textContent = `${role.roleName || role.roleKey} · ${role.roleKey}`;
       select.appendChild(option);
     }
+    if (state.roles.some((role) => role.roleKey === previous)) select.value = previous;
   }
 
   function renderMembers() {
@@ -333,7 +406,7 @@
       const td = global.document.createElement('td');
       td.colSpan = 7;
       td.className = 'cfAccessEmpty';
-      td.textContent = '当前店铺没有成员';
+      td.textContent = state.storeId ? '当前店铺没有成员' : '没有可用店铺';
       tr.appendChild(td);
       tbody.appendChild(tr);
       return;
@@ -344,23 +417,24 @@
       tr.appendChild(textCell(member.displayName || member.userId || '—'));
       tr.appendChild(textCell(member.email || '—'));
       tr.appendChild(textCell(member.userStatus || '—'));
-      tr.appendChild(roleCell(member));
+
+      const role = memberRoleControl(member);
+      tr.appendChild(role.cell);
       tr.appendChild(textCell(member.lastSeenAt || '—'));
       tr.appendChild(textCell(member.memberSince || '—'));
-      tr.appendChild(actionCell(member));
+      tr.appendChild(memberActionCell(member, role.select));
       tbody.appendChild(tr);
     }
   }
 
-  function roleCell(member) {
-    const td = global.document.createElement('td');
-    if (!state.canWrite) {
-      td.textContent = member.roleName || member.roleKey || '—';
-      return td;
+  function memberRoleControl(member) {
+    const cell = global.document.createElement('td');
+    if (!state.canWriteMembership) {
+      cell.textContent = member.roleName || member.roleKey || '—';
+      return { cell, select: null };
     }
     const select = global.document.createElement('select');
     select.className = 'cfAccessInlineRole';
-    select.dataset.userId = member.userId;
     for (const role of state.roles) {
       const option = global.document.createElement('option');
       option.value = role.roleKey;
@@ -368,21 +442,20 @@
       select.appendChild(option);
     }
     select.value = member.roleKey;
-    td.appendChild(select);
-    return td;
+    cell.appendChild(select);
+    return { cell, select };
   }
 
-  function actionCell(member) {
+  function memberActionCell(member, roleSelect) {
     const td = global.document.createElement('td');
     td.className = 'cfAccessActions';
-    if (!state.canWrite) {
+    if (!state.canWriteMembership) {
       td.textContent = '只读';
       return td;
     }
 
     const save = actionButton('保存角色', async () => {
-      const select = global.document.querySelector(`.cfAccessInlineRole[data-user-id="${cssEscape(member.userId)}"]`);
-      const roleKey = String(select?.value || '');
+      const roleKey = String(roleSelect?.value || '');
       if (!roleKey) return;
       await putMember(state.storeId, member.userId, roleKey);
     });
@@ -423,20 +496,22 @@
   function renderMode() {
     const badge = global.document.querySelector('#cfAccessMode');
     if (badge) {
-      badge.textContent = state.canWrite ? '可管理成员' : '只读成员目录';
-      badge.classList.toggle('can-write', state.canWrite);
+      badge.textContent = state.canWriteMembership ? '用户 + 成员可管理' : '用户可预置 · 成员只读';
+      badge.classList.toggle('can-write', state.canWriteMembership);
     }
-    const panel = global.document.querySelector('#cfAccessAssignPanel');
-    if (panel) panel.style.display = state.canWrite ? 'grid' : 'none';
+    const provisionPanel = global.document.querySelector('#cfAccessProvisionPanel');
+    if (provisionPanel) provisionPanel.style.display = state.canProvision ? 'grid' : 'none';
+    const assignPanel = global.document.querySelector('#cfAccessAssignPanel');
+    if (assignPanel) assignPanel.style.display = state.canWriteMembership ? 'grid' : 'none';
   }
 
   function setBusy(value, message) {
     state.loading = Boolean(value);
     const modal = global.document.querySelector('#nativeAccessConsoleModal');
     if (modal) modal.setAttribute('aria-busy', state.loading ? 'true' : 'false');
-    for (const control of global.document.querySelectorAll('#nativeAccessConsoleModal button, #nativeAccessConsoleModal select')) {
+    for (const control of global.document.querySelectorAll('#nativeAccessConsoleModal button, #nativeAccessConsoleModal select, #nativeAccessConsoleModal input')) {
       if (control.id === 'btnCfAccessClose') continue;
-      control.disabled = state.loading;
+      control.disabled = state.loading || (control.id === 'cfAccessStore' && !state.stores.length);
     }
     if (message) setStatus(message, 'info');
   }
@@ -446,6 +521,10 @@
     if (!node) return;
     node.textContent = String(message || '');
     node.dataset.tone = tone || 'info';
+  }
+
+  function activeUsers(rows) {
+    return (Array.isArray(rows) ? rows : []).filter((user) => user.status === 'active');
   }
 
   function normalizeStores(rows) {
@@ -474,11 +553,6 @@
     return `${String(code)}${requestId}`;
   }
 
-  function cssEscape(value) {
-    if (global.CSS?.escape) return global.CSS.escape(String(value));
-    return String(value).replace(/["\\]/g, '\\$&');
-  }
-
   function installStyles() {
     if (global.document.querySelector('#cfAccessStyles')) return;
     const style = global.document.createElement('style');
@@ -486,11 +560,12 @@
     style.textContent = `
       .cfAccessModal{width:min(1260px,calc(100vw - 32px));max-width:1260px;max-height:calc(100vh - 32px);overflow:hidden;display:flex;flex-direction:column}
       .cfAccessHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.cfAccessHeader h2{margin:3px 0 5px}.cfAccessEyebrow{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--accent)}.cfAccessHeaderActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cfAccessBadge{padding:6px 9px;border-radius:999px;background:var(--softWarn);color:var(--warn);font-size:11px;font-weight:750}.cfAccessBadge.can-write{background:var(--softGood);color:var(--good)}
-      .cfAccessBody{overflow:auto}.cfAccessContext{display:grid;grid-template-columns:minmax(260px,1.7fr) repeat(3,minmax(120px,.6fr));gap:8px;margin-bottom:10px}.cfAccessContext label,.cfAccessAssign label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:10.8px;font-weight:700}.cfAccessContext select,.cfAccessAssign select,.cfAccessInlineRole{min-width:0;border:1px solid var(--line);background:var(--input-bg);color:var(--text);border-radius:8px;padding:8px 9px}.cfAccessStat{border:1px solid var(--line);background:var(--hover-bg);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}.cfAccessStat strong{font-size:18px;color:var(--text)}.cfAccessStat span{font-size:10.5px;color:var(--muted)}
-      .cfAccessAssign{display:grid;grid-template-columns:1.6fr 1fr auto;gap:8px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--hover-bg);margin-bottom:8px}.cfAccessStatus{min-height:28px;display:flex;align-items:center;padding:5px 8px;border-radius:8px;margin-bottom:8px;background:var(--hover-bg);color:var(--muted);font-size:11px}.cfAccessStatus[data-tone="ok"]{background:var(--softGood);color:var(--good)}.cfAccessStatus[data-tone="bad"]{background:var(--softBad);color:var(--bad)}.cfAccessStatus[data-tone="warn"]{background:var(--softWarn);color:var(--warn)}
-      .cfAccessTableWrap{max-height:56vh}.cfAccessTable{width:100%;min-width:1040px;border-collapse:collapse}.cfAccessTable th:nth-child(4){width:190px}.cfAccessActions{display:flex;gap:5px;flex-wrap:wrap}.cfAccessAction{padding:5px 8px;font-size:10.8px}.cfAccessEmpty{text-align:center;color:var(--muted);padding:28px!important}.cfAccessFoot{margin-top:8px;color:var(--muted)}
-      @media(max-width:1050px){.cfAccessContext{grid-template-columns:repeat(2,minmax(0,1fr))}.cfAccessAssign{grid-template-columns:1fr 1fr}.cfAccessAssign .btn{grid-column:1/-1;width:max-content}.cfAccessHeader{flex-direction:column}}
-      @media(max-width:620px){.cfAccessContext,.cfAccessAssign{grid-template-columns:1fr}.cfAccessModal{width:calc(100vw - 18px);max-height:calc(100vh - 18px)}}`;
+      .cfAccessBody{overflow:auto}.cfAccessContext{display:grid;grid-template-columns:minmax(260px,1.7fr) repeat(3,minmax(120px,.6fr));gap:8px;margin-bottom:10px}.cfAccessContext label,.cfAccessAssign label,.cfAccessProvision label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:10.8px;font-weight:700}.cfAccessContext select,.cfAccessAssign select,.cfAccessProvision input,.cfAccessInlineRole{min-width:0;border:1px solid var(--line);background:var(--input-bg);color:var(--text);border-radius:8px;padding:8px 9px}.cfAccessStat{border:1px solid var(--line);background:var(--hover-bg);border-radius:10px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}.cfAccessStat strong{font-size:18px;color:var(--text)}.cfAccessStat span{font-size:10.5px;color:var(--muted)}
+      .cfAccessProvision,.cfAccessAssign{display:grid;gap:8px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--hover-bg);margin-bottom:8px}.cfAccessProvision{grid-template-columns:auto 1.35fr 1fr auto 1.5fr}.cfAccessAssign{grid-template-columns:auto 1.6fr 1fr auto}.cfAccessSectionTitle{font-size:11px;font-weight:800;color:var(--text);align-self:center;white-space:nowrap}.cfAccessHint{color:var(--muted);align-self:center}
+      .cfAccessStatus{min-height:28px;display:flex;align-items:center;padding:5px 8px;border-radius:8px;margin-bottom:8px;background:var(--hover-bg);color:var(--muted);font-size:11px}.cfAccessStatus[data-tone="ok"]{background:var(--softGood);color:var(--good)}.cfAccessStatus[data-tone="bad"]{background:var(--softBad);color:var(--bad)}.cfAccessStatus[data-tone="warn"]{background:var(--softWarn);color:var(--warn)}
+      .cfAccessTableWrap{max-height:52vh}.cfAccessTable{width:100%;min-width:1040px;border-collapse:collapse}.cfAccessTable th:nth-child(4){width:190px}.cfAccessActions{display:flex;gap:5px;flex-wrap:wrap}.cfAccessAction{padding:5px 8px;font-size:10.8px}.cfAccessEmpty{text-align:center;color:var(--muted);padding:28px!important}.cfAccessFoot{margin-top:8px;color:var(--muted)}
+      @media(max-width:1100px){.cfAccessContext{grid-template-columns:repeat(2,minmax(0,1fr))}.cfAccessProvision,.cfAccessAssign{grid-template-columns:1fr 1fr}.cfAccessSectionTitle,.cfAccessHint,.cfAccessProvision .btn,.cfAccessAssign .btn{grid-column:1/-1;width:max-content}.cfAccessHint{width:auto}.cfAccessHeader{flex-direction:column}}
+      @media(max-width:620px){.cfAccessContext,.cfAccessProvision,.cfAccessAssign{grid-template-columns:1fr}.cfAccessModal{width:calc(100vw - 18px);max-height:calc(100vh - 18px)}}`;
     global.document.head.appendChild(style);
   }
 })(window);
