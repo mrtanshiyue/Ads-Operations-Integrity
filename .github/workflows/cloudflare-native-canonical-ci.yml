@@ -1,0 +1,62 @@
+name: Cloudflare Native Canonical CI
+
+on:
+  push:
+    branches:
+      - main
+      - cloudflare-foundation-v1
+      - 'consolidation/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-native-canonical-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Canonical Cloudflare Native validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Validate canonical Cloudflare Native runtime
+        run: npm run check:cf-native
+
+      - name: Validate foundation regressions
+        run: npm run test:cf-foundation
+
+      - name: Validate access governance regressions
+        run: |
+          node scripts/test-user-provisioning-contract.mjs
+          node scripts/test-user-lifecycle-contract.mjs
+          node scripts/test-global-role-governance-contract.mjs
+
+      - name: Validate dormant Amazon transport regressions
+        run: |
+          node scripts/test-amazon-ads-credential-provider.mjs
+          node scripts/test-amazon-ads-credential-smoke.mjs
+          node scripts/test-amazon-ads-report-transport.mjs
+          node scripts/test-amazon-ads-bootstrap-transport.mjs
+          node scripts/test-amazon-ads-sync-runtime.mjs
