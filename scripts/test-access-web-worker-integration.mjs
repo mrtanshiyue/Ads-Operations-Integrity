@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { createTestHarness } from 'wrangler';
 
+await import('./test-security-integrity-request-pipeline-contract.mjs');
+
 const TEAM_DOMAIN = 'https://security-test.cloudflareaccess.com';
 const ACCESS_AUD = 'security-test-audience';
 const KID = 'security-test-key-1';
