@@ -28,6 +28,7 @@ export default {
       service: 'ads-operations-sync',
       environment: env.APP_ENV || 'unknown',
       amazonAdsEnabled: amazonAdsExecutionEnabled(env),
+      runtimeVersion: runtimeVersionMetadata(env),
       dependencies: {
         controlDb: Boolean(env.CONTROL_DB),
         dataBucket: Boolean(env.DATA_BUCKET),
@@ -192,6 +193,21 @@ function terminalResult(route, status, profileId, mode) {
     profileId:profileId || null,
     runStatus,
   };
+}
+
+function runtimeVersionMetadata(env) {
+  const metadata = env?.CF_VERSION_METADATA;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const id = optionalText(metadata.id);
+  const tag = optionalText(metadata.tag);
+  const timestamp = optionalText(metadata.timestamp);
+  if (!id && !tag && !timestamp) return null;
+  return { id, tag, timestamp };
+}
+
+function optionalText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
 }
 
 function requiredPayloadStoreId(payload) {

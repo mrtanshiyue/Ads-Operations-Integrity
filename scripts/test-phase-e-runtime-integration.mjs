@@ -32,6 +32,8 @@ assert.match(syncWorker, /assertProducerIntentSupported\(execution\.intent\)/);
 assert.match(syncWorker, /createAmazonAdsAccessTokenProviderFromEnv\(this\.env\)/);
 assert.match(syncWorker, /prepareAmazonAdsProducerRuntime\(\{/);
 assert.match(syncWorker, /advanceAmazonAdsReportCycle\(\{/);
+assert.match(syncWorker, /runtimeVersion: runtimeVersionMetadata\(env\)/);
+assert.match(syncWorker, /CF_VERSION_METADATA/);
 assert.doesNotMatch(syncWorker, /amazon_profile_adapter_not_implemented/);
 assert.doesNotMatch(syncWorker, /amazon_ads_adapter_not_implemented/);
 assert.doesNotMatch(syncWorker, /reportConfigVersion/);
@@ -51,6 +53,8 @@ assert(reportCycleIndex > bootstrapIndex, 'durable producer bootstrap must prece
 
 assert.match(nativeConfig, /"SYNC_TRIGGER_ENABLED": "false"/);
 assert.match(syncConfig, /"AMAZON_ADS_ENABLED": "false"/);
+assert.equal((syncConfig.match(/"version_metadata"/g) || []).length, 2, 'sync Dev and production environments must expose version metadata');
+assert.equal((syncConfig.match(/"binding": "CF_VERSION_METADATA"/g) || []).length, 2, 'sync version metadata binding must be explicit per environment');
 
 console.log(JSON.stringify({
   ok: true,
@@ -60,6 +64,7 @@ console.log(JSON.stringify({
   durableIntentReceiptFirst: true,
   killSwitchBeforeCapabilityAndCredentials: true,
   concreteAmazonProducerComposition: true,
+  runtimeVersionObservable: true,
   placeholderAdaptersRemoved: true,
   killSwitchesRemainFalse: true,
 }, null, 2));
