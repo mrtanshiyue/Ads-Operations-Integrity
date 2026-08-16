@@ -20,7 +20,9 @@ concurrency:
 
 jobs:
   validate:
-    name: Canonical Cloudflare Native validation
+    # Compatibility context retained because main branch protection still requires this
+    # historical job name. The implementation is the canonical Cloudflare Native gate.
+    name: Static site and security invariants
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
