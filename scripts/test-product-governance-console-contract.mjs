@@ -15,6 +15,14 @@ assert.doesNotMatch(source, /fetch\s*\(/, 'product console must delegate transpo
 assert.match(source, /products\.manage/);
 assert.match(source, /Control D1/);
 assert.match(source, /audit log/);
+assert.match(source, /storeId:\s*String\(store\.storeId\s*\|\|\s*store\.store_id\s*\|\|\s*''\)/,
+  'product console must accept snake_case store_id from the live stores API');
+assert.match(source, /storeCode:\s*String\(store\.storeCode\s*\|\|\s*store\.store_code\s*\|\|\s*''\)/,
+  'product console must accept snake_case store_code from the live stores API');
+assert.match(source, /displayName:\s*String\(store\.displayName\s*\|\|\s*store\.display_name\s*\|\|\s*''\)/,
+  'product console must accept snake_case display_name from the live stores API');
+assert.match(source, /marketplaceCode:\s*String\(store\.marketplaceCode\s*\|\|\s*store\.marketplace_code\s*\|\|\s*''\)/,
+  'product console must accept snake_case marketplace_code from the live stores API');
 
 const calls = [];
 const window = {
@@ -127,6 +135,7 @@ console.log(JSON.stringify({
   contract: 'phase3-product-governance-console-v1',
   transport: 'CloudflareNativeAPI-only',
   storeScopedRbac: true,
+  storePayloadCompatibility: 'camelCase+snake_case',
   amazonDormant: true,
   productionMutation: false,
   calls: calls.map((call) => call.method),
