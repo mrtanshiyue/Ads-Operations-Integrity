@@ -71,7 +71,7 @@ for (const workflow of retiredGranularWorkflows) {
 assert.equal(await exists('docs/archive/legacy-ci/README.md'), true, 'missing retired CI archive manifest');
 assert.equal(await exists('docs/archive/legacy-deploy/package-deploy-scripts.json'), true, 'missing direct deploy command archive');
 assert.equal(await exists('scripts/block-direct-cloudflare-deploy.mjs'), true, 'missing direct deploy blocker');
-assert.equal(await exists('scripts/block-dormant-amazon-execution.mjs'), true, 'missing dormant Amazon execution blocker');
+assert.equal(await exists('scripts/block-dormant-amazon-execution.mjs'), true, 'missing historical dormant Amazon execution blocker');
 assert.equal(await exists('scripts/break-glass-access-recovery.mjs'), true, 'missing break-glass access recovery CLI');
 assert.equal(await exists('scripts/test-break-glass-access-recovery.mjs'), true, 'missing break-glass CLI contract test');
 assert.equal(await exists('scripts/test-security-integrity-d1-harness.mjs'), true, 'missing real local D1 security harness');
@@ -123,8 +123,8 @@ for (const scriptName of directDeployScripts) {
 assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/);
 assert.equal(
   packageJson.scripts?.['provision:cf-sync:dev:amazon-secrets'],
-  'node scripts/block-dormant-amazon-execution.mjs provision:cf-sync:dev:amazon-secrets',
-  'Amazon credential provisioning npm entrypoint must remain blocked until controlled Store 01 activation',
+  'node scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs',
+  'Phase 5 Amazon credential provisioning must use the controlled secret helper',
 );
 
 const deployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
@@ -166,7 +166,19 @@ assert.match(realD1Harness, /remoteD1Touched:\s*false/);
 
 const amazonProvisionHelper = await text('scripts/provision-cloudflare-amazon-ads-dev-secrets.mjs');
 assert.match(amazonProvisionHelper, /wrangler', 'secret', 'bulk/);
+assert.match(amazonProvisionHelper, /runCloudflareSyncDevExactBuild/);
 assert.match(amazonProvisionHelper, /runCloudflareAmazonAdsCredentialSmoke/);
+assert.match(amazonProvisionHelper, /requireExact:true/);
+assert.doesNotMatch(amazonProvisionHelper, /runCloudflareSyncDevRelease/);
+
+const syncBuildTrigger = await text('scripts/trigger-cloudflare-sync-dev-build.mjs');
+assert.match(syncBuildTrigger, /3771a2de-b602-4477-9c84-47884748b97d/);
+assert.match(syncBuildTrigger, /2c5f0f0afc964509a1f7f2c304138a26/);
+assert.match(syncBuildTrigger, /Static site and security invariants/);
+assert.match(syncBuildTrigger, /git\/ref\/heads\/main/);
+assert.match(syncBuildTrigger, /commit_hash:commitSha/);
+assert.match(syncBuildTrigger, /build_trigger_source/);
+assert.match(syncBuildTrigger, /manual/);
 
 const buildShim = await text('scripts/build-cloudflare.mjs');
 assert.match(buildShim, /build-cloudflare-native\.mjs/);
@@ -220,7 +232,7 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'security-integrity-canonical-v9',
+  contract: 'security-integrity-canonical-v10',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
@@ -232,7 +244,8 @@ console.log(JSON.stringify({
   legacyPagesInactive: true,
   granularCiRetired: true,
   directDeployAliasesBlocked: true,
-  amazonLivePackageEntryBlocked: true,
+  amazonCredentialProvisioningPhase5Controlled: true,
+  amazonMutationStillUnauthorized: true,
   canonicalShortLivedBranchCoverage: true,
   mainProtectionContextPreserved: true,
   breakGlassCliOnly: true,
