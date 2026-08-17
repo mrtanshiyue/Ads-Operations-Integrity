@@ -1,116 +1,118 @@
 # Ads Operations Integrity
 
-Amazon Ads Operations OS — Cloudflare Native control plane, governed data plane, decision intelligence, and controlled execution.
+Amazon Ads Operations OS — Cloudflare Native control plane, governed store data planes, decision intelligence, recommendation approval, and controlled Amazon execution.
 
-> Repository architecture is currently in **Architecture Convergence Phase 0**. Historical Gate/Phase documentation remains useful implementation history, but it is not the authority for the future architecture.
+> **Current phase: Phase 4 — Project Truth & Productization Reset.** Phase 0–3 are completed implementation history. Future delivery authority is `docs/architecture/PRODUCT_ROADMAP_V2.md`; historical Gate documents remain evidence, not the future roadmap.
+
+## Product objective
+
+The product must close this business loop:
+
+```text
+trusted real Amazon data
+→ decision intelligence
+→ recommendation
+→ approval
+→ controlled action
+→ verification
+→ learning
+```
+
+The immediate priority is **Store 01 real Amazon read-only data**, followed by Search Term Intelligence and a recommendation engine. New provenance/Gate work is not a product objective unless a real architecture, security, or data-integrity risk requires it.
 
 ## Canonical architecture
+
+Central governance remains shared. Amazon execution becomes physically store-isolated before multi-store expansion:
 
 ```text
 Cloudflare Access
         ↓
-Web / App Worker
+Central Web / App Worker
         ↓
 Application RBAC
         ↓
 Control D1
         ↓
-Store-scoped routing
+store-scoped routing
         ↓
-Store D1
+Per-store Store D1
         ↓
-R2 immutable raw objects
+Per-store Sync Worker + Workflow
         ↓
-Cloudflare Workflows
+Per-store credential set
         ↓
-Sync Worker
+Per-store R2 boundary
         ↓
 Amazon Ads API
 ```
 
-The long-term production model keeps governance centralized while physically isolating each Amazon store's execution plane with its own Store D1, sync Worker, Workflow, credential set, and preferably raw-object boundary.
+Store 01 may proceed through controlled read-only activation using the existing Dev execution plane. **Store 02 must not receive Amazon credentials until the per-store Worker / Workflow / credential / R2 isolation contract is implemented.**
+
+## Current platform truth
+
+### Control D1
+
+Central governance already covers users/RBAC, stores, products and store mappings, keyword library and product-keyword mappings, store keyword policy, negative governance, optimization rules, rollups, audit, and operator governance.
+
+### Store D1
+
+Store-local data already covers Amazon profiles/entities, report and sync state, campaign/keyword/target/search-term/product/placement daily facts, ingestion state, R2/source provenance, and the optimization action ledger.
+
+`optimization_actions` and `optimization_action_events` already provide the action lifecycle. Do not redesign the action database; build recommendation, API, approval, execution, and verification around it.
+
+### Amazon read pipeline
+
+The repository already contains credential handling, LWA credential smoke, profile bootstrap, entity mirror, Create/Poll/Download Report transport, R2 materialization, report-cycle orchestration, Store D1 ingestion, and Search Term fact publication.
+
+Runtime kill switches remain intentionally closed until Phase 5 controlled activation:
+
+```text
+AMAZON_ADS_ENABLED=false
+SYNC_TRIGGER_ENABLED=false
+```
+
+This means **live execution is disabled**, not that Amazon integration must be rebuilt.
 
 ## Canonical runtime entrypoints
 
 - Web runtime: `cloudflare/runtime/web-entry.js`
 - Web Worker config: `cloudflare/runtime/wrangler.native.jsonc`
 - Sync runtime: `cloudflare/runtime/sync-worker.js`
-- Sync Worker config: `cloudflare/runtime/wrangler.sync.jsonc`
+- Current Sync config: `cloudflare/runtime/wrangler.sync.jsonc`
 - Native build entrypoint: `scripts/build-cloudflare-native.mjs`
 - Native artifact: `dist-cloudflare-native/`
-- Canonical convergence CI: `.github/workflows/cloudflare-native-canonical-ci.yml`
+- Canonical CI: `.github/workflows/cloudflare-native-canonical-ci.yml`
+- Required context: `Static site and security invariants`
 
-The repository root intentionally has **no implicit `wrangler.jsonc` deployment target**. Worker operations must name the intended Native configuration explicitly until Deployment Integrity replaces direct deployment with exact-SHA Workers Builds API promotion.
+The `production` stanza in `wrangler.sync.jsonc` is a **transitional template**, not the approved multi-store production topology: it still models one Sync Worker with STORE_01_DB–STORE_04_DB bindings. Phase 9 replaces that topology before Store 02 Amazon activation.
 
-## Repository rules during convergence
+## Frontend direction
 
-- `main` is not to be moved until the consolidation branch is green and reviewed.
-- Production resources are not changed during Phase 0.
-- The historical physical deployment branch is not the future deployment model and is not advanced by repository canonicalization.
-- Legacy GitHub Pages / TiDB / Warehouse implementation is archive and rollback material, not the canonical product architecture.
-- Legacy code is not deleted merely because it is old; runtime/build references are removed and proven first.
-- Native deployment assets are constrained by an explicit allowlist. Adding a file under `assets/` does not automatically make it deployable.
+The current browser product remains a migration-era Native UI on same-origin `/api/*` APIs. Modernization uses a TypeScript + React + Vite strangler, not a big-bang rewrite. Product intelligence and action contracts take priority over cosmetic rewrites.
 
-See `docs/architecture/CANONICAL_RUNTIME.md` for the convergence boundary and archive map.
+## Delivery authority
 
-## Transitional frontend compatibility
+Future phases are:
 
-The current UI is still the migration-era monolith. Cloudflare Native injects a same-origin API client and a D1-backed `PrivateCloudQuery` compatibility bridge so existing modules can operate while the frontend is migrated incrementally.
+1. Phase 4 — Project Truth & Productization Reset
+2. Phase 5 — Store 01 Real Amazon Read-Only Pipeline
+3. Phase 6 — Decision Intelligence MVP
+4. Phase 7 — Ads Intelligence Native UI / React-Vite strangler
+5. Phase 8 — Recommendation Approval / Action Control Plane
+6. Phase 9 — Multi-Store Execution Isolation
+7. Phase 10 — Production Read-Only Launch
+8. Phase 11 — Controlled Amazon Execution
+9. Phase 12 — Closed-loop Optimization
 
-`assets/private-cloud-warehouse-v4.js` is still present as an explicitly declared compatibility asset because it owns remaining legacy private-cloud UI behavior. It is **not** the target data architecture. `private-cloud-query-v1.js` and Warehouse V3 are forbidden from the final Native build artifact.
+See `docs/architecture/PRODUCT_ROADMAP_V2.md` for authoritative scope, capability gaps, phase exits, and sequencing.
 
-Frontend modernization will use a strangler migration toward TypeScript + React + Vite rather than a big-bang rewrite.
+## Safety boundaries
 
-## Data architecture
+- Canonical CI validates; it does not imply deployment or Amazon activation.
+- Repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation.
+- Amazon mutation is unauthorized until Phase 11.
+- Production remains out of the immediate critical path.
+- Historical GitHub Pages / TiDB / Warehouse material under `docs/archive/` remains traceability/rollback history only.
+- The repository root intentionally has no implicit `wrangler.jsonc` deployment target; direct deployment aliases remain fail-closed.
 
-### Control D1
-
-Central governance and product-control data, including users, RBAC, product/keyword/negative governance, audit, and rollups.
-
-### Store D1
-
-Store-local Amazon entities, facts, report state, ingestion state, and source provenance.
-
-### R2
-
-Immutable/raw report objects and source evidence used by ingestion and replay.
-
-### Workflows + Sync Worker
-
-Asynchronous Amazon acquisition and ingestion orchestration. Amazon remains a dormant subsystem during Architecture Convergence; Phase 0 does not activate credentials, scheduled sync, report acquisition, or Amazon mutation.
-
-## Product direction
-
-The product is not a warehouse UI. Its primary business loop is:
-
-```text
-trusted data
-→ waste detection
-→ opportunity detection
-→ recommendation
-→ explanation
-→ approval
-→ action
-→ verification
-→ learning
-```
-
-Priority product modules are Search Term Intelligence, Negative Keyword Intelligence, Keyword Harvesting, Bid Intelligence, Budget Intelligence, ACoS/ROAS diagnostics, and governed actions.
-
-## Delivery order
-
-1. Architecture Convergence
-2. Security Integrity
-3. Deployment Integrity
-4. Unified Dev exact-SHA live baseline
-5. Frontend Platform modernization
-6. Amazon Store 01 read-only pipeline
-7. Decision Intelligence
-8. Governed Amazon execution
-9. Multi-store expansion
-
-No Amazon write path is authorized merely because transport code exists.
-
-## Historical material
-
-Legacy GitHub Pages / TiDB / Warehouse documentation, workflows, configs, and builders are preserved under `docs/archive/` and in Git history. They are retained for traceability and rollback investigation only.
+See `docs/architecture/CANONICAL_RUNTIME.md` for runtime truth and `README_PRODUCTION_STATUS.md` for current operational state.
