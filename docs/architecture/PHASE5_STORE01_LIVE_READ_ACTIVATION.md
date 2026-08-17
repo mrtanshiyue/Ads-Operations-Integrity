@@ -10,16 +10,33 @@ Produce the first trustworthy real Amazon Ads dataset for Store 01 and prove the
 ```text
 Amazon Ads
 → canonical profile
-→ entities / reports
+→ entity mirror
+→ Search Term report
 → R2 raw source object
-→ Store 01 D1 facts
+→ Store 01 D1 search-term facts
 → provenance / reconciliation
 → Search Term Intelligence-ready data
 ```
 
-This phase activates existing implementation. It does not authorize Amazon mutation, Store 02 credentials, or Production rollout.
+This phase activates existing implementation. It does not authorize Amazon mutation, Store 02 credentials, Production rollout, or claims that every Store D1 daily-fact table already has a live Amazon producer.
 
-## 2. Current pre-activation state
+## 2. Current implementation truth
+
+The Store D1 schema contains multiple daily fact families, and the generic sync-intent contract recognizes multiple dataset names. **The currently implemented live producer capability is narrower: only `search_term_daily` is executable.**
+
+Current producer contract:
+
+```text
+implemented dataset: search_term_daily
+entity mirror required: true
+report contract: search_term_daily.sp.v1
+```
+
+`campaign_daily`, `ad_group_daily`, `keyword_daily`, `target_daily`, `advertised_product_daily`, `purchased_product_daily`, and `placement_daily` are not valid Phase 5 live producer inputs yet. If supplied, producer capability must fail closed rather than pretend those datasets were acquired.
+
+The entity mirror still supplies the campaign / ad group / keyword / target / product-ad identity context required by the Search Term pipeline. Daily metric producers for the other fact families are subsequent implementation work after the first trusted Search Term loop.
+
+## 3. Current pre-activation state
 
 Required starting state:
 
@@ -34,16 +51,18 @@ Sync Dev: AMAZON_SYNC_WORKFLOW bound
 
 The current Dev Sync plane may service only the Store 01 activation in this phase. Multi-store credentials are prohibited.
 
-## 3. Hard safety boundaries
+At the 2026-08-17 preflight, Store 01 D1 still contains synthetic Dev fixtures and no real `report_jobs` or `sync_runs`. Synthetic fixtures are regression assets, not live Amazon authority.
+
+## 4. Hard safety boundaries
 
 ### Amazon operations allowed
 
-Only read/acquisition operations required to populate canonical facts:
+Only read/acquisition operations required to populate the implemented Search Term pipeline:
 
 - LWA access-token refresh;
 - Amazon Ads profile discovery/bootstrap;
 - supported entity-list reads;
-- Create Report;
+- Create Report for the implemented Search Term report contract;
 - Get/Poll Report status;
 - Download completed report content.
 
@@ -62,7 +81,21 @@ Phase 5 may eventually require exact-SHA Dev deployment/configuration and Store 
 - no adding Store 02/03/04 D1 bindings to the Store 01 Dev Sync Worker for Phase 5;
 - no treating the existing `production` stanza in `wrangler.sync.jsonc` as approved topology.
 
-## 4. Activation gates
+### Data-authority boundary
+
+Real Amazon decision intelligence must never aggregate synthetic and live profile facts as one authority.
+
+For Phase 5 acceptance and all Phase 6 recommendation inputs:
+
+- use the canonical real Amazon `profileId` resolved from the live `listProfiles` response;
+- query Store 01 facts with that exact profile scope;
+- require valid `source_report_job_id` lineage and the corresponding validated Amazon report / R2 object / source-content identity where the read contract exposes those checks;
+- do not treat a row with missing/invalid report lineage as live recommendation authority;
+- do not delete historical synthetic fixtures merely to manufacture clean-looking acceptance evidence.
+
+Existing generic entity/search-term browse APIs may allow an omitted `profileId` for Dev browsing. That unscoped mode is not an approved recommendation source after live activation.
+
+## 5. Activation conditions
 
 These are operational conditions, not a return to historical Gate numbering.
 
@@ -76,7 +109,7 @@ Must verify:
 - `SYNC_TRIGGER_ENABLED=false`;
 - `AMAZON_ADS_ENABLED=false`;
 - no Production mutation is included;
-- supported datasets and report contracts remain covered by canonical CI.
+- `search_term_daily` producer/report contracts remain covered by canonical CI.
 
 Failure is a blocker.
 
@@ -90,11 +123,19 @@ Control D1 store route must resolve exactly one active Store 01 entry with:
 - Store D1 binding key `STORE_01_DB`;
 - operator `sync.run` / `sync.read` authorization.
 
-Store D1 must be migration-current and must not contain synthetic identity that could be mistaken for live Amazon authority after activation. Synthetic fixtures may remain only when clearly isolated/test-labelled and excluded from canonical live selection.
+The live producer must resolve canonical profile identity from Amazon, not from an arbitrary pre-existing active row in Store D1. For the current US contract, canonical selection must fail closed if the Amazon account returns zero or more than one eligible US seller/vendor profile.
+
+Synthetic profile/entity/fact fixtures may remain only as non-authoritative Dev regression data and must be excluded by canonical live profile + provenance scope.
 
 ### C. Credential provisioning while execution is disabled
 
-Provision exactly the credential set required by the existing credential provider to `ads-operations-sync-dev` for Store 01 only.
+Provision exactly the credential set required by the existing credential provider to `ads-operations-sync-dev` for Store 01 only:
+
+```text
+AMAZON_ADS_CLIENT_ID
+AMAZON_ADS_CLIENT_SECRET
+AMAZON_ADS_REFRESH_TOKEN
+```
 
 During provisioning:
 
@@ -138,7 +179,7 @@ Only after A–D pass:
 
 No scheduled recurring sync is authorized by the first activation run.
 
-## 5. First controlled manual run
+## 6. First controlled manual run
 
 The Web API contract is:
 
@@ -149,24 +190,23 @@ Idempotency-Key: <unique durable key>
 
 The body must contain only allowed sync intent fields. Caller-supplied `profileId` and caller-supplied report configuration authority remain forbidden; the producer resolves the canonical Amazon profile.
 
-### Initial dataset order
+### Executable dataset
 
-The first business-critical run should minimize blast radius while delivering Search Term value:
+The first live run MUST request exactly the currently implemented business dataset:
 
 ```text
 search_term_daily
-keyword_daily
-target_daily
-campaign_daily
 ```
 
-The implementation supports additional datasets (`ad_group_daily`, `advertised_product_daily`, `purchased_product_daily`, `placement_daily`), but they are not required for the first Search Term acceptance run unless the report plan requires them as a coupled contract.
+Do not include `keyword_daily`, `target_daily`, `campaign_daily`, or any other daily dataset in this run. The generic intent parser recognizes those names, but the live producer intentionally rejects them until their producer implementations exist.
+
+Entity bootstrap/mirror remains part of the Search Term producer path and provides the targeting identity context needed for Search Term Intelligence.
 
 ### Date range
 
 Use the smallest practical recent closed reporting window that can produce stable Amazon report data. Do not start with a large historical backfill. Backfill is a later operation after the single-window pipeline is accepted.
 
-## 6. Required run receipts and acceptance
+## 7. Required run receipts and acceptance
 
 A successful first live run must prove all of the following.
 
@@ -175,11 +215,12 @@ A successful first live run must prove all of the following.
 - one canonical real Amazon profile selected for Store 01;
 - profile marketplace/region matches Control D1 store routing;
 - no caller-injected profile authority;
-- entity rows reference the same canonical profile context.
+- entity rows reference the same canonical profile context;
+- synthetic profile data is not selected as live authority.
 
 ### Acquisition
 
-- Create Report request succeeds for each planned dataset;
+- Create Report succeeds for `search_term_daily.sp.v1`;
 - polling terminates correctly;
 - completed report identity is persisted;
 - download content corresponds to the expected report/profile/date context.
@@ -193,8 +234,8 @@ A successful first live run must prove all of the following.
 
 ### Store D1
 
-- report job and sync run reach valid terminal state;
-- staged/published facts contain real Store 01 identifiers;
+- report job and sync run reach a valid terminal state;
+- staged/published Search Term facts contain real Store 01 identifiers;
 - date grain and metric units are preserved;
 - Search Term rows retain source report lineage;
 - duplicate/replay guards remain valid;
@@ -202,13 +243,13 @@ A successful first live run must prove all of the following.
 
 ### Reconciliation
 
-For the accepted report window, compare source report totals to Store D1 totals for the metrics represented by the report contract. Any unexplained material mismatch blocks Phase 5 acceptance.
+For the accepted Search Term report window, compare source report totals to Store D1 totals for the metrics represented by the report contract. Reconciliation must use the canonical real `profileId`, not an unscoped Store DB aggregate. Any unexplained material mismatch blocks Phase 5 acceptance.
 
 ### No-write proof
 
 Audit/runtime evidence must show no Amazon mutation transport was invoked.
 
-## 7. Kill switch and rollback
+## 8. Kill switch and rollback
 
 ### Stop new runs
 
@@ -237,18 +278,18 @@ Do not continue with retries or backfill until the defect is understood.
 - do not silently rewrite provenance to make the run appear successful;
 - use idempotent/recovery semantics already defined by the runtime rather than hand-editing Store D1 facts.
 
-## 8. Phase 5 completion criteria
+## 9. Phase 5 completion criteria
 
 Phase 5 is complete when:
 
 1. Store 01 live credentials are valid and isolated to the Store 01 Dev Sync plane;
-2. at least one controlled real Search Term-focused sync is terminal-success or an explicitly accepted partial result with no identity/integrity defect;
+2. at least one controlled real `search_term_daily` sync reaches terminal success, or an explicitly accepted partial state with no identity/integrity defect;
 3. canonical real profile/entities exist;
-4. report acquisition → R2 → Store D1 lineage is verified;
-5. facts reconcile sufficiently for decision intelligence;
+4. Search Term report acquisition → R2 → Store D1 lineage is verified;
+5. facts reconcile sufficiently for decision intelligence under the canonical real profile scope;
 6. no Amazon write occurred;
 7. kill switches are proven operational;
 8. a repeat run demonstrates idempotent/replay-safe behavior;
-9. Search Term Intelligence can consume the real facts without synthetic substitution.
+9. Search Term Intelligence can consume only real, provenance-valid facts without synthetic substitution.
 
-After this, Phase 6 may build recommendations from real Store 01 data while broader backfill/recurring schedule work continues under the same read-only contract.
+After this, Phase 6 may build recommendations from real Store 01 Search Term data while broader backfill, recurring scheduling, and additional daily-fact producer implementations continue as explicit incremental work.
