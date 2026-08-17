@@ -8,6 +8,8 @@ import {
 const state = JSON.parse(await readFile(new URL('../docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json', import.meta.url), 'utf8'));
 const nativeConfig = JSON.parse(await readFile(new URL('../cloudflare/runtime/wrangler.native.jsonc', import.meta.url), 'utf8'));
 const syncConfig = JSON.parse(await readFile(new URL('../cloudflare/runtime/wrangler.sync.jsonc', import.meta.url), 'utf8'));
+const PERMIT_ID = 'phase5.store01.search-term.2026-08-09.seller.v1';
+const REPORT_DATE = '2026-08-09';
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -28,11 +30,37 @@ function rejects(code, overrides) {
   );
 }
 
+function singleRunState() {
+  const next = clone(state);
+  next.state = 'single_run_open';
+  next.transitionFrom = 'amazon_read_ready';
+  next.amazonAdsEnabled = true;
+  next.syncTriggerEnabled = true;
+  next.singleRunPermit = { permitId:PERMIT_ID, reportDate:REPORT_DATE };
+  return next;
+}
+
+function singleRunNative() {
+  const next = clone(nativeConfig);
+  next.env.dev.vars.SYNC_TRIGGER_ENABLED = 'true';
+  next.env.dev.vars.PHASE5_SINGLE_RUN_PERMIT_ID = PERMIT_ID;
+  next.env.dev.vars.PHASE5_SINGLE_RUN_REPORT_DATE = REPORT_DATE;
+  return next;
+}
+
+function amazonReadySync() {
+  const next = clone(syncConfig);
+  next.env.dev.vars.AMAZON_ADS_ENABLED = 'true';
+  return next;
+}
+
 const baseline = validate();
 assert.equal(baseline.ok, true);
+assert.equal(baseline.schemaVersion, 'phase5-store01-live-read-activation-v2');
 assert.equal(baseline.state, 'safe_disabled');
 assert.equal(baseline.amazonAdsEnabled, false);
 assert.equal(baseline.syncTriggerEnabled, false);
+assert.equal(baseline.singleRunPermit, null);
 assert.deepEqual(baseline.allowedDatasets, ['search_term_daily']);
 assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
 
@@ -41,28 +69,27 @@ assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
   next.state = 'amazon_read_ready';
   next.transitionFrom = 'safe_disabled';
   next.amazonAdsEnabled = true;
-  const nextSync = clone(syncConfig);
-  nextSync.env.dev.vars.AMAZON_ADS_ENABLED = 'true';
-  const accepted = validate({ state:next, syncConfig:nextSync });
+  const accepted = validate({ state:next, syncConfig:amazonReadySync() });
   assert.equal(accepted.state, 'amazon_read_ready');
   assert.equal(accepted.amazonAdsEnabled, true);
   assert.equal(accepted.syncTriggerEnabled, false);
+  assert.equal(accepted.singleRunPermit, null);
 }
 
 {
-  const next = clone(state);
-  next.state = 'single_run_open';
-  next.transitionFrom = 'amazon_read_ready';
-  next.amazonAdsEnabled = true;
-  next.syncTriggerEnabled = true;
-  const nextSync = clone(syncConfig);
-  nextSync.env.dev.vars.AMAZON_ADS_ENABLED = 'true';
-  const nextNative = clone(nativeConfig);
-  nextNative.env.dev.vars.SYNC_TRIGGER_ENABLED = 'true';
-  const accepted = validate({ state:next, syncConfig:nextSync, nativeConfig:nextNative });
+  const accepted = validate({
+    state:singleRunState(),
+    syncConfig:amazonReadySync(),
+    nativeConfig:singleRunNative(),
+  });
   assert.equal(accepted.state, 'single_run_open');
   assert.equal(accepted.amazonAdsEnabled, true);
   assert.equal(accepted.syncTriggerEnabled, true);
+  assert.deepEqual(accepted.singleRunPermit, {
+    permitId:PERMIT_ID,
+    reportDate:REPORT_DATE,
+    accountType:'seller',
+  });
 }
 
 {
@@ -73,21 +100,45 @@ assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
   assert.equal(accepted.state, 'safe_disabled');
   assert.equal(accepted.amazonAdsEnabled, false);
   assert.equal(accepted.syncTriggerEnabled, false);
+  assert.equal(accepted.singleRunPermit, null);
 }
 
 {
-  const bad = clone(state);
-  bad.state = 'single_run_open';
+  const bad = singleRunState();
   bad.transitionFrom = 'safe_disabled';
-  bad.amazonAdsEnabled = true;
-  bad.syncTriggerEnabled = true;
-  const badSync = clone(syncConfig);
-  badSync.env.dev.vars.AMAZON_ADS_ENABLED = 'true';
-  const badNative = clone(nativeConfig);
-  badNative.env.dev.vars.SYNC_TRIGGER_ENABLED = 'true';
   rejects('PHASE5_ACTIVATION_TRANSITION_INVALID:safe_disabled:single_run_open', {
     state:bad,
-    syncConfig:badSync,
+    syncConfig:amazonReadySync(),
+    nativeConfig:singleRunNative(),
+  });
+}
+
+{
+  const bad = singleRunState();
+  bad.singleRunPermit = null;
+  rejects('PHASE5_SINGLE_RUN_PERMIT_REQUIRED', {
+    state:bad,
+    syncConfig:amazonReadySync(),
+    nativeConfig:singleRunNative(),
+  });
+}
+
+{
+  const bad = singleRunState();
+  bad.singleRunPermit.reportDate = '2026-08-08';
+  rejects('PHASE5_SINGLE_RUN_PERMIT_DATE_MISMATCH', {
+    state:bad,
+    syncConfig:amazonReadySync(),
+    nativeConfig:singleRunNative(),
+  });
+}
+
+{
+  const badNative = singleRunNative();
+  badNative.env.dev.vars.PHASE5_SINGLE_RUN_PERMIT_ID = 'phase5.store01.search-term.2026-08-09.vendor.v1';
+  rejects('PHASE5_SINGLE_RUN_RUNTIME_PERMIT_MISMATCH', {
+    state:singleRunState(),
+    syncConfig:amazonReadySync(),
     nativeConfig:badNative,
   });
 }
@@ -131,6 +182,12 @@ assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
 }
 
 {
+  const bad = clone(nativeConfig);
+  bad.env.production.vars.PHASE5_SINGLE_RUN_PERMIT_ID = PERMIT_ID;
+  rejects('PHASE5_PRODUCTION_SINGLE_RUN_PERMIT_FORBIDDEN', { nativeConfig:bad });
+}
+
+{
   const bad = clone(state);
   bad.amazonMutationAuthorized = true;
   rejects('PHASE5_AMAZON_MUTATION_FORBIDDEN', { state:bad });
@@ -144,9 +201,10 @@ assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
 
 console.log(JSON.stringify({
   ok:true,
-  contract:'phase5-store01-live-read-activation-v1',
+  contract:'phase5-store01-live-read-activation-v2',
   currentState:'safe_disabled',
   validStates:['safe_disabled', 'amazon_read_ready', 'single_run_open'],
+  exactSingleRunPermit:true,
   emergencyShutdownFromSingleRun:true,
   productionAlwaysDisabled:true,
   store01Only:true,
