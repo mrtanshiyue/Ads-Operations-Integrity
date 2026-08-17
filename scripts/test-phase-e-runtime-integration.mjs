@@ -60,14 +60,16 @@ assert(credentialProviderIndex > capabilityIndex, 'producer capability preflight
 assert(bootstrapIndex > credentialProviderIndex, 'credentials must be available before concrete producer bootstrap');
 assert(reportCycleIndex > bootstrapIndex, 'durable producer bootstrap must precede report-cycle execution');
 
-assert.match(nativeConfig, /"SYNC_TRIGGER_ENABLED": "false"/);
-assert.match(syncConfig, /"AMAZON_ADS_ENABLED": "false"/);
+// Runtime version identity remains required in both Dev and production. Kill-switch values are no
+// longer hard-coded here: Phase 5 activation state is Git-controlled and validated below.
 assert.equal((syncConfig.match(/"version_metadata"/g) || []).length, 2, 'sync Dev and production environments must expose version metadata');
 assert.equal((syncConfig.match(/"binding": "CF_VERSION_METADATA"/g) || []).length, 2, 'sync version metadata binding must be explicit per environment');
+assert.equal((nativeConfig.match(/"version_metadata"/g) || []).length, 2, 'Web Dev and production environments must expose version metadata');
 
-// Execute the Phase 5 entry-guard behavior test from this canonical Phase E regression so the
-// API-level no-write/no-Workflow proof cannot become an unreferenced standalone test.
+// Execute Phase 5 behavioral contracts from this canonical Phase E regression so neither safety
+// boundary can become an unreferenced standalone test.
 await import('./test-sync-api-producer-capability.mjs');
+await import('./test-phase5-live-read-activation-contract.mjs');
 
 console.log(JSON.stringify({
   ok: true,
@@ -78,8 +80,9 @@ console.log(JSON.stringify({
   producerCapabilityAtWebEntry: true,
   unsupportedIntentNoStoreWriteOrWorkflow: true,
   killSwitchBeforeCapabilityAndCredentials: true,
+  phase5ActivationStateGitControlled: true,
+  productionActivationForbidden: true,
   concreteAmazonProducerComposition: true,
   runtimeVersionObservable: true,
   placeholderAdaptersRemoved: true,
-  killSwitchesRemainFalse: true,
 }, null, 2));

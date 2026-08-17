@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "phase5-store01-live-read-activation-v1",
+  "phase": "5",
+  "storeId": "store-dev-01",
+  "storeCode": "DEV01",
+  "state": "safe_disabled",
+  "transitionFrom": "safe_disabled",
+  "allowedDatasets": [
+    "search_term_daily"
+  ],
+  "amazonAdsEnabled": false,
+  "syncTriggerEnabled": false,
+  "singleRunOnly": true,
+  "amazonMutationAuthorized": false,
+  "productionMutationAuthorized": false,
+  "productionAmazonAdsEnabled": false,
+  "productionSyncTriggerEnabled": false
+}

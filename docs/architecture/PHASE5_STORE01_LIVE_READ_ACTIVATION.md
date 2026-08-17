@@ -53,6 +53,42 @@ The current Dev Sync plane may service only the Store 01 activation in this phas
 
 At the 2026-08-17 preflight, Store 01 D1 still contains synthetic Dev fixtures and no real `report_jobs` or `sync_runs`. Synthetic fixtures are regression assets, not live Amazon authority.
 
+### Activation-state authority
+
+The Git-tracked activation authority is:
+
+```text
+docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json
+```
+
+The allowed Phase 5 state machine is:
+
+```text
+safe_disabled
+  AMAZON_ADS_ENABLED=false
+  SYNC_TRIGGER_ENABLED=false
+
+        ↓ after credential-only smoke succeeds
+
+amazon_read_ready
+  AMAZON_ADS_ENABLED=true
+  SYNC_TRIGGER_ENABLED=false
+
+        ↓ only for one controlled manual run window
+
+single_run_open
+  AMAZON_ADS_ENABLED=true
+  SYNC_TRIGGER_ENABLED=true
+
+        ↓ immediately after the run is registered
+
+amazon_read_ready
+```
+
+Emergency rollback may move either `amazon_read_ready` or `single_run_open` directly to `safe_disabled`. A normal direct `safe_disabled → single_run_open` transition is forbidden.
+
+The activation state, Wrangler flags, Store 01-only Dev bindings, implemented dataset scope, and Production-disabled invariants are validated by canonical CI and by `validate-cloudflare-native.mjs`. Dashboard-only or otherwise unreviewed toggle changes are not an approved activation mechanism.
+
 ## 4. Hard safety boundaries
 
 ### Amazon operations allowed
@@ -72,7 +108,9 @@ No campaign, ad group, keyword, target, product-ad, budget, bid, state, negative
 
 ### Cloudflare mutations allowed only when explicitly required by activation
 
-Phase 5 may eventually require exact-SHA Dev deployment/configuration and Store 01 secret provisioning. Before those mutations, all read-only preflight checks in this contract must pass. Production Cloudflare resources remain out of scope.
+Phase 5 may require exact-SHA Dev deployment/configuration and Store 01 secret provisioning. Before those mutations, all read-only preflight checks in this contract must pass. Production Cloudflare resources remain out of scope.
+
+Activation-state changes must be Git reviewed and pass canonical CI before exact-SHA deployment. The state file and the corresponding Wrangler flags must move together.
 
 ### Store boundary
 
@@ -104,12 +142,13 @@ These are operational conditions, not a return to historical Gate numbering.
 Must verify:
 
 - canonical `main` and required CI are green;
-- intended Sync runtime comes from an exact reviewed Git SHA;
+- intended Web/Sync runtime comes from an exact reviewed Git SHA whenever that plane changes;
 - Web Dev and Sync Dev current bindings match Store 01 scope;
-- `SYNC_TRIGGER_ENABLED=false`;
-- `AMAZON_ADS_ENABLED=false`;
+- activation state is `safe_disabled` before credential provisioning;
+- `SYNC_TRIGGER_ENABLED=false` and `AMAZON_ADS_ENABLED=false` while state is `safe_disabled`;
+- Production `SYNC_TRIGGER_ENABLED=false` and `AMAZON_ADS_ENABLED=false` regardless of Dev activation state;
 - no Production mutation is included;
-- `search_term_daily` producer/report contracts remain covered by canonical CI.
+- `search_term_daily` remains the only Phase 5 executable dataset and remains covered by canonical CI.
 
 Failure is a blocker.
 
@@ -137,9 +176,10 @@ AMAZON_ADS_CLIENT_SECRET
 AMAZON_ADS_REFRESH_TOKEN
 ```
 
-During provisioning:
+During provisioning the activation state remains:
 
 ```text
+safe_disabled
 AMAZON_ADS_ENABLED=false
 SYNC_TRIGGER_ENABLED=false
 ```
@@ -156,6 +196,7 @@ POST /health/amazon-credentials
 
 Contract requirements:
 
+- activation state remains `safe_disabled`;
 - `AMAZON_ADS_ENABLED` must still be `false`;
 - request proof must be tied to the immutable runtime Git tag and short-lived timestamp;
 - LWA token refresh must pass;
@@ -171,13 +212,17 @@ A successful LWA smoke proves credentials/token exchange only. It does **not** p
 
 Only after A–D pass:
 
-1. use the reviewed exact-SHA Sync runtime/configuration;
-2. enable `AMAZON_ADS_ENABLED=true` on the Store 01 Dev Sync Worker under controlled deployment/config provenance;
-3. keep Web `SYNC_TRIGGER_ENABLED=false` until Sync health/version/bindings are accepted;
-4. verify Sync `/health` reports the expected immutable version, Store DB count, Workflow, R2, and `amazonAdsEnabled=true`;
-5. then enable Web `SYNC_TRIGGER_ENABLED=true` only for the controlled manual run window.
+1. create a reviewed Git change from `safe_disabled` to `amazon_read_ready`;
+2. change only the matching Dev Sync flag to `AMAZON_ADS_ENABLED=true`; keep Web `SYNC_TRIGGER_ENABLED=false`;
+3. canonical CI must validate the activation state and Store 01-only topology;
+4. merge to canonical `main` and deploy the exact reviewed main SHA to Sync Dev;
+5. verify Sync `/health` reports the expected immutable version, Store DB count, Workflow, R2, and `amazonAdsEnabled=true`;
+6. only then create a second reviewed Git change from `amazon_read_ready` to `single_run_open`, changing Web `SYNC_TRIGGER_ENABLED=true` while keeping Amazon read enabled;
+7. canonical CI must pass again; deploy the exact reviewed main SHA to Web Dev;
+8. verify Web runtime identity and `SYNC_TRIGGER_ENABLED=true` before submitting the single run;
+9. after the run is registered, immediately move Git state back to `amazon_read_ready`, set Web `SYNC_TRIGGER_ENABLED=false`, pass CI, merge, and exact-SHA deploy Web Dev again.
 
-No scheduled recurring sync is authorized by the first activation run.
+No scheduled recurring sync is authorized by the first activation run. Production flags remain false throughout all transitions.
 
 ## 6. First controlled manual run
 
@@ -198,7 +243,7 @@ The first live run MUST request exactly the currently implemented business datas
 search_term_daily
 ```
 
-Do not include `keyword_daily`, `target_daily`, `campaign_daily`, or any other daily dataset in this run. The generic intent parser recognizes those names, but the live producer intentionally rejects them until their producer implementations exist.
+Do not include `keyword_daily`, `target_daily`, `campaign_daily`, or any other daily dataset in this run. The generic intent parser recognizes those names, but the Web entry and live producer both reject them until their producer implementations exist.
 
 Entity bootstrap/mirror remains part of the Search Term producer path and provides the targeting identity context needed for Search Term Intelligence.
 
@@ -253,23 +298,24 @@ Audit/runtime evidence must show no Amazon mutation transport was invoked.
 
 ### Stop new runs
 
-Set first:
+First move activation state to `amazon_read_ready` and set:
 
 ```text
 SYNC_TRIGGER_ENABLED=false
 ```
 
-This prevents the Web API from registering/triggering new producer runs.
+under the same Git/CI/exact-SHA deployment controls. This prevents the Web API from registering/triggering new producer runs while leaving an already-running read-only Workflow able to finish.
 
 ### Stop Amazon producer execution
 
-If credentials, profile identity, report authority, R2 identity, Store D1 integrity, or unexpected Amazon behavior is in doubt, set:
+If credentials, profile identity, report authority, R2 identity, Store D1 integrity, or unexpected Amazon behavior is in doubt, move activation state directly to `safe_disabled` from either active Dev state and set:
 
 ```text
 AMAZON_ADS_ENABLED=false
+SYNC_TRIGGER_ENABLED=false
 ```
 
-Do not continue with retries or backfill until the defect is understood.
+under the same Git/CI/exact-SHA deployment controls. Do not continue with retries or backfill until the defect is understood.
 
 ### Data handling after a failed run
 
@@ -288,7 +334,7 @@ Phase 5 is complete when:
 4. Search Term report acquisition → R2 → Store D1 lineage is verified;
 5. facts reconcile sufficiently for decision intelligence under the canonical real profile scope;
 6. no Amazon write occurred;
-7. kill switches are proven operational;
+7. Git-controlled kill-switch transitions are proven operational;
 8. a repeat run demonstrates idempotent/replay-safe behavior;
 9. Search Term Intelligence can consume only real, provenance-valid facts without synthetic substitution.
 
