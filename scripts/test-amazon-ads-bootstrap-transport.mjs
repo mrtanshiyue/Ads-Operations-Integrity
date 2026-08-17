@@ -4,6 +4,14 @@ import {
   createAmazonAdsBootstrapTransport,
   parseJsonPreservingNumberLexemes,
 } from '../cloudflare/runtime/amazon-ads-bootstrap-transport.js';
+import {
+  AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+  buildExecutionPlan,
+} from '../cloudflare/runtime/amazon-action-execution-safety.js';
+import {
+  AmazonUnifiedTargetReadError,
+  createAmazonUnifiedTargetReadDispatcher,
+} from '../cloudflare/runtime/amazon-unified-target-read-dispatcher.js';
 import { canonicalizeEntitySnapshot } from '../cloudflare/runtime/amazon-entity-contract.js';
 
 function responseRaw(raw, init = {}) {
@@ -150,8 +158,123 @@ async function testSafeListRetryAndPaginationLoopGuard() {
   });
 }
 
+async function buildUnifiedReadPlan() {
+  return buildExecutionPlan({
+    storeId:'store-dev-01',
+    action:{
+      action_id:'act-phase12a-read-preflight',
+      profile_id:'profile-real-01',
+      entity_type:'search_term',
+      entity_id:'search-term-real-01',
+      action_type:'negative_keyword.create',
+      status:'approved',
+      proposed_json:JSON.stringify({
+        scope:'ad_group',
+        campaignId:'campaign-real-01',
+        adGroupId:'adgroup-real-01',
+        keywordText:'free reading glasses',
+        matchType:'EXACT',
+        executionDestinationContract:'search-term-ad-group-v1',
+        amazonMutationContract:AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+      }),
+      rationale_json:JSON.stringify({ governance:{ requestFingerprint:'a'.repeat(64) } }),
+      external_request_id:null,
+      applied_at:null,
+    },
+  });
+}
+
+async function testUnifiedTargetReadOnlyDispatcher() {
+  const plan = await buildUnifiedReadPlan();
+  assert.equal(plan.valid, true);
+  assert.equal(plan.permitIssuanceReady, true);
+
+  const calls = [];
+  const sleeps = [];
+  const responses = [
+    new Response('', { status:429, headers:{ 'retry-after':'0' } }),
+    responseRaw('{"targets":[]}'),
+  ];
+  const dispatcher = createAmazonUnifiedTargetReadDispatcher({
+    clientId:'client-id',
+    accessToken:'access-token',
+    accountId:'account-01',
+    profileId:'profile-real-01',
+    region:'NA',
+    maxRetries:2,
+    sleep:async (ms) => { sleeps.push(ms); },
+    fetchImpl:async (url, init) => {
+      calls.push({ url, init, body:JSON.parse(init.body) });
+      return responses.shift();
+    },
+  });
+
+  const absent = await dispatcher.queryNegativeKeywordTarget({ plan, observedAt:'2026-08-18T00:00:00Z' });
+  assert.equal(absent.safeToProceed, true);
+  assert.equal(absent.duplicateExists, false);
+  assert.equal(absent.verification.result, 'not_found');
+  assert.equal(absent.permitRequired, false);
+  assert.equal(absent.readOnlyNetworkDispatchAuthorized, true);
+  assert.equal(absent.mutationDispatchAuthorized, false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://advertising-api.amazon.com/adsApi/v1/query/targets');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer access-token');
+  assert.equal(calls[0].init.headers['Amazon-Ads-AccountId'], 'account-01');
+  assert.equal(calls[0].init.headers['Amazon-Ads-ClientId'], 'client-id');
+  assert.equal(calls[0].init.headers['Amazon-Advertising-API-Scope'], 'profile-real-01');
+  assert.equal(calls[0].body.maxResults, 1000);
+  assert.deepEqual(calls[0].body.negativeFilter, { include:[true] });
+  assert.ok(!calls.some((call) => call.url.includes('/create/targets')));
+  assert.deepEqual(sleeps, [0]);
+
+  const duplicateDispatcher = createAmazonUnifiedTargetReadDispatcher({
+    clientId:'client-id', accessToken:'access-token', accountId:'account-01', profileId:'profile-real-01', region:'NA', sleep:async () => {},
+    fetchImpl:async () => responseRaw(JSON.stringify({ targets:[{
+      targetId:'target-01', campaignId:'campaign-real-01', adGroupId:'adgroup-real-01', negative:true,
+      adProduct:'SPONSORED_PRODUCTS', targetType:'KEYWORD', state:'ENABLED',
+      targetDetails:{ keywordTarget:{ keyword:'free reading glasses', matchType:'EXACT' } },
+    }] })),
+  });
+  const duplicate = await duplicateDispatcher.queryNegativeKeywordTarget({ plan, observedAt:'2026-08-18T00:01:00Z' });
+  assert.equal(duplicate.safeToProceed, false);
+  assert.equal(duplicate.duplicateExists, true);
+  assert.equal(duplicate.verification.result, 'confirmed');
+
+  const truncatedDispatcher = createAmazonUnifiedTargetReadDispatcher({
+    clientId:'client-id', accessToken:'access-token', accountId:'account-01', profileId:'profile-real-01', region:'NA', sleep:async () => {},
+    fetchImpl:async () => responseRaw('{"targets":[],"nextToken":"more"}'),
+  });
+  const truncated = await truncatedDispatcher.queryNegativeKeywordTarget({ plan, observedAt:'2026-08-18T00:02:00Z' });
+  assert.equal(truncated.safeToProceed, false);
+  assert.equal(truncated.duplicateExists, false);
+  assert.equal(truncated.verification.result, 'unknown');
+  assert.deepEqual(truncated.verification.errors, ['target_query_result_may_be_truncated']);
+
+  const mismatchProfile = createAmazonUnifiedTargetReadDispatcher({
+    clientId:'client-id', accessToken:'access-token', accountId:'account-01', profileId:'different-profile', region:'NA', sleep:async () => {},
+    fetchImpl:async () => { throw new Error('must not dispatch'); },
+  });
+  await assert.rejects(mismatchProfile.queryNegativeKeywordTarget({ plan }), (error) => {
+    assert.ok(error instanceof AmazonUnifiedTargetReadError);
+    assert.equal(error.code, 'AMAZON_UNIFIED_TARGET_PROFILE_MISMATCH');
+    return true;
+  });
+
+  const invalidSchema = createAmazonUnifiedTargetReadDispatcher({
+    clientId:'client-id', accessToken:'access-token', accountId:'account-01', profileId:'profile-real-01', region:'NA', maxRetries:0, sleep:async () => {},
+    fetchImpl:async () => responseRaw('not-json'),
+  });
+  await assert.rejects(invalidSchema.queryNegativeKeywordTarget({ plan }), (error) => {
+    assert.ok(error instanceof AmazonUnifiedTargetReadError);
+    assert.equal(error.code, 'AMAZON_UNIFIED_TARGET_READ_SCHEMA_INVALID');
+    return true;
+  });
+}
+
 testLosslessJsonNumbers();
 await testProfilesUseRegionHostWithoutScope();
 await testEntityPaginationAndCanonicalMoney();
 await testSafeListRetryAndPaginationLoopGuard();
+await testUnifiedTargetReadOnlyDispatcher();
 console.log('Amazon Ads bootstrap transport tests: PASS');
