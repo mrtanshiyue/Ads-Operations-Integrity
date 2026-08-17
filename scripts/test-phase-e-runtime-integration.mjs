@@ -36,6 +36,8 @@ assert.doesNotMatch(webSync, /workflow\.create\(/);
 
 assert.match(syncWorker, /prepareWorkflowExecution/);
 assert.match(syncWorker, /load durable sync intent receipt/);
+assert.match(syncWorker, /AMAZON_ADS_PROFILE_DISCOVERY_SMOKE_PATH/);
+assert.match(syncWorker, /handleAmazonAdsProfileDiscoverySmoke/);
 assert.match(syncWorker, /amazonAdsExecutionEnabled\(this\.env\)/);
 assert.match(syncWorker, /assertProducerIntentSupported\(execution\.intent\)/);
 assert.match(syncWorker, /createAmazonAdsAccessTokenProviderFromEnv\(this\.env\)/);
@@ -66,10 +68,11 @@ assert.equal((syncConfig.match(/"version_metadata"/g) || []).length, 2, 'sync De
 assert.equal((syncConfig.match(/"binding": "CF_VERSION_METADATA"/g) || []).length, 2, 'sync version metadata binding must be explicit per environment');
 assert.equal((nativeConfig.match(/"version_metadata"/g) || []).length, 2, 'Web Dev and production environments must expose version metadata');
 
-// Execute Phase 5 behavioral contracts from this canonical Phase E regression so neither safety
-// boundary can become an unreferenced standalone test.
+// Execute Phase 5 behavioral contracts from this canonical Phase E regression so safety
+// boundaries cannot become unreferenced standalone tests.
 await import('./test-sync-api-producer-capability.mjs');
 await import('./test-phase5-live-read-activation-contract.mjs');
+await import('./test-amazon-profile-discovery-smoke.mjs');
 
 console.log(JSON.stringify({
   ok: true,
@@ -79,6 +82,9 @@ console.log(JSON.stringify({
   durableIntentReceiptFirst: true,
   producerCapabilityAtWebEntry: true,
   unsupportedIntentNoStoreWriteOrWorkflow: true,
+  safeDisabledProfileDiscoverySmoke: true,
+  profileDiscoveryNoDurableProducerSideEffects: true,
+  profileSmokeProofPathBound: true,
   killSwitchBeforeCapabilityAndCredentials: true,
   phase5ActivationStateGitControlled: true,
   productionActivationForbidden: true,

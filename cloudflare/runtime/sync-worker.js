@@ -6,6 +6,10 @@ import {
   handleAmazonAdsCredentialSmoke,
 } from './amazon-ads-credential-smoke.js';
 import {
+  AMAZON_ADS_PROFILE_DISCOVERY_SMOKE_PATH,
+  handleAmazonAdsProfileDiscoverySmoke,
+} from './amazon-ads-profile-discovery-smoke.js';
+import {
   advanceAmazonAdsReportCycle,
   amazonAdsExecutionEnabled,
   prepareAmazonAdsProducerRuntime,
@@ -28,6 +32,9 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === AMAZON_ADS_CREDENTIAL_SMOKE_PATH) {
       return handleAmazonAdsCredentialSmoke(request, env);
+    }
+    if (url.pathname === AMAZON_ADS_PROFILE_DISCOVERY_SMOKE_PATH) {
+      return handleAmazonAdsProfileDiscoverySmoke(request, env);
     }
     if (url.pathname !== '/health') return new Response('Not found', { status: 404 });
 
