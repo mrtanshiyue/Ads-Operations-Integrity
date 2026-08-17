@@ -54,9 +54,6 @@ const storeDb = {
     if (sql.includes('FROM search_term_daily')) {
       return { bind() { return { async first() { return { ...storeRow }; } }; } };
     }
-    if (sql.includes('FROM optimization_actions') && sql.includes('idempotency_key')) {
-      return { bind() { return { async first() { return null; } }; } };
-    }
     if (sql.includes('FROM optimization_actions') && sql.includes('WHERE action_id=?1')) {
       return {
         bind(actionId) {
@@ -69,6 +66,9 @@ const storeDb = {
           };
         },
       };
+    }
+    if (sql.includes('FROM optimization_actions') && sql.includes('WHERE idempotency_key=?1')) {
+      return { bind() { return { async first() { return null; } }; } };
     }
     throw new Error(`unexpected store SQL: ${sql}`);
   },
