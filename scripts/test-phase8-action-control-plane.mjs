@@ -9,6 +9,30 @@ const storeRow = {
   campaign_id: 'campaign-freeze-01',
   ad_group_id: 'adgroup-freeze-01',
 };
+const executionRequestFingerprint = '1'.repeat(64);
+const approvedReadyAction = {
+  action_id: 'act-ready-01',
+  profile_id: storeRow.profile_id,
+  entity_type: 'search_term',
+  entity_id: storeRow.row_key,
+  action_type: 'negative_keyword.create',
+  proposed_json: JSON.stringify({
+    scope: 'ad_group',
+    campaignId: storeRow.campaign_id,
+    adGroupId: storeRow.ad_group_id,
+    keywordText: 'free reading glasses',
+    matchType: 'EXACT',
+  }),
+  rationale_json: JSON.stringify({ governance: { requestFingerprint: executionRequestFingerprint } }),
+  status: 'approved',
+  external_request_id: null,
+  applied_at: null,
+};
+const approvedLegacyAction = {
+  ...approvedReadyAction,
+  action_id: 'act-legacy-01',
+  proposed_json: JSON.stringify({ keywordText: 'free reading glasses', matchType: 'EXACT' }),
+};
 
 const controlDb = {
   prepare(sql) {
@@ -32,6 +56,19 @@ const storeDb = {
     }
     if (sql.includes('FROM optimization_actions') && sql.includes('idempotency_key')) {
       return { bind() { return { async first() { return null; } }; } };
+    }
+    if (sql.includes('FROM optimization_actions') && sql.includes('WHERE action_id=?1')) {
+      return {
+        bind(actionId) {
+          return {
+            async first() {
+              if (actionId === approvedReadyAction.action_id) return { ...approvedReadyAction };
+              if (actionId === approvedLegacyAction.action_id) return { ...approvedLegacyAction };
+              return null;
+            },
+          };
+        },
+      };
     }
     throw new Error(`unexpected store SQL: ${sql}`);
   },
@@ -120,13 +157,65 @@ assert.equal(mismatch.field, 'campaignId');
 assert.equal(mismatch.amazonMutationAttempted, false);
 assert.equal(mismatch.amazonMutationAuthorized, false);
 
+const readinessUrl = `https://example.test/api/v1/stores/store-dev-01/optimization-actions/${approvedReadyAction.action_id}/apply?dryRun=true`;
+const readinessResponse = await handleOptimizationActionsApiRoute({
+  request: new Request(readinessUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  env,
+  actor,
+  url: new URL(readinessUrl),
+});
+assert.equal(readinessResponse.status, 200);
+const readiness = await readinessResponse.json();
+assert.equal(readiness.schemaVersion, 'optimization-action-execution-dry-run-v1');
+assert.equal(readiness.valid, true);
+assert.equal(readiness.plan.dryRunReady, true);
+assert.equal(readiness.plan.permitIssuanceReady, false);
+assert.equal(readiness.plan.mutation.endpointMappingVerified, false);
+assert.equal(readiness.plan.networkDispatchAuthorized, false);
+assert.equal(readiness.execution.permitIssued, false);
+assert.equal(readiness.execution.receiptWritten, false);
+assert.equal(readiness.execution.amazonMutationAttempted, false);
+assert.equal(readiness.execution.amazonMutationAuthorized, false);
+
+const legacyReadinessUrl = `https://example.test/api/v1/stores/store-dev-01/optimization-actions/${approvedLegacyAction.action_id}/apply?dryRun=true`;
+const legacyReadinessResponse = await handleOptimizationActionsApiRoute({
+  request: new Request(legacyReadinessUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  env,
+  actor,
+  url: new URL(legacyReadinessUrl),
+});
+assert.equal(legacyReadinessResponse.status, 200);
+const legacyReadiness = await legacyReadinessResponse.json();
+assert.equal(legacyReadiness.valid, false);
+assert.ok(legacyReadiness.plan.errors.includes('destination_scope_not_frozen'));
+assert.equal(legacyReadiness.plan.networkDispatchAuthorized, false);
+
+const blockedApplyUrl = `https://example.test/api/v1/stores/store-dev-01/optimization-actions/${approvedReadyAction.action_id}/apply`;
+const blockedApplyResponse = await handleOptimizationActionsApiRoute({
+  request: new Request(blockedApplyUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }),
+  env,
+  actor,
+  url: new URL(blockedApplyUrl),
+});
+assert.equal(blockedApplyResponse.status, 409);
+const blockedApply = await blockedApplyResponse.json();
+assert.equal(blockedApply.error, 'action_execution_disabled');
+assert.equal(blockedApply.amazonMutationAttempted, false);
+assert.equal(blockedApply.amazonMutationAuthorized, false);
+
 console.log(JSON.stringify({
   ok: true,
-  contract: 'optimization-action-execution-target-freeze-v1',
+  contract: 'optimization-action-execution-readiness-v1',
   targetSource: 'server-authoritative search_term_daily row',
   scope: 'ad_group',
   fingerprintIncludesFrozenDestination: true,
   stalePreviewFingerprintAcceptedOnlyAfterServerRecompute: true,
   spoofedDestinationRejected: true,
+  applyDryRun: true,
+  legacyUnscopedActionFailsClosed: true,
+  endpointMapping: 'unverified-and-blocking',
+  permitIssued: false,
+  receiptWritten: false,
+  defaultApply: 'disabled',
   amazonExecution: 'disabled',
 }, null, 2));
