@@ -31,10 +31,11 @@ Work that only increases receipt count, provenance depth, or Gate count is not p
 | Security | Cloudflare Access, application RBAC, store-scoped authorization, fail-closed controls | Production launch policy and execution-specific approval hardening | Phase 8–10 |
 | Deployment | Canonical CI, exact-SHA Workers Builds provenance, immutable runtime receipts | Product release cadence without reopening old Gate taxonomy | Phase 4+ |
 | Control data | Users/RBAC/stores/products/product mappings/keyword & negative governance/rules/rollups/audit | Recommendation policy configuration and product-facing explainability | Phase 6–8 |
-| Store entities | Amazon profiles, campaigns, ad groups, keywords, targets, product ads | Real Store 01 population and freshness evidence | Phase 5 |
-| Store facts | campaign/keyword/target/search-term/product/placement daily facts | Real Store 01 fact coverage, freshness, reconciliation | Phase 5 |
+| Store entities | Amazon profile/campaign/ad-group/keyword/target/product-ad schemas plus entity mirror implementation | Real Store 01 population and freshness evidence | Phase 5 |
+| Store fact schemas | campaign/ad-group/keyword/target/search-term/product/placement daily tables and ingestion/provenance structures exist | Additional live producer implementations beyond Search Term | Phase 5+ incremental |
+| Implemented live fact producer | `search_term_daily` only; requires entity mirror and `search_term_daily.sp.v1` report contract | Controlled Store 01 live activation, then explicit producer expansion | Phase 5 |
 | Provenance | Report jobs, sync receipts, R2 source identity/content evidence, ingestion state | Operational data-health SLOs for live Store 01 | Phase 5–6 |
-| Amazon transport | Credential provider, profile bootstrap, entity mirror, Create/Poll/Download Report, report-cycle runtime | Controlled live credential provisioning and single-store live-read acceptance | Phase 5 |
+| Amazon transport | Credential provider, profile bootstrap, entity mirror, Search Term Create/Poll/Download Report path, report-cycle runtime | Controlled live credential provisioning and single-store live-read acceptance | Phase 5 |
 | Search Term intelligence | Read/query primitives and Search Term fact pipeline | Business scoring: waste, harvest, bid opportunity, confidence, explanation | Phase 6 |
 | Recommendation | `optimization_rules` governance exists | Recommendation engine, deterministic fingerprinting, evidence envelope | Phase 6 |
 | Action ledger | `optimization_actions` + events and lifecycle states already exist | Governed Action API and transition enforcement | Phase 8 |
@@ -55,6 +56,8 @@ Work that only increases receipt count, provenance depth, or Gate count is not p
 6. **Store 02 is an isolation gate.** Before Store 02 credentials exist, execution must be physically split by Worker, Workflow, credentials, and R2 boundary.
 7. **Deployment and activation identities remain separate.** Merge, deploy, and Amazon activation are distinct controlled events.
 8. **Exact-SHA deployment provenance remains valid infrastructure, not a roadmap.** Do not create new Gate numbering merely to preserve the old process shape.
+9. **Fact-table existence is not producer readiness.** A Store D1 schema or generic intent name must not be described as live-acquirable until the producer capability explicitly implements it.
+10. **Recommendation authority is profile + provenance scoped.** Unscoped Dev fixture queries must not feed live optimization decisions.
 
 ## 4. Phase 4 — Project Truth & Productization Reset
 
@@ -81,6 +84,16 @@ Canonical CI green, merged to `main`, post-merge correlation confirms no archite
 
 Acquire trustworthy, repeatable, auditable real Amazon Ads data for Store 01 without any Amazon mutation.
 
+### Current executable scope
+
+The first live producer scope is intentionally narrow:
+
+```text
+search_term_daily
+```
+
+The producer also performs the canonical profile bootstrap and entity mirror needed to interpret Search Term targeting identity. Other Store D1 daily-fact schemas are not evidence that their live producers are implemented.
+
 ### Sequence
 
 ```text
@@ -92,22 +105,28 @@ runtime/binding preflight
 → enable one controlled manual Web sync trigger
 → canonical profile bootstrap
 → entity mirror
-→ report Create/Poll/Download
+→ Search Term report Create/Poll/Download
 → R2 materialization
-→ Store D1 ingestion
-→ data reconciliation + source provenance acceptance
+→ Store D1 Search Term ingestion
+→ profile-scoped data reconciliation + source provenance acceptance
 → disable/retain trigger according to operating mode
 ```
 
-### Initial data priority
+### Data priority
+
+**Executable now**
 
 1. `search_term_daily`
-2. `keyword_daily`
-3. `target_daily`
-4. `campaign_daily`
-5. supporting entity mirror required for identity/explanation
+2. supporting entity mirror required for identity/explanation
 
-Other supported datasets can follow after the first trusted Search Term loop.
+**Next producer implementations after the first trusted Search Term loop**
+
+1. `keyword_daily`
+2. `target_daily`
+3. `campaign_daily`
+4. remaining daily-fact families according to decision-intelligence value
+
+Producer expansion is explicit implementation work; the generic sync-intent allowlist must not be mistaken for implemented capability.
 
 ### Exit evidence
 
@@ -115,7 +134,8 @@ Other supported datasets can follow after the first trusted Search Term loop.
 - real entities mirrored with store/profile identity intact;
 - at least one controlled Search Term report cycle reaches terminal success;
 - raw object exists in R2 with validated identity/content provenance;
-- Store D1 facts reconcile to report receipt and date/profile context;
+- Store D1 Search Term facts reconcile to report receipt and date/profile context;
+- acceptance reads use the canonical real profile and valid lineage, excluding synthetic fixtures from authority;
 - no Amazon write endpoint invoked;
 - kill switches and rollback path verified.
 
@@ -132,11 +152,13 @@ Turn real Store 01 facts into explainable, deterministic recommendations.
 - Search Term waste detection;
 - negative keyword candidate recommendation;
 - keyword harvesting candidate recommendation;
-- bid opportunity/risk recommendation;
+- bid opportunity/risk recommendation where the required targeting/bid source state is trustworthy;
 - ACoS/ROAS/CVR/CPC diagnostics;
 - evidence/confidence envelope for every recommendation.
 
-### Recommendation contract
+### Recommendation authority
+
+A recommendation MUST consume the canonical real profile scope and provenance-valid facts. Dev fixture rows, missing source report lineage, or unscoped multi-profile aggregates are not authorized recommendation input.
 
 Every recommendation must identify:
 
