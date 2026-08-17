@@ -47,7 +47,7 @@ export async function enrichRecommendationGovernanceResponse({ request, response
     `).bind(payload.profile.profileId).all();
 
     const policy = applyRecommendationQualityPolicy({
-      payload,
+      payload: payload.storeId ? payload : { ...payload, storeId },
       history: (actionHistory.results || []).map(historyRecord),
       storeId,
     });
