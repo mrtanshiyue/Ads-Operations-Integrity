@@ -38,33 +38,15 @@ if (!/<\/head>/i.test(nativeIndex)) {
   throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${contextTag}\n  ${decisionTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
-if ((nativeIndex.split(operatorTag).length - 1) !== 1) {
-  throw new Error('Operator Workspace must be injected exactly once');
-}
-if ((nativeIndex.split(contextTag).length - 1) !== 1) {
-  throw new Error('Operator Context must be injected exactly once');
-}
-if ((nativeIndex.split(decisionTag).length - 1) !== 1) {
-  throw new Error('Decision Intelligence must be injected exactly once');
-}
-if ((nativeIndex.split(phase9Tag).length - 1) !== 1) {
-  throw new Error('Phase 9 productization extension must be injected exactly once');
-}
-if ((nativeIndex.split(phase11Tag).length - 1) !== 1) {
-  throw new Error('Phase 11 execution readiness extension must be injected exactly once');
-}
-if (nativeIndex.indexOf(operatorTag) > nativeIndex.indexOf(contextTag)) {
-  throw new Error('Operator Context must load after Operator Workspace');
-}
-if (nativeIndex.indexOf(contextTag) > nativeIndex.indexOf(decisionTag)) {
-  throw new Error('Decision Intelligence must load after Operator Context');
-}
-if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(phase9Tag)) {
-  throw new Error('Phase 9 productization extension must load after Decision Intelligence');
-}
-if (nativeIndex.indexOf(phase9Tag) > nativeIndex.indexOf(phase11Tag)) {
-  throw new Error('Phase 11 execution readiness extension must load after Phase 9 productization');
-}
+if ((nativeIndex.split(operatorTag).length - 1) !== 1) throw new Error('Operator Workspace must be injected exactly once');
+if ((nativeIndex.split(contextTag).length - 1) !== 1) throw new Error('Operator Context must be injected exactly once');
+if ((nativeIndex.split(decisionTag).length - 1) !== 1) throw new Error('Decision Intelligence must be injected exactly once');
+if ((nativeIndex.split(phase9Tag).length - 1) !== 1) throw new Error('Phase 9 productization extension must be injected exactly once');
+if ((nativeIndex.split(phase11Tag).length - 1) !== 1) throw new Error('Phase 11 execution readiness extension must be injected exactly once');
+if (nativeIndex.indexOf(operatorTag) > nativeIndex.indexOf(contextTag)) throw new Error('Operator Context must load after Operator Workspace');
+if (nativeIndex.indexOf(contextTag) > nativeIndex.indexOf(decisionTag)) throw new Error('Decision Intelligence must load after Operator Context');
+if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after Decision Intelligence');
+if (nativeIndex.indexOf(phase9Tag) > nativeIndex.indexOf(phase11Tag)) throw new Error('Phase 11 execution readiness extension must load after Phase 9 productization');
 await writeFile(distIndexPath, nativeIndex, 'utf8');
 
 await import('./enforce-cloudflare-native-asset-allowlist.mjs');
@@ -74,3 +56,4 @@ await import('./test-decision-intelligence-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
 await import('./test-phase11-execution-readiness-ui-contract.mjs');
 await import('./test-phase11-execution-safety.mjs');
+await import('./test-phase11-execution-reconciliation.mjs');
