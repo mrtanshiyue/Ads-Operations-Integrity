@@ -66,6 +66,16 @@ assert.deepEqual(baseline.devD1Bindings, ['CONTROL_DB', 'STORE_01_DB']);
 }
 
 {
+  const emergency = clone(state);
+  emergency.state = 'safe_disabled';
+  emergency.transitionFrom = 'single_run_open';
+  const accepted = validate({ state:emergency });
+  assert.equal(accepted.state, 'safe_disabled');
+  assert.equal(accepted.amazonAdsEnabled, false);
+  assert.equal(accepted.syncTriggerEnabled, false);
+}
+
+{
   const bad = clone(state);
   bad.state = 'single_run_open';
   bad.transitionFrom = 'safe_disabled';
@@ -137,6 +147,7 @@ console.log(JSON.stringify({
   contract:'phase5-store01-live-read-activation-v1',
   currentState:'safe_disabled',
   validStates:['safe_disabled', 'amazon_read_ready', 'single_run_open'],
+  emergencyShutdownFromSingleRun:true,
   productionAlwaysDisabled:true,
   store01Only:true,
   implementedDatasetOnly:'search_term_daily',
