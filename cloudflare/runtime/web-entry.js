@@ -21,6 +21,8 @@ import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
 import { handleSearchTermIntelligenceApiRoute } from './search-term-intelligence-api.js';
 import { handleOptimizationActionsApiRoute } from './optimization-actions-api.js';
+import { enrichRecommendationGovernanceResponse } from './recommendation-governance-layer.js';
+import { handleGovernanceHealthApiRoute } from './governance-health-api.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 import { enforceStrictAccessActorBinding } from '../../src/access-actor.js';
 
@@ -47,6 +49,7 @@ const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
 const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert))?)?$/;
+const GOVERNANCE_HEALTH_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/governance-health$/;
 
 export default {
   async fetch(request, env, ctx) {
@@ -70,7 +73,8 @@ export default {
       || SYNC_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname)
       || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)
-      || OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname);
+      || OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname)
+      || GOVERNANCE_HEALTH_ROUTE_PATTERN.test(url.pathname);
     if (!modularRoute || request.method === 'OPTIONS') {
       return legacyWebWorker.fetch(request, env, ctx);
     }
@@ -94,9 +98,13 @@ export default {
         const response = await handleSyncApiRoute({ request, env, actor, url });
         if (response) return response;
       }
+      if (GOVERNANCE_HEALTH_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleGovernanceHealthApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
       if (SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleSearchTermIntelligenceApiRoute({ request, env, actor, url });
-        if (response) return response;
+        if (response) return enrichRecommendationGovernanceResponse({ request, response, env, url });
       }
       if (OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleOptimizationActionsApiRoute({ request, env, actor, url });
