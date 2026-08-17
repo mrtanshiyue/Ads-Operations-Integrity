@@ -1,8 +1,25 @@
 export const SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION = 'search-term-intelligence-v1';
-export const SEARCH_TERM_MODEL_VERSION = 'search-term-preview-model-v2';
-export const SEARCH_TERM_RULE_VERSION = 'search-term-rules-v1';
+export const SEARCH_TERM_MODEL_VERSION = 'search-term-preview-model-v3';
+export const SEARCH_TERM_RULE_VERSION = 'search-term-rules-v2';
 
 export const DEFAULT_SEARCH_TERM_RULES = Object.freeze({
+  quality: Object.freeze({
+    minImpressions: 50,
+    minClicks: 3,
+    minSpendMicros: 500_000,
+    minConfidenceScore: 0.30,
+    suppressStale: true,
+    suppressInvalidLineage: true,
+    harvestDeteriorationOrdersPct: -0.50,
+    harvestDeteriorationAcosPp: 10,
+  }),
+  observation: Object.freeze({
+    highAcos: 0.60,
+    highAcosMinClicks: 8,
+    highAcosMinSpendMicros: 1_000_000,
+    lowConversionCvr: 0.05,
+    lowConversionMinClicks: 12,
+  }),
   waste: Object.freeze({
     minClicks: 8,
     minSpendMicros: 1_000_000,
@@ -68,7 +85,7 @@ export function buildRecommendationAuthority({ env = {}, profileId = '', lineage
   });
 }
 
-export function evaluateSearchTermDecision({ metrics, evidence, freshness, rules = DEFAULT_SEARCH_TERM_RULES } = {}) {
+export function evaluateSearchTermDecision({ metrics, evidence, freshness, trend = null, rules = DEFAULT_SEARCH_TERM_RULES } = {}) {
   const normalizedMetrics = deriveSearchTermMetrics(metrics);
   const normalizedEvidence = normalizeEvidence(evidence);
   const normalizedFreshness = normalizeFreshness(freshness);
@@ -76,7 +93,7 @@ export function evaluateSearchTermDecision({ metrics, evidence, freshness, rules
   const harvest = scoreHarvest(normalizedMetrics, rules.harvest || DEFAULT_SEARCH_TERM_RULES.harvest);
   const confidence = scoreConfidence(normalizedMetrics, normalizedEvidence, normalizedFreshness);
 
-  const recommendation = waste.eligible
+  const candidate = waste.eligible
     ? Object.freeze({
         family: 'waste',
         actionType: 'negative_keyword.create',
@@ -92,12 +109,27 @@ export function evaluateSearchTermDecision({ metrics, evidence, freshness, rules
         })
       : null;
 
+  const quality = evaluateRecommendationQuality({
+    candidate,
+    metrics: normalizedMetrics,
+    evidence: normalizedEvidence,
+    freshness: normalizedFreshness,
+    confidence,
+    trend,
+    rule: rules.quality || DEFAULT_SEARCH_TERM_RULES.quality,
+    observationRule: rules.observation || DEFAULT_SEARCH_TERM_RULES.observation,
+  });
+  const recommendation = quality.suppression ? null : candidate;
+
   return Object.freeze({
     metrics: normalizedMetrics,
     evidence: normalizedEvidence,
     freshness: normalizedFreshness,
     confidence,
     scores: Object.freeze({ waste, harvest }),
+    quality,
+    suppression: quality.suppression,
+    observation: quality.observation,
     recommendation,
   });
 }
@@ -114,7 +146,7 @@ export async function buildRecommendationPreview({
   env = {},
   rules = DEFAULT_SEARCH_TERM_RULES,
 } = {}) {
-  const decision = evaluateSearchTermDecision({ metrics, evidence, freshness, rules });
+  const decision = evaluateSearchTermDecision({ metrics, evidence, freshness, trend, rules });
   const authority = buildRecommendationAuthority({
     env,
     profileId,
@@ -131,6 +163,8 @@ export async function buildRecommendationPreview({
       trend: freezeObject(trend),
       recommendation: null,
       fingerprint: null,
+      suppression: decision.suppression,
+      observation: decision.observation,
     });
   }
 
@@ -159,6 +193,8 @@ export async function buildRecommendationPreview({
     decision,
     trend: freezeObject(trend),
     fingerprint,
+    suppression: null,
+    observation: decision.observation,
     recommendation: Object.freeze({
       ...decision.recommendation,
       entityType: 'search_term',
@@ -232,6 +268,112 @@ function scoreConfidence(metrics, evidence, freshness) {
     lineageFactor,
     freshnessFactor,
   });
+}
+
+function evaluateRecommendationQuality({ candidate, metrics, evidence, freshness, confidence, trend, rule, observationRule }) {
+  const minImpressions = positiveInt(rule.minImpressions, 50);
+  const minClicks = positiveInt(rule.minClicks, 3);
+  const minSpendMicros = positiveInt(rule.minSpendMicros, 500_000);
+  const minConfidenceScore = boundedNumber(rule.minConfidenceScore, 0.30, 0, 1);
+  const suppressStale = rule.suppressStale !== false;
+  const suppressInvalidLineage = rule.suppressInvalidLineage !== false;
+  const harvestDeteriorationOrdersPct = boundedNumber(rule.harvestDeteriorationOrdersPct, -0.50, -1, 0);
+  const harvestDeteriorationAcosPp = positiveNumber(rule.harvestDeteriorationAcosPp, 10);
+  const trendSignal = classifyTrendSignal(trend);
+  let suppression = null;
+
+  if (candidate) {
+    if (suppressInvalidLineage && !evidence.lineageValid) {
+      suppression = qualitySuppression('invalid_lineage', 'Recommendation suppressed because source lineage is not authoritative enough for governance.', 'provenance');
+    } else if (suppressStale && freshness.state === 'stale') {
+      suppression = qualitySuppression('stale_data', 'Recommendation suppressed because the latest report date is stale.', 'freshness');
+    } else if (metrics.impressions < minImpressions || metrics.clicks < minClicks || metrics.spendMicros < minSpendMicros) {
+      suppression = qualitySuppression('insufficient_sample', 'Recommendation suppressed because the minimum sample or spend threshold is not met.', 'sample');
+    } else if (confidence.score < minConfidenceScore) {
+      suppression = qualitySuppression('low_confidence', 'Recommendation suppressed because confidence is below the governance threshold.', 'confidence');
+    } else if (
+      candidate.family === 'harvest'
+      && finiteNumber(trend?.delta?.ordersPct) !== null
+      && finiteNumber(trend?.delta?.acosPp) !== null
+      && Number(trend.delta.ordersPct) <= harvestDeteriorationOrdersPct
+      && Number(trend.delta.acosPp) >= harvestDeteriorationAcosPp
+    ) {
+      suppression = qualitySuppression('trend_deterioration', 'Harvest recommendation suppressed because conversion volume deteriorated while ACoS worsened materially.', 'trend');
+    }
+  }
+
+  const observation = classifyObservation({ candidate, suppression, metrics, trendSignal, rule: observationRule });
+  return Object.freeze({
+    eligibleForGovernance: Boolean(candidate) && !suppression,
+    suppression,
+    observation,
+    trendSignal,
+    thresholds: Object.freeze({
+      minImpressions,
+      minClicks,
+      minSpendMicros,
+      minConfidenceScore,
+      suppressStale,
+      suppressInvalidLineage,
+      harvestDeteriorationOrdersPct,
+      harvestDeteriorationAcosPp,
+    }),
+  });
+}
+
+function classifyObservation({ candidate, suppression, metrics, trendSignal, rule }) {
+  if (suppression) {
+    return Object.freeze({ code: suppression.code, severity: suppression.code === 'stale_data' ? 'warning' : 'info', trendSignal });
+  }
+  if (candidate) return Object.freeze({ code: 'candidate_ready', severity: 'actionable', trendSignal });
+
+  const highAcos = positiveNumber(rule.highAcos, 0.60);
+  const highAcosMinClicks = positiveInt(rule.highAcosMinClicks, 8);
+  const highAcosMinSpendMicros = positiveInt(rule.highAcosMinSpendMicros, 1_000_000);
+  const lowConversionCvr = positiveNumber(rule.lowConversionCvr, 0.05);
+  const lowConversionMinClicks = positiveInt(rule.lowConversionMinClicks, 12);
+
+  if (
+    metrics.purchases > 0
+    && metrics.clicks >= highAcosMinClicks
+    && metrics.spendMicros >= highAcosMinSpendMicros
+    && metrics.acos !== null
+    && metrics.acos > highAcos
+  ) {
+    return Object.freeze({
+      code: 'high_acos_observe',
+      severity: 'warning',
+      trendSignal,
+      reason: 'High ACoS is observable but does not map to an automatic governance action in the current non-executable contract.',
+    });
+  }
+  if (metrics.purchases > 0 && metrics.clicks >= lowConversionMinClicks && metrics.cvr !== null && metrics.cvr < lowConversionCvr) {
+    return Object.freeze({
+      code: 'low_conversion_observe',
+      severity: 'warning',
+      trendSignal,
+      reason: 'Low conversion is observable but requires operator analysis rather than an automatic action proposal.',
+    });
+  }
+  if (metrics.impressions < 50 || metrics.clicks < 3 || metrics.spendMicros < 500_000) {
+    return Object.freeze({ code: 'insufficient_data', severity: 'info', trendSignal });
+  }
+  return Object.freeze({ code: 'threshold_not_met', severity: 'info', trendSignal });
+}
+
+function classifyTrendSignal(trend) {
+  const delta = trend?.delta || {};
+  const ordersPct = finiteNumber(delta.ordersPct);
+  const acosPp = finiteNumber(delta.acosPp);
+  const cvrPp = finiteNumber(delta.cvrPp);
+  if (ordersPct === null && acosPp === null && cvrPp === null) return 'unknown';
+  if ((ordersPct !== null && ordersPct <= -0.30) || (acosPp !== null && acosPp >= 10) || (cvrPp !== null && cvrPp <= -2)) return 'deteriorating';
+  if ((ordersPct !== null && ordersPct >= 0.25) || (acosPp !== null && acosPp <= -10) || (cvrPp !== null && cvrPp >= 2)) return 'recovering';
+  return 'stable';
+}
+
+function qualitySuppression(code, reason, dimension) {
+  return Object.freeze({ code, reason, dimension, governancePersistenceAllowed: false });
 }
 
 function normalizeEvidence(evidence = {}) {
@@ -330,6 +472,7 @@ function buildExplanation(decision, trend) {
     }),
     confidence: decision.confidence,
     freshness: decision.freshness,
+    quality: decision.quality,
     trend: freezeObject(trend),
   });
 }
@@ -375,6 +518,15 @@ function positiveInt(value, fallback) {
 function positiveNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+function boundedNumber(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
+}
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 function finiteNonNegativeOrNull(value) {
   const number = Number(value);
