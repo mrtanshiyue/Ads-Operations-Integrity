@@ -181,5 +181,6 @@ await testMainMismatchFailsClosed();
 await testCanonicalCiRequired();
 await testBuildRejectsPushSource();
 await testBuildRejectsBranchAuthority();
+await import('./test-phase5-web-build-trigger-contract.mjs');
 
-console.log('phase5 sync build trigger contract: PASS');
+console.log('phase5 sync + web build trigger contracts: PASS');
