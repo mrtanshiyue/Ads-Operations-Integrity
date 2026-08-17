@@ -151,11 +151,7 @@ export function buildAmazonMutationRequest(plan) {
   if (!['EXACT', 'PHRASE'].includes(text(target.matchType).toUpperCase())) errors.push('invalid_execution_match_type');
 
   if (errors.length) {
-    return freeze({
-      ready: false,
-      errors: unique(errors),
-      networkDispatchAuthorized: false,
-    });
+    return freeze({ ready: false, errors: unique(errors), networkDispatchAuthorized: false });
   }
 
   return freeze({
@@ -210,7 +206,12 @@ export function validatePermitBinding({ permit, plan, now = new Date() } = {}) {
   if (!Number.isFinite(expiry)) errors.push('permit_expiry_required');
   else if (!Number.isFinite(current) || current >= expiry) errors.push('permit_expired');
 
-  if (!plan?.mutation?.endpointMappingVerified) errors.push(plan?.mutation?.blockingReason || 'amazon_endpoint_mapping_unverified');
+  if (!plan?.mutation?.endpointMappingVerified) {
+    errors.push('amazon_endpoint_mapping_unverified');
+    if (plan?.mutation?.blockingReason && plan.mutation.blockingReason !== 'amazon_endpoint_mapping_unverified') {
+      errors.push(plan.mutation.blockingReason);
+    }
+  }
   if (plan?.networkDispatchAuthorized !== false) errors.push('invalid_execution_authority_contract');
 
   return freeze({
