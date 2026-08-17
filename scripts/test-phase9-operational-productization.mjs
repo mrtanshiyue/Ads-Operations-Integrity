@@ -10,6 +10,7 @@ import {
 } from '../cloudflare/runtime/decision-intelligence.js';
 import { enrichRecommendationGovernanceResponse } from '../cloudflare/runtime/recommendation-governance-layer.js';
 import { handleGovernanceHealthApiRoute } from '../cloudflare/runtime/governance-health-api.js';
+import { observeOptimizationActionResponse } from '../cloudflare/runtime/governance-observability.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -108,6 +109,38 @@ assert.equal(preview.recommendation?.executionAuthorized, false);
 assert.equal(preview.authority.amazonMutationAuthorized, false);
 assert.equal(preview.decision.quality.eligibleForGovernance, true);
 
+const auditWrites = [];
+const mockControlDbForLayer = {
+  prepare(sql) {
+    if (sql.includes('FROM stores')) {
+      return {
+        bind() {
+          return { async first() { return { d1_binding_key: 'STORE_01_DB' }; } };
+        },
+      };
+    }
+    if (sql.includes('INSERT INTO audit_log')) {
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              auditWrites.push({
+                actor: args[1],
+                storeId: args[2],
+                action: args[3],
+                entityId: args[4],
+                requestId: args[5],
+                details: JSON.parse(args[7]),
+              });
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`unexpected layer control SQL: ${sql}`);
+  },
+};
 const mockStoreDb = {
   prepare(sql) {
     assert.match(sql, /optimization_actions/);
@@ -132,16 +165,6 @@ const mockStoreDb = {
     };
   },
 };
-const mockControlDbForLayer = {
-  prepare(sql) {
-    assert.match(sql, /FROM stores/);
-    return {
-      bind() {
-        return { async first() { return { d1_binding_key: 'STORE_01_DB' }; } };
-      },
-    };
-  },
-};
 const intelligencePayload = {
   profile: { profileId: 'profile-synth-dev-01' },
   summary: { recommendationCandidateCount: 1, authoritativeRecommendationCount: 0 },
@@ -156,9 +179,10 @@ const intelligencePayload = {
 };
 const intelligenceUrl = 'https://example.test/api/v1/stores/store-dev-01/search-term-intelligence';
 const layered = await enrichRecommendationGovernanceResponse({
-  request: new Request(intelligenceUrl, { method: 'GET' }),
+  request: new Request(intelligenceUrl, { method: 'GET', headers: { 'cf-ray': 'ray-phase9-duplicate' } }),
   response: new Response(JSON.stringify(intelligencePayload), { status: 200, headers: { 'content-type': 'application/json' } }),
   env: { CONTROL_DB: mockControlDbForLayer, STORE_01_DB: mockStoreDb },
+  actor: { user_id: 'user-dev-owner' },
   url: new URL(intelligenceUrl),
 });
 const layeredPayload = await layered.json();
@@ -166,8 +190,12 @@ assert.equal(layeredPayload.summary.recommendationCandidateCount, 0);
 assert.equal(layeredPayload.summary.duplicateSuppressionCount, 1);
 assert.equal(layeredPayload.items[0].recommendation, null);
 assert.equal(layeredPayload.items[0].suppression.code, 'duplicate_recommendation');
+assert.equal(layeredPayload.governanceSuppressionContract.durableObservability, true);
 assert.equal(layeredPayload.governanceSuppressionContract.amazonMutationAuthorized, false);
 assert.equal(layeredPayload.governanceSuppressionContract.failureMode, 'fail_open_to_core_intelligence');
+assert.equal(auditWrites.at(-1).action, 'optimization_action.observability.duplicate_suppression');
+assert.equal(auditWrites.at(-1).details.count, 1);
+assert.equal(auditWrites.at(-1).actor, 'user-dev-owner');
 
 const failOpenResponse = new Response(JSON.stringify(intelligencePayload), {
   status: 200,
@@ -178,7 +206,7 @@ console.error = () => {};
 let failOpenLayered;
 try {
   failOpenLayered = await enrichRecommendationGovernanceResponse({
-    request: new Request(intelligenceUrl, { method: 'GET' }),
+    request: new Request(intelligenceUrl, { method: 'GET', headers: { 'cf-ray': 'ray-phase9-error' } }),
     response: failOpenResponse,
     env: {
       CONTROL_DB: mockControlDbForLayer,
@@ -186,6 +214,7 @@ try {
         prepare() { throw new Error('simulated_optional_enrichment_failure'); },
       },
     },
+    actor: { user_id: 'user-dev-owner' },
     url: new URL(intelligenceUrl),
   });
 } finally {
@@ -195,6 +224,31 @@ assert.equal(failOpenLayered.status, 200);
 assert.equal(failOpenLayered.headers.get('x-core-intelligence'), 'preserved');
 assert.equal(failOpenLayered.headers.get('x-aoi-recommendation-governance-layer'), null);
 assert.deepEqual(await failOpenLayered.json(), intelligencePayload);
+assert.equal(auditWrites.at(-1).action, 'optimization_action.observability.governance_error');
+assert.equal(auditWrites.at(-1).details.errorClass, 'recommendation_governance_enrichment_error');
+
+const conflictUrl = 'https://example.test/api/v1/stores/store-dev-01/optimization-actions';
+const conflictResponse = new Response(JSON.stringify({
+  error: 'idempotency_conflict',
+  storeId: 'store-dev-01',
+  idempotencyKey: 'phase9-conflict',
+  existingActionId: 'act_existing',
+  existingStatus: 'proposed',
+  requestFingerprint: 'new-fingerprint',
+  existingRequestFingerprint: 'old-fingerprint',
+  amazonMutationAttempted: false,
+}), { status: 409, headers: { 'content-type': 'application/json' } });
+const observedConflict = await observeOptimizationActionResponse({
+  request: new Request(conflictUrl, { method: 'POST', headers: { 'cf-ray': 'ray-phase9-conflict' } }),
+  response: conflictResponse,
+  env: { CONTROL_DB: mockControlDbForLayer },
+  actor: { user_id: 'user-dev-owner' },
+  url: new URL(conflictUrl),
+});
+assert.equal(observedConflict, conflictResponse);
+assert.equal(auditWrites.at(-1).action, 'optimization_action.observability.fingerprint_conflict');
+assert.equal(auditWrites.at(-1).details.conflictType, 'idempotency_conflict');
+assert.equal(auditWrites.at(-1).details.amazonMutationAttempted, false);
 
 const mockControlDbForHealth = {
   prepare(sql) {
@@ -206,13 +260,36 @@ const mockControlDbForHealth = {
     }
     if (sql.includes('FROM audit_log')) {
       return { bind() { return { async all() { return { results: [
-        { action: 'optimization_action.proposed', event_count: 4 },
-        { action: 'optimization_action.approved', event_count: 2 },
+        { action: 'optimization_action.proposed', event_count: 4, observed_count: 4 },
+        { action: 'optimization_action.approved', event_count: 2, observed_count: 2 },
+        { action: 'optimization_action.observability.duplicate_suppression', event_count: 2, observed_count: 5 },
+        { action: 'optimization_action.observability.already_governed_suppression', event_count: 1, observed_count: 3 },
+        { action: 'optimization_action.observability.fingerprint_conflict', event_count: 2, observed_count: 2 },
+        { action: 'optimization_action.observability.governance_error', event_count: 1, observed_count: 1 },
       ] }; } }; } };
     }
     throw new Error(`unexpected control SQL: ${sql}`);
   },
 };
+const healthRationale = JSON.stringify({
+  recommendation: { reason: 'Synthetic governance rationale' },
+  governance: {
+    recommendationFingerprint: 'f'.repeat(64),
+    analysisWindow: { startDate: '2026-08-10', endDate: '2026-08-17', days: 8 },
+    evidence: {
+      ...validEvidence,
+      sourceFactIdentity: {
+        sourceReportJobIds: validEvidence.sourceReportJobIds,
+        amazonReportIds: validEvidence.amazonReportIds,
+        r2ObjectKeys: validEvidence.r2ObjectKeys,
+        contentSha256s: validEvidence.contentSha256s,
+      },
+    },
+    confidence: { band: 'high', score: 0.91 },
+    freshness: { state: 'fresh' },
+    scores: { waste: { score: 82 }, harvest: { score: 10 } },
+  },
+});
 const mockStoreDbForHealth = {
   prepare(sql) {
     if (sql.includes('COUNT(*) AS recommendation_count')) {
@@ -235,8 +312,25 @@ const mockStoreDbForHealth = {
         high_risk_count: 2,
       }; } };
     }
-    if (sql.includes('ORDER BY created_at DESC')) {
-      return { async all() { return { results: [] }; } };
+    if (sql.includes('FROM optimization_actions oa')) {
+      return { async all() { return { results: [{
+        action_id: 'act_recent',
+        profile_id: 'profile-synth-dev-01',
+        entity_type: 'search_term',
+        entity_id: 'search-term-row-phase9',
+        action_type: 'negative_keyword.create',
+        status: 'rejected',
+        created_by: 'user-dev-owner',
+        approved_by: null,
+        rationale_json: healthRationale,
+        created_at: '2026-08-17 00:00:00',
+        updated_at: '2026-08-17 01:00:00',
+        reviewer_id: 'user-reviewer',
+        rejection_reason: 'Existing negative already covers this intent.',
+        proposed_at: '2026-08-17 00:00:00',
+        approved_at: null,
+        rejected_at: '2026-08-17 01:00:00',
+      }] }; } };
     }
     throw new Error(`unexpected store SQL: ${sql}`);
   },
@@ -249,36 +343,57 @@ const healthResponse = await handleGovernanceHealthApiRoute({
 });
 assert.equal(healthResponse.status, 200);
 const health = await healthResponse.json();
+assert.equal(health.schemaVersion, 'governance-health-v2');
 assert.equal(health.metrics.actionsAwaitingReview, 4);
 assert.equal(health.metrics.approvalRate, 0.5);
 assert.equal(health.metrics.rejectionRate, 0.5);
 assert.equal(health.metrics.staleRecommendationRate, 0.1);
 assert.equal(health.metrics.actionAging.proposedOlder72h, 1);
+assert.equal(health.metrics.observability7d.duplicateSuppressions, 5);
+assert.equal(health.metrics.observability7d.alreadyGovernedSuppressions, 3);
+assert.equal(health.metrics.observability7d.fingerprintConflicts, 2);
+assert.equal(health.metrics.observability7d.governanceErrors, 1);
+assert.equal(health.recentActions[0].reviewer, 'user-reviewer');
+assert.equal(health.recentActions[0].rejectionReason, 'Existing negative already covers this intent.');
+assert.equal(health.recentActions[0].evidenceCompleteness.complete, true);
+assert.equal(health.recentActions[0].evidenceCompleteness.checksPassed, 5);
+assert.equal(health.recentActions[0].riskScore, 82);
+assert.equal(health.recentActions[0].freshness, 'fresh');
+assert.deepEqual(health.recentActions[0].lineage.sourceReportIdentity.amazonReportIds, ['amazon-report-phase9']);
+assert.equal(health.recentActions[0].lifecycle.rejectedAt, '2026-08-17 01:00:00');
 assert.equal(health.execution.amazonMutationAuthorized, false);
-assert.equal(health.coverage.fingerprintConflictCount.durable, false);
+assert.equal(health.coverage.duplicateSuppressionCount.durable, true);
+assert.equal(health.coverage.fingerprintConflictCount.durable, true);
+assert.equal(health.coverage.governanceErrors.durable, true);
 
-const [webEntrySource, layerSource, healthSource, actionsSource] = await Promise.all([
+const [webEntrySource, layerSource, healthSource, observabilitySource, actionsSource] = await Promise.all([
   readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8'),
   readFile(path.join(repoRoot, 'cloudflare/runtime/recommendation-governance-layer.js'), 'utf8'),
   readFile(path.join(repoRoot, 'cloudflare/runtime/governance-health-api.js'), 'utf8'),
+  readFile(path.join(repoRoot, 'cloudflare/runtime/governance-observability.js'), 'utf8'),
   readFile(path.join(repoRoot, 'cloudflare/runtime/optimization-actions-api.js'), 'utf8'),
 ]);
-for (const token of ['GOVERNANCE_HEALTH_ROUTE_PATTERN', 'enrichRecommendationGovernanceResponse', 'handleGovernanceHealthApiRoute']) {
+for (const token of ['GOVERNANCE_HEALTH_ROUTE_PATTERN', 'enrichRecommendationGovernanceResponse', 'observeOptimizationActionResponse', 'handleGovernanceHealthApiRoute']) {
   assert.match(webEntrySource, new RegExp(token));
 }
-for (const token of ['duplicate_recommendation', 'already_governed_action', 'qualitySuppressedCount', 'fail_open_to_core_intelligence', 'amazonMutationAuthorized: false']) {
+for (const token of ['duplicate_recommendation', 'already_governed_action', 'durableObservability', 'fail_open_to_core_intelligence', 'amazonMutationAuthorized: false']) {
   assert.match(layerSource, new RegExp(token));
 }
-for (const token of ['approvalRate', 'rejectionRate', 'staleRecommendationRate', 'actionsAwaitingReview', 'actionAging', 'durable: false']) {
+for (const token of ['governance-health-v2', 'observability7d', 'evidenceCompleteness', 'rejectionReason', 'sourceReportIdentity', 'durable: true']) {
   assert.match(healthSource, new RegExp(token));
 }
+for (const token of ['governance-observability-event-v1', 'fingerprint_conflict', 'governance_error', 'INSERT INTO audit_log', 'amazonMutationAuthorized: false']) {
+  assert.match(observabilitySource, new RegExp(token));
+}
+assert.doesNotMatch(healthSource, /durable:\s*false/);
 assert.match(actionsSource, /action_execution_disabled/);
-assert.doesNotMatch(layerSource, /advertising-api\.amazon\.com/);
-assert.doesNotMatch(healthSource, /advertising-api\.amazon\.com/);
+for (const source of [layerSource, healthSource, observabilitySource]) {
+  assert.doesNotMatch(source, /advertising-api\.amazon\.com/);
+}
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'phase9-operational-productization-v1',
+  contract: 'phase9-operational-productization-v2',
   recommendationQualityGate: true,
   staleSuppression: true,
   lowConfidenceSuppression: true,
@@ -287,7 +402,10 @@ console.log(JSON.stringify({
   trendDeteriorationSuppression: true,
   duplicateGovernanceSuppression: true,
   governanceEnrichmentFailureMode: 'fail-open',
+  durableSuppressionTelemetry: true,
+  durableFingerprintConflictTelemetry: true,
+  durableGovernanceErrorTelemetry: true,
+  operatorContext: true,
   governanceHealthReadPath: true,
-  observabilityCoverageExplicit: true,
   amazonExecution: 'disabled',
 }, null, 2));
