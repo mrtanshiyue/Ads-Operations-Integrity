@@ -5,11 +5,12 @@ Scope: Store 01 only, Development execution plane, Amazon Ads read operations on
 
 ## 1. Goal
 
-Produce the first trustworthy real Amazon Ads dataset for Store 01 and prove the complete read pipeline:
+Produce the first trustworthy real Amazon Ads dataset for Store 01:
 
 ```text
-Amazon Ads
-→ canonical profile
+Amazon credentials
+→ canonical profile discovery
+→ exact single-run permit
 → entity mirror
 → Search Term report
 → R2 raw source object
@@ -18,52 +19,57 @@ Amazon Ads
 → Search Term Intelligence-ready data
 ```
 
-This phase activates existing implementation. It does not authorize Amazon mutation, Store 02 credentials, Production rollout, or claims that every Store D1 daily-fact table already has a live Amazon producer.
+This phase does not authorize Amazon mutation, Store 02 credentials, Production rollout, recurring sync, or claims that every Store D1 fact table has a live producer.
 
 ## 2. Current implementation truth
 
-The Store D1 schema contains multiple daily fact families, and the generic sync-intent contract recognizes multiple dataset names. **The currently implemented live producer capability is narrower: only `search_term_daily` is executable.**
-
-Current producer contract:
+The only implemented live fact producer is:
 
 ```text
-implemented dataset: search_term_daily
-entity mirror required: true
+search_term_daily
 report contract: search_term_daily.sp.v1
+Amazon report type: spSearchTerm
+entity mirror required: true
 ```
 
-`campaign_daily`, `ad_group_daily`, `keyword_daily`, `target_daily`, `advertised_product_daily`, `purchased_product_daily`, and `placement_daily` are not valid Phase 5 live producer inputs yet. If supplied, producer capability must fail closed rather than pretend those datasets were acquired.
+The Store D1 schema contains other daily fact tables and the generic sync-intent parser recognizes additional dataset names. That is not producer readiness. Unsupported datasets must fail closed before durable run registration.
 
-The entity mirror still supplies the campaign / ad group / keyword / target / product-ad identity context required by the Search Term pipeline. Daily metric producers for the other fact families are subsequent implementation work after the first trusted Search Term loop.
+Current Sponsored Products Search Term contract truth:
 
-## 3. Current pre-activation state
+- time unit: DAILY;
+- lookback metadata: 65 days;
+- seller attribution: 7 days;
+- vendor attribution: 14 days.
 
-Required starting state:
+## 3. Starting state
+
+Required pre-activation state:
 
 ```text
+activation state = safe_disabled
 Web Dev:  SYNC_TRIGGER_ENABLED=false
 Web Dev:  PHASE5_SINGLE_RUN_PERMIT_ID=""
 Web Dev:  PHASE5_SINGLE_RUN_REPORT_DATE=""
 Sync Dev: AMAZON_ADS_ENABLED=false
-Sync Dev: STORE_01_DB bound
 Sync Dev: CONTROL_DB bound
+Sync Dev: STORE_01_DB bound
 Sync Dev: DATA_BUCKET bound
 Sync Dev: AMAZON_SYNC_WORKFLOW bound
 ```
 
-The current Dev Sync plane may service only the Store 01 activation in this phase. Multi-store credentials are prohibited.
+Store 02/03/04 execution bindings or credentials are not permitted in this phase.
 
-At the 2026-08-17 preflight, Store 01 D1 still contains synthetic Dev fixtures and no real `report_jobs` or `sync_runs`. Synthetic fixtures are regression assets, not live Amazon authority.
+Synthetic Dev fixtures may remain for regression coverage. They are never live recommendation authority.
 
-### Activation-state authority
+## 4. Git-controlled activation authority
 
-The Git-tracked activation authority is:
+Authoritative state file:
 
 ```text
 docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json
 ```
 
-The allowed Phase 5 state machine is:
+Allowed state machine:
 
 ```text
 safe_disabled
@@ -72,7 +78,7 @@ safe_disabled
   singleRunPermit=null
   Web permit vars empty
 
-        ↓ after credential-only smoke succeeds
+        ↓ only after credential + profile preflights pass
 
 amazon_read_ready
   AMAZON_ADS_ENABLED=true
@@ -80,111 +86,94 @@ amazon_read_ready
   singleRunPermit=null
   Web permit vars empty
 
-        ↓ only after an exact first-run permit is generated
+        ↓ only with one exact planner-generated permit
 
 single_run_open
   AMAZON_ADS_ENABLED=true
   SYNC_TRIGGER_ENABLED=true
   singleRunPermit={permitId, reportDate}
-  PHASE5_SINGLE_RUN_PERMIT_ID=<exact same permitId>
-  PHASE5_SINGLE_RUN_REPORT_DATE=<exact same reportDate>
+  Web permit vars exactly match permit
 
-        ↓ immediately after the exact run is registered
+        ↓ immediately after exact run registration
 
 amazon_read_ready
-  SYNC_TRIGGER_ENABLED=false
-  singleRunPermit=null
-  Web permit vars empty
 ```
 
-Emergency rollback may move either `amazon_read_ready` or `single_run_open` directly to `safe_disabled`. A normal direct `safe_disabled → single_run_open` transition is forbidden.
+Emergency rollback may move either active state directly to `safe_disabled`. Normal `safe_disabled → single_run_open` is forbidden.
 
-`single_run_open` is not a generic time window. It is an exact permit for one Store 01 Search Term intent. The Git activation state, Web runtime vars, request `Idempotency-Key`, report date, dataset and manual trigger semantics must all agree before a durable `sync_runs` row or Workflow invocation is allowed.
+`single_run_open` is an exact permit, not a generic time window. Git state, Web runtime vars, `Idempotency-Key`, report date, dataset, and manual trigger semantics must agree before Store D1 `sync_runs` registration or Workflow creation.
 
-The activation state, Wrangler flags, exact permit, Store 01-only Dev bindings, implemented dataset scope, and Production-disabled invariants are validated by canonical CI and by `validate-cloudflare-native.mjs`. Dashboard-only or otherwise unreviewed toggle or permit changes are not an approved activation mechanism.
+Canonical CI and `validate-cloudflare-native.mjs` validate activation state, flags, permit, Store 01 topology, dataset scope, and Production-disabled invariants.
 
-## 4. Hard safety boundaries
+## 5. Hard boundaries
 
-### Amazon operations allowed
+### Allowed Amazon operations
 
-Only read/acquisition operations required to populate the implemented Search Term pipeline:
+Only the read/acquisition operations needed for Phase 5:
 
-- LWA access-token refresh;
-- Amazon Ads profile discovery/bootstrap;
-- supported entity-list reads;
-- Create Report for the implemented Search Term report contract;
-- Get/Poll Report status;
+- LWA token refresh;
+- `GET /v2/profiles` canonical profile discovery;
+- supported entity-list reads during the controlled Workflow;
+- Create Report for `search_term_daily.sp.v1`;
+- Poll/Get Report;
 - Download completed report content.
 
-### Amazon operations prohibited
+### Prohibited Amazon operations
 
-No campaign, ad group, keyword, target, product-ad, budget, bid, state, negative, portfolio, or other Amazon mutation may be called.
+No bid, budget, campaign, ad group, keyword, target, product-ad, negative, portfolio, state, or other Amazon mutation is authorized.
 
-### Cloudflare mutations allowed only when explicitly required by activation
+### Store and Production boundaries
 
-Phase 5 may require exact-SHA Dev deployment/configuration and Store 01 secret provisioning. Before those mutations, all read-only preflight checks in this contract must pass. Production Cloudflare resources remain out of scope.
-
-Activation-state changes must be Git reviewed and pass canonical CI before exact-SHA deployment. The state file and the corresponding Wrangler flags/permit vars must move together.
-
-### Store boundary
-
-- no Store 02/03/04 Amazon credential provisioning;
-- no shared multi-store credential namespace;
-- no adding Store 02/03/04 D1 bindings to the Store 01 Dev Sync Worker for Phase 5;
-- no treating the existing `production` stanza in `wrangler.sync.jsonc` as approved topology.
-
-### Data-authority boundary
-
-Real Amazon decision intelligence must never aggregate synthetic and live profile facts as one authority.
-
-For Phase 5 acceptance and all Phase 6 recommendation inputs:
-
-- use the canonical real Amazon `profileId` resolved from the live `listProfiles` response;
-- query Store 01 facts with that exact profile scope;
-- require valid `source_report_job_id` lineage and the corresponding validated Amazon report / R2 object / source-content identity where the read contract exposes those checks;
-- do not treat a row with missing/invalid report lineage as live recommendation authority;
-- do not delete historical synthetic fixtures merely to manufacture clean-looking acceptance evidence.
-
-Existing generic entity/search-term browse APIs may allow an omitted `profileId` for Dev browsing. That unscoped mode is not an approved recommendation source after live activation.
-
-## 5. Activation conditions
-
-These are operational conditions, not a return to historical Gate numbering.
-
-### A. Repository and runtime preflight
-
-Must verify:
-
-- canonical `main` and required CI are green;
-- intended Web/Sync runtime comes from an exact reviewed Git SHA whenever that plane changes;
-- Web Dev and Sync Dev current bindings match Store 01 scope;
-- activation state is `safe_disabled` before credential provisioning;
-- `SYNC_TRIGGER_ENABLED=false` and `AMAZON_ADS_ENABLED=false` while state is `safe_disabled`;
-- `singleRunPermit=null` and Web permit vars are empty outside `single_run_open`;
-- Production `SYNC_TRIGGER_ENABLED=false` and `AMAZON_ADS_ENABLED=false` regardless of Dev activation state;
+- Store 01 Dev only;
+- no Store 02/03/04 credentials;
+- no Store 02/03/04 D1 bindings on the Store 01 Dev Sync plane;
+- Production `AMAZON_ADS_ENABLED=false` always during Phase 5;
+- Production `SYNC_TRIGGER_ENABLED=false` always during Phase 5;
 - Production permit vars remain empty;
-- no Production mutation is included;
-- `search_term_daily` remains the only Phase 5 executable dataset and remains covered by canonical CI.
+- no Production mutation.
 
-Failure is a blocker.
+### Recommendation authority
 
-### B. Store 01 canonical identity preflight
+Phase 5/6 live authority must be scoped by:
 
-Control D1 store route must resolve exactly one active Store 01 entry with:
+```text
+canonical real Amazon profileId
++ valid source_report_job_id
++ validated Amazon report identity
++ validated R2 object/content provenance
+```
 
-- store ID/code;
-- marketplace `US` / expected marketplace code;
-- Amazon region `NA` / expected region;
-- Store D1 binding key `STORE_01_DB`;
-- operator `sync.run` / `sync.read` authorization.
+Unscoped Dev browse queries and synthetic rows are not recommendation inputs.
 
-The live producer must resolve canonical profile identity from Amazon, not from an arbitrary pre-existing active row in Store D1. For the current US contract, canonical selection must fail closed if the Amazon account returns zero or more than one eligible US seller/vendor profile.
+## 6. Pre-activation sequence while fully disabled
 
-Synthetic profile/entity/fact fixtures may remain only as non-authoritative Dev regression data and must be excluded by canonical live profile + provenance scope.
+All steps in this section run while:
 
-### C. Credential provisioning while execution is disabled
+```text
+activation state = safe_disabled
+AMAZON_ADS_ENABLED=false
+SYNC_TRIGGER_ENABLED=false
+singleRunPermit=null
+Web permit vars empty
+```
 
-Provision exactly the credential set required by the existing credential provider to `ads-operations-sync-dev` for Store 01 only:
+### A. Repository/runtime preflight
+
+Verify:
+
+- canonical `main` required CI is green;
+- intended Web/Sync runtime identities are exact reviewed Git SHAs when those planes change;
+- Web/Sync Dev bindings are Store 01 only;
+- Production remains disabled;
+- `search_term_daily` is the only Phase 5 executable dataset.
+
+### B. Store 01 route preflight
+
+Control D1 must resolve one active Store 01 route with expected US / NA contract and `STORE_01_DB` binding. Required operator authorization remains `sync.run` / `sync.read` for the later controlled run.
+
+### C. Credential provisioning
+
+Provision exactly:
 
 ```text
 AMAZON_ADS_CLIENT_ID
@@ -192,74 +181,78 @@ AMAZON_ADS_CLIENT_SECRET
 AMAZON_ADS_REFRESH_TOKEN
 ```
 
-During provisioning the activation state remains:
+Secrets must never enter Git, D1, browser responses, audit payloads, or command-line argv.
 
-```text
-safe_disabled
-AMAZON_ADS_ENABLED=false
-SYNC_TRIGGER_ENABLED=false
-singleRunPermit=null
-Web permit vars empty
-```
+### D. Credential-only smoke
 
-Secrets must never be committed to Git, written to D1, returned to the browser, or copied into audit payloads.
-
-### D. Credential smoke — zero report/data side effects
-
-Run the existing Dev-only endpoint:
+Run:
 
 ```text
 POST /health/amazon-credentials
 ```
 
-Contract requirements:
+Requirements:
 
-- activation state remains `safe_disabled`;
-- `AMAZON_ADS_ENABLED` must still be `false`;
-- request proof must be tied to the immutable runtime Git tag and short-lived timestamp;
-- LWA token refresh must pass;
-- no Create Report;
-- no Poll Report;
-- no Download Report;
-- no D1 write;
-- no R2 write.
+- immutable runtime Git tag is valid and expected;
+- short-lived request proof is valid;
+- LWA token refresh passes;
+- Amazon execution remains disabled;
+- no Create/Poll/Download Report;
+- no D1/R2 side effects.
 
-A successful LWA smoke proves credentials/token exchange only. It does **not** prove profile identity or report access.
+This proves token exchange only.
 
-### E. Read execution enablement
+### E. Canonical profile discovery smoke
 
-Only after A–D pass:
-
-1. create a reviewed Git change from `safe_disabled` to `amazon_read_ready`;
-2. change only the matching Dev Sync flag to `AMAZON_ADS_ENABLED=true`; keep Web `SYNC_TRIGGER_ENABLED=false`, `singleRunPermit=null`, and Web permit vars empty;
-3. canonical CI must validate the activation state and Store 01-only topology;
-4. merge to canonical `main` and deploy the exact reviewed main SHA to Sync Dev;
-5. verify Sync `/health` reports the expected immutable version, Store DB count, Workflow, R2, and `amazonAdsEnabled=true`;
-6. use the canonical real profile account type (`seller` or `vendor`) plus an explicit latest fully closed marketplace reporting date to run `scripts/plan-phase5-store01-first-run.mjs`;
-7. the planner must produce the exact mature `reportDate` and deterministic `idempotencyKey` for the first run;
-8. create a second reviewed Git change from `amazon_read_ready` to `single_run_open` and copy that exact planner output into both `singleRunPermit` and the two Web Dev permit vars while setting `SYNC_TRIGGER_ENABLED=true`;
-9. canonical CI must pass again; deploy the exact reviewed main SHA to Web Dev;
-10. verify Web runtime identity, `SYNC_TRIGGER_ENABLED=true`, and the exact permit vars before submitting the run;
-11. submit exactly one request using the same permit ID as `Idempotency-Key` and exactly the permitted single report date plus `search_term_daily` body;
-12. any different idempotency key, report date or normalized intent must fail before Store D1 registration and Workflow creation;
-13. immediately after the exact run is registered, move Git state back to `amazon_read_ready`, set Web `SYNC_TRIGGER_ENABLED=false`, set `singleRunPermit=null`, clear both Web permit vars, pass CI, merge, and exact-SHA deploy Web Dev again.
-
-No scheduled recurring sync is authorized by the first activation run. Production flags and permit vars remain disabled/empty throughout all transitions.
-
-## 6. First controlled manual run
-
-The Web API contract is:
+Still while `AMAZON_ADS_ENABLED=false`, run:
 
 ```text
-POST /api/v1/stores/{storeId}/sync
-Idempotency-Key: <exact planner permitId>
+POST /health/amazon-profile
 ```
 
-The request body must be exactly the permitted one-day Search Term intent. Caller-supplied `profileId` and caller-supplied report configuration authority remain forbidden; the producer resolves the canonical Amazon profile.
+Operator client:
 
-### First-run planner
+```text
+node scripts/smoke-cloudflare-amazon-profile-discovery-dev.mjs
+```
 
-After canonical profile discovery determines `seller` or `vendor`, and after the operator identifies the latest fully closed reporting date in that marketplace context, generate the permit with:
+The request uses a distinct short-lived HMAC proof bound to the profile-smoke path and exact runtime Git tag.
+
+The endpoint is allowed to perform only:
+
+1. read the active Store 01 route from Control D1;
+2. obtain an LWA access token;
+3. call Amazon Ads `GET /v2/profiles`;
+4. apply the existing `resolveCanonicalProfile()` contract.
+
+It must not:
+
+- write Control D1;
+- read/write Store D1;
+- fetch entity snapshots;
+- Create/Poll/Download reports;
+- read/write R2;
+- persist the canonical profile.
+
+Success returns only the non-secret planning identity:
+
+```text
+profileId
+accountType = seller | vendor
+marketplaceId
+countryCode
+currencyCode
+region
+timezone
+```
+
+Canonical selection is fail-closed: zero valid US seller/vendor profiles, multiple valid profiles, unsupported account type, or marketplace/region mismatch block activation.
+
+The smoke result is preflight evidence, not durable producer authority. The first real Workflow must resolve Amazon profile authority again and persist its own durable receipt.
+
+### F. First-run plan
+
+After profile discovery supplies `seller|vendor`, determine the latest fully closed reporting date in that marketplace context and run:
 
 ```text
 node scripts/plan-phase5-store01-first-run.mjs \
@@ -267,84 +260,102 @@ node scripts/plan-phase5-store01-first-run.mjs \
   --as-of-date <YYYY-MM-DD>
 ```
 
-The planner chooses one attribution-mature report date:
+The planner generates exactly one attribution-mature Search Term day and deterministic permit ID:
 
 - seller: `asOfDate - 7 days`;
 - vendor: `asOfDate - 14 days`.
 
-It does not infer marketplace timezone or wall-clock closure. The explicit `asOfDate` remains an operator-supplied marketplace reporting fact after canonical profile discovery.
+The planner does not guess marketplace closure/timezone.
 
-### Executable dataset and intent
+## 7. Enable Amazon read execution
 
-The first live run MUST request exactly:
+Only after all pre-activation steps pass:
+
+1. create reviewed Git transition `safe_disabled → amazon_read_ready`;
+2. set Dev Sync `AMAZON_ADS_ENABLED=true`;
+3. keep Web `SYNC_TRIGGER_ENABLED=false` and permit vars empty;
+4. canonical CI must pass;
+5. merge to `main`;
+6. exact-SHA deploy Sync Dev;
+7. verify Sync `/health` reports the exact runtime and `amazonAdsEnabled=true`.
+
+No run may be registered yet.
+
+## 8. Open exactly one run
+
+Using the already generated planner output:
+
+1. create reviewed Git transition `amazon_read_ready → single_run_open`;
+2. set Web `SYNC_TRIGGER_ENABLED=true`;
+3. set `singleRunPermit={permitId, reportDate}`;
+4. copy exactly the same values into:
+   - `PHASE5_SINGLE_RUN_PERMIT_ID`;
+   - `PHASE5_SINGLE_RUN_REPORT_DATE`;
+5. canonical CI must pass;
+6. merge and exact-SHA deploy Web Dev;
+7. verify exact runtime identity and permit vars;
+8. submit exactly one request:
 
 ```text
-startDate = permit reportDate
-endDate   = permit reportDate
-datasets  = [search_term_daily]
-trigger   = manual
+POST /api/v1/stores/store-dev-01/sync
+Idempotency-Key: <exact permitId>
+
+{
+  "startDate": "<permit reportDate>",
+  "endDate": "<permit reportDate>",
+  "datasets": ["search_term_daily"]
+}
 ```
 
-Do not include `keyword_daily`, `target_daily`, `campaign_daily`, or any other daily dataset. The generic intent parser recognizes those names, but the Web entry and live producer both reject them until their producer implementations exist.
+Different idempotency key, date, dataset, or normalized intent must fail before Store D1 registration and Workflow creation.
 
-Entity bootstrap/mirror remains part of the Search Term producer path and provides the targeting identity context needed for Search Term Intelligence.
+Immediately after the exact run is registered, return to `amazon_read_ready`, set Web trigger false, set `singleRunPermit=null`, clear both permit vars, pass CI, merge, and exact-SHA deploy Web Dev again.
 
-## 7. Required run receipts and acceptance
+No scheduled recurring sync is authorized.
 
-A successful first live run must prove all of the following.
+## 9. First-run acceptance
 
 ### Identity
 
-- one canonical real Amazon profile selected for Store 01;
-- profile marketplace/region matches Control D1 store routing;
+- Workflow resolves exactly one canonical real Store 01 profile from Amazon;
+- durable profile identity matches the preflight profile identity;
+- seller/vendor and marketplace/region are coherent;
 - no caller-injected profile authority;
-- entity rows reference the same canonical profile context;
-- synthetic profile data is not selected as live authority.
+- synthetic profile rows are not live authority.
 
-### Activation permit
-
-- runtime Git SHA is the exact reviewed `single_run_open` SHA;
-- request `Idempotency-Key` equals the Git-tracked permit ID;
-- request report date equals the Git-tracked permit report date;
-- normalized intent is exactly one `search_term_daily` day;
-- no second distinct intent is registered during the open state.
+A mismatch between preflight profile discovery and durable Workflow profile resolution is a blocker.
 
 ### Acquisition
 
+- entity mirror uses the same canonical profile;
 - Create Report succeeds for `search_term_daily.sp.v1`;
 - polling terminates correctly;
 - completed report identity is persisted;
-- download content corresponds to the expected report/profile/date context.
+- downloaded content matches profile/date/report context.
 
-### R2
+### R2 and Store D1
 
-- raw object exists;
-- object key is linked from the report receipt;
-- content SHA-256 / native object metadata / byte size evidence is coherent where the current provenance contract requires it;
-- object identity is not substituted across reports or stores.
-
-### Store D1
-
+- raw object exists and identity/content provenance is coherent;
 - report job and sync run reach a valid terminal state;
-- staged/published Search Term facts contain real Store 01 identifiers;
-- date grain and metric units are preserved;
-- Search Term rows retain source report lineage;
+- Search Term rows contain real Store 01 identifiers;
+- date grain/metric units are preserved;
+- source report lineage is retained;
 - duplicate/replay guards remain valid;
-- no synthetic row is accepted as live authority.
+- synthetic rows are excluded from live authority.
 
 ### Reconciliation
 
-For the accepted Search Term report window, compare source report totals to Store D1 totals for the metrics represented by the report contract. Reconciliation must use the canonical real `profileId`, not an unscoped Store DB aggregate. Any unexplained material mismatch blocks Phase 5 acceptance.
+Reconcile the accepted report date using the canonical real `profileId`, not an unscoped Store D1 aggregate. Unexplained material mismatch blocks Phase 5 acceptance.
 
 ### No-write proof
 
-Audit/runtime evidence must show no Amazon mutation transport was invoked.
+Runtime/audit evidence must show no Amazon mutation transport was invoked.
 
-## 8. Kill switch and rollback
+## 10. Kill switch / rollback
 
 ### Stop new runs
 
-Move activation state to `amazon_read_ready` and set:
+Return to `amazon_read_ready`:
 
 ```text
 SYNC_TRIGGER_ENABLED=false
@@ -353,11 +364,9 @@ PHASE5_SINGLE_RUN_PERMIT_ID=""
 PHASE5_SINGLE_RUN_REPORT_DATE=""
 ```
 
-under the same Git/CI/exact-SHA deployment controls. This prevents the Web API from registering/triggering new producer runs while leaving an already-running read-only Workflow able to finish.
+### Stop Amazon read execution
 
-### Stop Amazon producer execution
-
-If credentials, profile identity, report authority, R2 identity, Store D1 integrity, or unexpected Amazon behavior is in doubt, move activation state directly to `safe_disabled` from either active Dev state and set:
+For credential, profile, report, R2, Store D1, or unexpected Amazon behavior defects, move directly to `safe_disabled`:
 
 ```text
 AMAZON_ADS_ENABLED=false
@@ -367,27 +376,21 @@ PHASE5_SINGLE_RUN_PERMIT_ID=""
 PHASE5_SINGLE_RUN_REPORT_DATE=""
 ```
 
-under the same Git/CI/exact-SHA deployment controls. Do not continue with retries or backfill until the defect is understood.
+Preserve diagnostic evidence; do not rewrite provenance or hand-edit facts to manufacture success.
 
-### Data handling after a failed run
-
-- preserve immutable raw/report evidence required to diagnose the failed run;
-- mark terminal failure through existing run/report state contracts;
-- do not silently rewrite provenance to make the run appear successful;
-- use idempotent/recovery semantics already defined by the runtime rather than hand-editing Store D1 facts.
-
-## 9. Phase 5 completion criteria
+## 11. Completion criteria
 
 Phase 5 is complete when:
 
-1. Store 01 live credentials are valid and isolated to the Store 01 Dev Sync plane;
-2. at least one exact-permit controlled real `search_term_daily` sync reaches terminal success, or an explicitly accepted partial state with no identity/integrity defect;
-3. canonical real profile/entities exist;
-4. Search Term report acquisition → R2 → Store D1 lineage is verified;
-5. facts reconcile sufficiently for decision intelligence under the canonical real profile scope;
-6. no Amazon write occurred;
-7. Git-controlled kill-switch and exact-permit transitions are proven operational;
-8. a replay with the same permit/idempotency identity demonstrates replay-safe behavior without creating a second distinct run;
-9. Search Term Intelligence can consume only real, provenance-valid facts without synthetic substitution.
+1. Store 01 credentials validate under the isolated Dev Sync plane;
+2. safe-disabled profile discovery identifies one canonical real seller/vendor profile;
+3. durable Workflow profile resolution matches that preflight identity;
+4. one exact-permit real `search_term_daily` run reaches accepted terminal state;
+5. report → R2 → Store D1 lineage is verified;
+6. facts reconcile under the real profile scope;
+7. no Amazon mutation occurred;
+8. kill-switch / exact-permit transitions are proven;
+9. replay with the same permit identity is replay-safe;
+10. Search Term Intelligence can consume only real provenance-valid facts.
 
-After this, Phase 6 may build recommendations from real Store 01 Search Term data while broader backfill, recurring scheduling, and additional daily-fact producer implementations continue as explicit incremental work.
+After this, Phase 6 may build recommendations from real Store 01 Search Term data. Broader backfill, scheduling, and additional daily-fact producers remain explicit later work.
