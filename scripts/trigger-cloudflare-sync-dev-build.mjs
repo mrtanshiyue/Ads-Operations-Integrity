@@ -16,6 +16,11 @@ export const DEFAULT_REQUIRED_CONTEXT = 'Static site and security invariants';
 
 const DEFAULT_GITHUB_API = 'https://api.github.com';
 
+// Deployment Integrity owns the Cloudflare transport. Its canonical request payload is
+// { commit_hash:commitSha }; this wrapper adds Phase 5 main/CI policy instead of duplicating HTTP.
+// The canonical client also normalizes build_trigger_metadata.build_trigger_source to
+// buildTriggerSource before this wrapper enforces manual, branchless execution.
+
 export class CloudflareSyncDevBuildError extends Error {
   constructor(code, cause = null) {
     super(code);
