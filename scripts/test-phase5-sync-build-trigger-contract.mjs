@@ -4,7 +4,6 @@ import {
   DEFAULT_SYNC_DEV_BUILD_TRIGGER_UUID,
   DEFAULT_SYNC_DEV_SCRIPT_TAG,
   runCloudflareSyncDevExactBuild,
-  validateBuildIdentity,
 } from './trigger-cloudflare-sync-dev-build.mjs';
 
 const COMMIT = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -20,7 +19,7 @@ function response(status, payload) {
   };
 }
 
-function successfulBuild(status = 'stopped') {
+function successfulBuild(status = 'stopped', { source = 'manual', branch = '' } = {}) {
   return {
     build_uuid:BUILD_UUID,
     status,
@@ -30,16 +29,16 @@ function successfulBuild(status = 'stopped') {
       external_script_id:DEFAULT_SYNC_DEV_SCRIPT_TAG,
     },
     build_trigger_metadata:{
-      build_trigger_source:'manual',
-      branch:'',
+      build_trigger_source:source,
+      branch,
       commit_hash:COMMIT,
     },
   };
 }
 
-async function testExactBuildSuccess() {
-  const calls = [];
+function buildFetch({ source = 'manual', branch = '' } = {}) {
   let buildReads = 0;
+  const calls = [];
   const fetchImpl = async (url, options = {}) => {
     calls.push({ url:String(url), options });
     if (String(url).includes('/git/ref/heads/main')) {
@@ -66,16 +65,20 @@ async function testExactBuildSuccess() {
         success:true,
         errors:[],
         messages:[],
-        result:successfulBuild(buildReads === 1 ? 'running' : 'stopped'),
+        result:successfulBuild(buildReads === 1 ? 'running' : 'stopped', { source, branch }),
       });
     }
     throw new Error(`unexpected_url:${String(url)}`);
   };
+  return { fetchImpl, calls, getBuildReads:() => buildReads };
+}
 
+async function testExactBuildSuccess() {
+  const harness = buildFetch();
   const result = await runCloudflareSyncDevExactBuild({
     commitSha:COMMIT,
     env:{ CLOUDFLARE_ACCOUNT_ID:ACCOUNT_ID, CLOUDFLARE_API_TOKEN:'test-token' },
-    fetchImpl,
+    fetchImpl:harness.fetchImpl,
     attempts:3,
     delayMs:0,
     sleep:async () => {},
@@ -85,8 +88,8 @@ async function testExactBuildSuccess() {
   assert.equal(result.buildUuid, BUILD_UUID);
   assert.equal(result.buildOutcome, 'success');
   assert.equal(result.source, 'manual');
-  assert.equal(buildReads, 2);
-  assert.ok(calls.some((call) => call.url.includes('/check-runs')));
+  assert.equal(harness.getBuildReads(), 2);
+  assert.ok(harness.calls.some((call) => call.url.includes('/check-runs')));
 }
 
 async function testMainMismatchFailsClosed() {
@@ -141,25 +144,42 @@ async function testCanonicalCiRequired() {
   );
 }
 
-function testBuildIdentityRejectsPushSource() {
-  const build = successfulBuild();
-  build.build_trigger_metadata.build_trigger_source = 'push_event';
-  assert.throws(
-    () => validateBuildIdentity({
-      build,
-      buildUuid:BUILD_UUID,
-      triggerUuid:DEFAULT_SYNC_DEV_BUILD_TRIGGER_UUID,
-      scriptTag:DEFAULT_SYNC_DEV_SCRIPT_TAG,
+async function testBuildRejectsPushSource() {
+  const harness = buildFetch({ source:'push_event' });
+  await assert.rejects(
+    () => runCloudflareSyncDevExactBuild({
       commitSha:COMMIT,
+      env:{ CLOUDFLARE_ACCOUNT_ID:ACCOUNT_ID, CLOUDFLARE_API_TOKEN:'test-token' },
+      fetchImpl:harness.fetchImpl,
+      attempts:3,
+      delayMs:0,
+      sleep:async () => {},
     }),
     (error) => error instanceof CloudflareSyncDevBuildError
       && error.code === 'CF_SYNC_DEV_BUILD_SOURCE_NOT_MANUAL',
   );
 }
 
+async function testBuildRejectsBranchAuthority() {
+  const harness = buildFetch({ branch:'phase5-store01-live-read' });
+  await assert.rejects(
+    () => runCloudflareSyncDevExactBuild({
+      commitSha:COMMIT,
+      env:{ CLOUDFLARE_ACCOUNT_ID:ACCOUNT_ID, CLOUDFLARE_API_TOKEN:'test-token' },
+      fetchImpl:harness.fetchImpl,
+      attempts:3,
+      delayMs:0,
+      sleep:async () => {},
+    }),
+    (error) => error instanceof CloudflareSyncDevBuildError
+      && error.code === 'CF_SYNC_DEV_BUILD_BRANCH_NOT_EMPTY',
+  );
+}
+
 await testExactBuildSuccess();
 await testMainMismatchFailsClosed();
 await testCanonicalCiRequired();
-testBuildIdentityRejectsPushSource();
+await testBuildRejectsPushSource();
+await testBuildRejectsBranchAuthority();
 
 console.log('phase5 sync build trigger contract: PASS');
