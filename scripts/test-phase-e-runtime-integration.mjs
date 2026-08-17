@@ -19,8 +19,17 @@ assert.match(syncApi, /profile_id, trigger_type, scope_key, status, requested_by
 assert.match(syncApi, /VALUES\(\?1, NULL, \?2, \?3, 'queued', \?4, \?5, CURRENT_TIMESTAMP\)/);
 assert.match(syncApi, /IDEMPOTENCY_KEY_REUSE_CONFLICT/);
 assert.match(syncApi, /WORKFLOW_TRIGGER_RECEIPT_UNAVAILABLE/);
+assert.match(syncApi, /assertProducerIntentSupported\(registration\.intent\)/);
+assert.match(syncApi, /ProducerCapabilityError/);
 assert.doesNotMatch(syncApi, /UPDATE sync_runs[\s\S]{0,200}status = 'failed'/);
 assert.doesNotMatch(syncApi, /amazon_profiles[\s\S]{0,200}profile_id =/);
+
+const apiRegistrationIndex = syncApi.indexOf('registration = await buildManualSyncRegistration');
+const apiCapabilityIndex = syncApi.indexOf('assertProducerIntentSupported(registration.intent)');
+const apiRepositoryIndex = syncApi.indexOf('const repository = syncRunRepository(route.storeDb)');
+assert(apiRegistrationIndex >= 0, 'Web sync entry must normalize and fingerprint the request first');
+assert(apiCapabilityIndex > apiRegistrationIndex, 'producer capability must validate normalized registration intent');
+assert(apiRepositoryIndex > apiCapabilityIndex, 'producer capability rejection must precede Store D1 sync repository construction');
 
 assert.match(webSync, /workflow\.createBatch\(/);
 assert.doesNotMatch(webSync, /workflow\.create\(/);
@@ -56,12 +65,18 @@ assert.match(syncConfig, /"AMAZON_ADS_ENABLED": "false"/);
 assert.equal((syncConfig.match(/"version_metadata"/g) || []).length, 2, 'sync Dev and production environments must expose version metadata');
 assert.equal((syncConfig.match(/"binding": "CF_VERSION_METADATA"/g) || []).length, 2, 'sync version metadata binding must be explicit per environment');
 
+// Execute the Phase 5 entry-guard behavior test from this canonical Phase E regression so the
+// API-level no-write/no-Workflow proof cannot become an unreferenced standalone test.
+await import('./test-sync-api-producer-capability.mjs');
+
 console.log(JSON.stringify({
   ok: true,
   modularSyncRoutePrecedesLegacy: true,
   callerProfileAuthorityRemovedFromActivePath: true,
   deterministicWorkflowCreateBatch: true,
   durableIntentReceiptFirst: true,
+  producerCapabilityAtWebEntry: true,
+  unsupportedIntentNoStoreWriteOrWorkflow: true,
   killSwitchBeforeCapabilityAndCredentials: true,
   concreteAmazonProducerComposition: true,
   runtimeVersionObservable: true,
