@@ -5,6 +5,7 @@
   const HEALTH_SELECTOR = '[data-phase9-governance-health]';
   let mounted = false;
   let loadSequence = 0;
+  let inFlightStore = '';
 
   if (!global.document) return;
   if (global.document.readyState === 'loading') global.document.addEventListener('DOMContentLoaded', mount, { once: true });
@@ -23,8 +24,13 @@
     });
 
     global.addEventListener?.('cloudflare-operator-store-change', () => {
+      loadSequence += 1;
+      inFlightStore = '';
       const surface = ensureHealthSurface();
-      if (surface) surface.innerHTML = emptyState('Store changed. Governance health will reload for the active store.');
+      if (surface) {
+        surface.dataset.loadedStore = '';
+        surface.innerHTML = emptyState('Store changed. Governance health will reload for the active store.');
+      }
       if (isActionInboxVisible()) void loadGovernanceHealth();
     });
 
@@ -42,7 +48,8 @@
     queueMicrotask(() => {
       visibleLoadScheduled = false;
       const surface = ensureHealthSurface();
-      if (!surface || surface.dataset.loadedStore === currentStoreId()) return;
+      const storeId = currentStoreId();
+      if (!surface || !storeId || surface.dataset.loadedStore === storeId || inFlightStore === storeId) return;
       void loadGovernanceHealth();
     });
   }
@@ -72,23 +79,30 @@
     const storeId = currentStoreId();
     if (!surface) return;
     if (!storeId) {
+      inFlightStore = '';
       surface.dataset.loadedStore = '';
       surface.innerHTML = emptyState('Select a store in Operator Workspace first.');
       return;
     }
+    if (inFlightStore === storeId) return;
 
     const sequence = ++loadSequence;
+    inFlightStore = storeId;
     surface.dataset.loadedStore = '';
     surface.innerHTML = loadingState();
     try {
       const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/governance-health`);
       if (sequence !== loadSequence || storeId !== currentStoreId()) return;
+      inFlightStore = '';
       surface.dataset.loadedStore = storeId;
       renderHealth(surface, payload);
     } catch (error) {
       if (sequence !== loadSequence) return;
+      inFlightStore = '';
       surface.dataset.loadedStore = '';
       surface.innerHTML = errorState(error.message || 'Governance health unavailable.');
+    } finally {
+      if (sequence === loadSequence && inFlightStore === storeId) inFlightStore = '';
     }
   }
 
