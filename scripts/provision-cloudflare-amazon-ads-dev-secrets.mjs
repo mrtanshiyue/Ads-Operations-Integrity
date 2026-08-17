@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runCloudflareSyncDevRelease } from './deploy-cloudflare-sync-dev.mjs';
+import { runCloudflareSyncDevExactBuild } from './trigger-cloudflare-sync-dev-build.mjs';
 import { runCloudflareAmazonAdsCredentialSmoke } from './smoke-cloudflare-amazon-ads-credentials-dev.mjs';
 import { waitForCloudflareSyncDevHealth } from './smoke-cloudflare-sync-dev.mjs';
 
@@ -93,18 +93,35 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
     : resolveCurrentGitCommit({ spawn, cwd });
   const healthUrl = String(options.healthUrl ?? env.SYNC_DEV_HEALTH_URL ?? DEFAULT_HEALTH_URL).trim();
   const smoke = options.smoke ?? waitForCloudflareSyncDevHealth;
-  const release = options.release ?? runCloudflareSyncDevRelease;
+  const exactBuild = options.exactBuild ?? runCloudflareSyncDevExactBuild;
   const credentialSmoke = options.credentialSmoke ?? runCloudflareAmazonAdsCredentialSmoke;
 
-  // Fail closed before changing secrets unless the currently served Dev worker is known disabled.
-  await smoke({
+  // Phase 5 starts from a canonical-main exact-SHA Sync Worker while Amazon execution is still
+  // disabled. This prevents secret provisioning from relying on historical deployment equivalence.
+  const prebuild = await exactBuild({
+    commitSha,
+    env:childEnv,
+    fetchImpl:options.fetchImpl,
+    sleep:options.sleep,
+    attempts:options.buildAttempts,
+    delayMs:options.buildDelayMs,
+  });
+  if (prebuild?.commitSha !== commitSha || prebuild?.buildOutcome !== 'success') {
+    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_PREBUILD_NOT_SUCCESS');
+  }
+
+  const preflight = await smoke({
     url:healthUrl,
     expectedCommit:commitSha,
     cwd,
     attempts:options.smokeAttempts,
     delayMs:options.smokeDelayMs,
     timeoutMs:options.smokeTimeoutMs,
+    requireExact:true,
   });
+  if (preflight?.deploymentExact !== true || preflight?.amazonAdsEnabled !== false) {
+    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_PREFLIGHT_NOT_EXACT_DISABLED');
+  }
 
   const bulk = spawn('npx', [
     '--no-install', 'wrangler', 'secret', 'bulk',
@@ -132,17 +149,20 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
   assertCommandSucceeded(listed, 'AMAZON_ADS_DEV_SECRET_LIST_FAILED');
   const secretNames = parseAmazonAdsDevSecretList(listed.stdout);
 
-  // Secret updates must never be the final deployment authority. Re-run the existing
-  // migration-gated release and tag the resulting Worker version with the exact Git commit.
-  release({
-    spawn,
-    cwd,
-    env:childEnv,
+  // Secret mutation can create/deploy a secret-only Worker version. It must never remain the
+  // final deployment authority. Re-run the same canonical exact Git SHA through Workers Builds.
+  const postbuild = await exactBuild({
     commitSha,
+    env:childEnv,
+    fetchImpl:options.fetchImpl,
+    sleep:options.sleep,
+    attempts:options.buildAttempts,
+    delayMs:options.buildDelayMs,
   });
+  if (postbuild?.commitSha !== commitSha || postbuild?.buildOutcome !== 'success') {
+    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_POSTBUILD_NOT_SUCCESS');
+  }
 
-  // After the tagged redeploy, require the exact commit rather than merely an equivalent
-  // ancestor. This proves secret provisioning did not leave an untagged secret-only version live.
   const postflight = await smoke({
     url:healthUrl,
     expectedCommit:commitSha,
@@ -150,10 +170,10 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
     attempts:options.smokeAttempts,
     delayMs:options.smokeDelayMs,
     timeoutMs:options.smokeTimeoutMs,
-    deploymentEquivalent:async () => false,
+    requireExact:true,
   });
-  if (postflight?.deploymentExact !== true) {
-    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_POSTFLIGHT_NOT_EXACT');
+  if (postflight?.deploymentExact !== true || postflight?.amazonAdsEnabled !== false) {
+    throw new AmazonAdsDevSecretProvisionError('AMAZON_ADS_DEV_POSTFLIGHT_NOT_EXACT_DISABLED');
   }
 
   // Prove the real LWA credential set can refresh an access token while the execution kill
@@ -175,6 +195,8 @@ export async function runAmazonAdsDevSecretProvision(options = {}) {
     commitSha,
     secretNames,
     amazonAdsEnabled:false,
+    prebuildUuid:prebuild.buildUuid ?? null,
+    postbuildUuid:postbuild.buildUuid ?? null,
     runtimeVersionId:postflight.runtimeVersionId ?? null,
     lwaTokenRefresh:'pass',
   });
