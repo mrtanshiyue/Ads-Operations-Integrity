@@ -1,4 +1,10 @@
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
+const OBSERVABILITY_ACTIONS = Object.freeze({
+  duplicateSuppression: 'optimization_action.observability.duplicate_suppression',
+  alreadyGovernedSuppression: 'optimization_action.observability.already_governed_suppression',
+  fingerprintConflict: 'optimization_action.observability.fingerprint_conflict',
+  governanceError: 'optimization_action.observability.governance_error',
+});
 
 export async function handleGovernanceHealthApiRoute({ request, env, actor, url }) {
   if (request.method !== 'GET') return null;
@@ -35,16 +41,31 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
       FROM optimization_actions
     `).first(),
     route.storeDb.prepare(`
-      SELECT action_id, profile_id, entity_type, entity_id, action_type, status,
-             created_by, approved_by, created_at, updated_at,
-             json_extract(rationale_json,'$.governance.confidence.band') AS confidence_band,
-             json_extract(rationale_json,'$.governance.freshness.state') AS freshness_state
-      FROM optimization_actions
-      ORDER BY created_at DESC
+      SELECT oa.action_id, oa.profile_id, oa.entity_type, oa.entity_id, oa.action_type, oa.status,
+             oa.created_by, oa.approved_by, oa.rationale_json, oa.created_at, oa.updated_at,
+             (SELECT e.actor_id FROM optimization_action_events e
+              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.approved','action.rejected')
+              ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS reviewer_id,
+             (SELECT json_extract(e.details_json,'$.reason') FROM optimization_action_events e
+              WHERE e.action_id=oa.action_id AND e.event_type='action.rejected'
+              ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS rejection_reason,
+             (SELECT e.occurred_at FROM optimization_action_events e
+              WHERE e.action_id=oa.action_id AND e.event_type='action.proposed'
+              ORDER BY e.occurred_at ASC, e.event_id ASC LIMIT 1) AS proposed_at,
+             (SELECT e.occurred_at FROM optimization_action_events e
+              WHERE e.action_id=oa.action_id AND e.event_type='action.approved'
+              ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS approved_at,
+             (SELECT e.occurred_at FROM optimization_action_events e
+              WHERE e.action_id=oa.action_id AND e.event_type='action.rejected'
+              ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS rejected_at
+      FROM optimization_actions oa
+      ORDER BY oa.created_at DESC
       LIMIT 10
     `).all(),
     env.CONTROL_DB.prepare(`
-      SELECT action, COUNT(*) AS event_count
+      SELECT action,
+             COUNT(*) AS event_count,
+             SUM(COALESCE(CAST(json_extract(details_json,'$.count') AS INTEGER),1)) AS observed_count
       FROM audit_log
       WHERE store_id=?1
         AND action LIKE 'optimization_action.%'
@@ -60,9 +81,12 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
   const rejected = number(aggregate?.rejected_count);
   const decided = approved + rejected;
   const stale = number(aggregate?.stale_count);
+  const auditRows = audit.results || [];
+  const audit7d = Object.fromEntries(auditRows.map((row) => [row.action, number(row.event_count)]));
+  const observed7d = Object.fromEntries(auditRows.map((row) => [row.action, number(row.observed_count)]));
 
   return json(request, {
-    schemaVersion: 'governance-health-v1',
+    schemaVersion: 'governance-health-v2',
     generatedAt: new Date().toISOString(),
     storeId,
     execution: {
@@ -96,39 +120,105 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
         proposedOlder72h: number(aggregate?.proposed_older_72h),
         oldestProposedAt: aggregate?.oldest_proposed_at || null,
       },
+      observability7d: {
+        duplicateSuppressions: observed(observed7d, OBSERVABILITY_ACTIONS.duplicateSuppression),
+        alreadyGovernedSuppressions: observed(observed7d, OBSERVABILITY_ACTIONS.alreadyGovernedSuppression),
+        fingerprintConflicts: observed(observed7d, OBSERVABILITY_ACTIONS.fingerprintConflict),
+        governanceErrors: observed(observed7d, OBSERVABILITY_ACTIONS.governanceError),
+      },
     },
-    recentActions: (recentActions.results || []).map((row) => ({
-      actionId: row.action_id,
-      profileId: row.profile_id,
-      entityType: row.entity_type,
-      entityId: row.entity_id,
-      actionType: row.action_type,
-      status: row.status,
-      createdBy: row.created_by || null,
-      reviewer: row.approved_by || null,
-      confidence: row.confidence_band || null,
-      freshness: row.freshness_state || 'unknown',
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    })),
-    audit7d: Object.fromEntries((audit.results || []).map((row) => [row.action, number(row.event_count)])),
+    recentActions: (recentActions.results || []).map(operatorAction),
+    audit7d,
     coverage: {
       durableActionLifecycle: true,
       durableApprovalRejectionAudit: true,
       duplicateSuppressionCount: {
-        durable: false,
-        source: 'search-term-intelligence response summary',
+        durable: true,
+        source: 'control audit_log / optimization_action.observability.duplicate_suppression',
+        window: '7d',
+      },
+      alreadyGovernedSuppressionCount: {
+        durable: true,
+        source: 'control audit_log / optimization_action.observability.already_governed_suppression',
+        window: '7d',
       },
       fingerprintConflictCount: {
-        durable: false,
-        source: 'request-time optimization action response',
+        durable: true,
+        source: 'control audit_log / optimization_action.observability.fingerprint_conflict',
+        window: '7d',
       },
       governanceErrors: {
-        durable: false,
-        source: 'request/runtime logging; failedStatusCount is exposed separately and is not treated as equivalent',
+        durable: true,
+        source: 'control audit_log / optimization_action.observability.governance_error',
+        window: '7d',
       },
     },
   }, 200);
+}
+
+function operatorAction(row) {
+  const envelope = parseJson(row.rationale_json);
+  const governance = plainObject(envelope?.governance) ? envelope.governance : {};
+  const evidence = plainObject(governance.evidence) ? governance.evidence : {};
+  const source = plainObject(evidence.sourceFactIdentity) ? evidence.sourceFactIdentity : evidence;
+  const sourceReportJobIds = texts(source.sourceReportJobIds || evidence.sourceReportJobIds);
+  const amazonReportIds = texts(source.amazonReportIds || evidence.amazonReportIds);
+  const r2ObjectKeys = texts(source.r2ObjectKeys || evidence.r2ObjectKeys);
+  const contentSha256s = texts(source.contentSha256s || evidence.contentSha256s);
+  const checks = [
+    Boolean(evidence.lineageValid),
+    number(evidence.factRowCount) > 0,
+    sourceReportJobIds.length > 0,
+    r2ObjectKeys.length > 0,
+    contentSha256s.length > 0,
+  ];
+  const passed = checks.filter(Boolean).length;
+  const riskScore = Math.max(
+    number(governance?.scores?.waste?.score),
+    number(governance?.scores?.harvest?.score),
+  );
+
+  return {
+    actionId: row.action_id,
+    profileId: row.profile_id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    actionType: row.action_type,
+    status: row.status,
+    createdBy: row.created_by || null,
+    reviewer: row.reviewer_id || row.approved_by || null,
+    rejectionReason: row.rejection_reason || null,
+    rationale: Object.prototype.hasOwnProperty.call(envelope || {}, 'recommendation') ? envelope.recommendation : envelope,
+    confidence: governance?.confidence?.band || null,
+    freshness: governance?.freshness?.state || 'unknown',
+    riskScore,
+    queueAgeHours: ageHours(row.created_at),
+    evidenceCompleteness: {
+      complete: passed === checks.length,
+      checksPassed: passed,
+      checksTotal: checks.length,
+      lineageValid: Boolean(evidence.lineageValid),
+      factRowCount: number(evidence.factRowCount),
+    },
+    lineage: {
+      recommendationFingerprint: governance.recommendationFingerprint || null,
+      analysisWindow: governance.analysisWindow || null,
+      sourceReportIdentity: {
+        sourceReportJobIds,
+        amazonReportIds,
+        r2ObjectKeys,
+        contentSha256s,
+      },
+    },
+    lifecycle: {
+      proposedAt: row.proposed_at || row.created_at || null,
+      approvedAt: row.approved_at || null,
+      rejectedAt: row.rejected_at || null,
+      updatedAt: row.updated_at || null,
+    },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 async function authorizedStoreRoute(env, userId, storeId, permission) {
@@ -159,10 +249,25 @@ async function hasStorePermission(db, userId, storeId, permission) {
   `).bind(userId, storeId, permission).first());
 }
 
+function observed(map, action) { return number(map[action]); }
 function number(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
 }
+function ageHours(value) {
+  const timestamp = Date.parse(String(value || '').replace(' ', 'T') + (String(value || '').includes('Z') ? '' : 'Z'));
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Math.round(((Date.now() - timestamp) / 3600000) * 10) / 10);
+}
+function texts(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+function parseJson(value) {
+  if (!value) return null;
+  try { return JSON.parse(value); } catch { return null; }
+}
+function plainObject(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 function round4(value) { return Math.round(value * 10000) / 10000; }
 function safeDecode(value) { try { return decodeURIComponent(value); } catch { return null; } }
 function json(request, payload, status) {
