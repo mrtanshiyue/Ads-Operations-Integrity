@@ -68,18 +68,24 @@ export async function buildDormantTransportReceiptEvidence({
   networkError = null,
   responseBody = null,
 } = {}) {
+  const normalizedRequestId = normalizeAmazonRequestId(amazonRequestId);
   const classification = classifyMutationTransportOutcome({
     dispatched,
     httpStatus,
-    amazonRequestId,
+    amazonRequestId: normalizedRequestId,
     networkError,
     responseBody,
   });
   const responseText = responseBody === null || responseBody === undefined
     ? null
     : (typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody));
+  const status = Number(httpStatus);
   return freeze({
     schemaVersion: 'amazon-mutation-transport-evidence-v1',
+    dispatched: Boolean(dispatched),
+    httpStatus: Number.isInteger(status) ? status : null,
+    amazonRequestId: normalizedRequestId,
+    networkError: networkError ? String(networkError) : null,
     ...classification,
     responseBodySha256: responseText === null ? null : await sha256Text(responseText),
     networkDispatchAuthorized: false,
