@@ -154,11 +154,12 @@ const intelligencePayload = {
     suppression: null,
   }],
 };
+const intelligenceUrl = 'https://example.test/api/v1/stores/store-dev-01/search-term-intelligence';
 const layered = await enrichRecommendationGovernanceResponse({
-  request: new Request('https://example.test/api/v1/stores/store-dev-01/search-term-intelligence', { method: 'GET' }),
+  request: new Request(intelligenceUrl, { method: 'GET' }),
   response: new Response(JSON.stringify(intelligencePayload), { status: 200, headers: { 'content-type': 'application/json' } }),
   env: { CONTROL_DB: mockControlDbForLayer, STORE_01_DB: mockStoreDb },
-  url: new URL('https://example.test/api/v1/stores/store-dev-01/search-term-intelligence'),
+  url: new URL(intelligenceUrl),
 });
 const layeredPayload = await layered.json();
 assert.equal(layeredPayload.summary.recommendationCandidateCount, 0);
@@ -166,6 +167,34 @@ assert.equal(layeredPayload.summary.duplicateSuppressionCount, 1);
 assert.equal(layeredPayload.items[0].recommendation, null);
 assert.equal(layeredPayload.items[0].suppression.code, 'duplicate_recommendation');
 assert.equal(layeredPayload.governanceSuppressionContract.amazonMutationAuthorized, false);
+assert.equal(layeredPayload.governanceSuppressionContract.failureMode, 'fail_open_to_core_intelligence');
+
+const failOpenResponse = new Response(JSON.stringify(intelligencePayload), {
+  status: 200,
+  headers: { 'content-type': 'application/json', 'x-core-intelligence': 'preserved' },
+});
+const originalConsoleError = console.error;
+console.error = () => {};
+let failOpenLayered;
+try {
+  failOpenLayered = await enrichRecommendationGovernanceResponse({
+    request: new Request(intelligenceUrl, { method: 'GET' }),
+    response: failOpenResponse,
+    env: {
+      CONTROL_DB: mockControlDbForLayer,
+      STORE_01_DB: {
+        prepare() { throw new Error('simulated_optional_enrichment_failure'); },
+      },
+    },
+    url: new URL(intelligenceUrl),
+  });
+} finally {
+  console.error = originalConsoleError;
+}
+assert.equal(failOpenLayered.status, 200);
+assert.equal(failOpenLayered.headers.get('x-core-intelligence'), 'preserved');
+assert.equal(failOpenLayered.headers.get('x-aoi-recommendation-governance-layer'), null);
+assert.deepEqual(await failOpenLayered.json(), intelligencePayload);
 
 const mockControlDbForHealth = {
   prepare(sql) {
@@ -237,7 +266,7 @@ const [webEntrySource, layerSource, healthSource, actionsSource] = await Promise
 for (const token of ['GOVERNANCE_HEALTH_ROUTE_PATTERN', 'enrichRecommendationGovernanceResponse', 'handleGovernanceHealthApiRoute']) {
   assert.match(webEntrySource, new RegExp(token));
 }
-for (const token of ['duplicate_recommendation', 'already_governed_action', 'qualitySuppressedCount', 'amazonMutationAuthorized: false']) {
+for (const token of ['duplicate_recommendation', 'already_governed_action', 'qualitySuppressedCount', 'fail_open_to_core_intelligence', 'amazonMutationAuthorized: false']) {
   assert.match(layerSource, new RegExp(token));
 }
 for (const token of ['approvalRate', 'rejectionRate', 'staleRecommendationRate', 'actionsAwaitingReview', 'actionAging', 'durable: false']) {
@@ -257,6 +286,7 @@ console.log(JSON.stringify({
   highAcosObservationOnly: true,
   trendDeteriorationSuppression: true,
   duplicateGovernanceSuppression: true,
+  governanceEnrichmentFailureMode: 'fail-open',
   governanceHealthReadPath: true,
   observabilityCoverageExplicit: true,
   amazonExecution: 'disabled',
