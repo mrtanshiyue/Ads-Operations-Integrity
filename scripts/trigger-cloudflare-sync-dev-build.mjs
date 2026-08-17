@@ -1,8 +1,11 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  createExactCommitBuild,
+  waitForExactSuccessfulBuild,
+} from './cloudflare-workers-builds-client.mjs';
 
 const GIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 
@@ -11,10 +14,7 @@ export const DEFAULT_SYNC_DEV_SCRIPT_TAG = '2c5f0f0afc964509a1f7f2c304138a26';
 export const DEFAULT_REPOSITORY = 'mrtanshiyue/Ads-Operations-Integrity';
 export const DEFAULT_REQUIRED_CONTEXT = 'Static site and security invariants';
 
-const DEFAULT_CLOUDFLARE_API = 'https://api.cloudflare.com/client/v4';
 const DEFAULT_GITHUB_API = 'https://api.github.com';
-const DEFAULT_ATTEMPTS = 60;
-const DEFAULT_DELAY_MS = 5_000;
 
 export class CloudflareSyncDevBuildError extends Error {
   constructor(code, cause = null) {
@@ -37,23 +37,23 @@ export async function runCloudflareSyncDevExactBuild(options = {}) {
     options.accountId ?? env.CLOUDFLARE_ACCOUNT_ID,
     'CF_SYNC_DEV_BUILD_ACCOUNT_ID_REQUIRED',
   );
-  const apiToken = requiredText(options.apiToken ?? env.CLOUDFLARE_API_TOKEN, 'CF_SYNC_DEV_BUILD_API_TOKEN_REQUIRED');
-  const triggerUuid = requiredUuid(
+  const token = requiredText(options.apiToken ?? env.CLOUDFLARE_API_TOKEN, 'CF_SYNC_DEV_BUILD_API_TOKEN_REQUIRED');
+  const triggerUuid = requiredText(
     options.triggerUuid ?? env.CF_SYNC_DEV_BUILD_TRIGGER_UUID ?? DEFAULT_SYNC_DEV_BUILD_TRIGGER_UUID,
     'CF_SYNC_DEV_BUILD_TRIGGER_UUID_INVALID',
-  );
-  const scriptTag = requiredScriptTag(
+  ).toLowerCase();
+  const scriptTag = requiredText(
     options.scriptTag ?? env.CF_SYNC_DEV_SCRIPT_TAG ?? DEFAULT_SYNC_DEV_SCRIPT_TAG,
-  );
+    'CF_SYNC_DEV_SCRIPT_TAG_INVALID',
+  ).toLowerCase();
   const fetchImpl = options.fetchImpl ?? fetch;
   if (typeof fetchImpl !== 'function') throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_FETCH_INVALID');
 
-  const githubApi = requiredHttpsBase(options.githubApi ?? env.GITHUB_API_URL ?? DEFAULT_GITHUB_API, 'CF_SYNC_DEV_GITHUB_API_INVALID');
-  const cloudflareApi = requiredHttpsBase(options.cloudflareApi ?? DEFAULT_CLOUDFLARE_API, 'CF_SYNC_DEV_CLOUDFLARE_API_INVALID');
+  const githubApi = requiredHttpsBase(
+    options.githubApi ?? env.GITHUB_API_URL ?? DEFAULT_GITHUB_API,
+    'CF_SYNC_DEV_GITHUB_API_INVALID',
+  );
   const githubToken = optionalText(options.githubToken ?? env.GITHUB_TOKEN);
-  const attempts = positiveInteger(options.attempts ?? env.CF_SYNC_DEV_BUILD_ATTEMPTS ?? DEFAULT_ATTEMPTS, 'CF_SYNC_DEV_BUILD_ATTEMPTS_INVALID');
-  const delayMs = nonNegativeInteger(options.delayMs ?? env.CF_SYNC_DEV_BUILD_DELAY_MS ?? DEFAULT_DELAY_MS, 'CF_SYNC_DEV_BUILD_DELAY_INVALID');
-  const sleep = options.sleep ?? ((ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)));
 
   await assertCanonicalMainCi({
     fetchImpl,
@@ -64,53 +64,51 @@ export async function runCloudflareSyncDevExactBuild(options = {}) {
     requiredContext,
   });
 
-  const created = await cloudflareJson({
-    fetchImpl,
-    apiToken,
-    url:`${cloudflareApi}/accounts/${accountId}/builds/triggers/${triggerUuid}/builds`,
-    method:'POST',
-    body:{ commit_hash:commitSha },
-    code:'CF_SYNC_DEV_BUILD_CREATE_FAILED',
-  });
-  const buildUuid = requiredUuid(created?.result?.build_uuid, 'CF_SYNC_DEV_BUILD_UUID_MISSING');
-
-  let last = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const response = await cloudflareJson({
+  let created;
+  let accepted;
+  try {
+    created = await createExactCommitBuild({
+      accountId,
+      triggerUuid,
+      commitSha,
+      token,
       fetchImpl,
-      apiToken,
-      url:`${cloudflareApi}/accounts/${accountId}/builds/builds/${buildUuid}`,
-      method:'GET',
-      code:'CF_SYNC_DEV_BUILD_READ_FAILED',
     });
-    const build = response?.result;
-    validateBuildIdentity({ build, buildUuid, triggerUuid, scriptTag, commitSha });
-    last = build;
-
-    if (String(build?.status || '') === 'stopped') {
-      if (String(build?.build_outcome || '') !== 'success') {
-        throw new CloudflareSyncDevBuildError(
-          `CF_SYNC_DEV_BUILD_NOT_SUCCESS:${String(build?.build_outcome || 'unknown')}`,
-        );
-      }
-      return Object.freeze({
-        ok:true,
-        commitSha,
-        buildUuid,
-        triggerUuid,
-        scriptTag,
-        buildOutcome:'success',
-        source:'manual',
-      });
-    }
-
-    if (attempt === attempts) break;
-    await sleep(delayMs);
+    accepted = await waitForExactSuccessfulBuild({
+      accountId,
+      triggerUuid,
+      workerTag:scriptTag,
+      commitSha,
+      buildUuid:created.buildUuid,
+      token,
+      fetchImpl,
+      attempts:options.attempts ?? env.CF_SYNC_DEV_BUILD_ATTEMPTS,
+      delayMs:options.delayMs ?? env.CF_SYNC_DEV_BUILD_DELAY_MS,
+      sleep:options.sleep,
+    });
+  } catch (error) {
+    throw new CloudflareSyncDevBuildError(
+      `CF_SYNC_DEV_BUILD_CLIENT_FAILED:${String(error?.code || error?.message || 'unknown')}`,
+      error,
+    );
   }
 
-  throw new CloudflareSyncDevBuildError(
-    `CF_SYNC_DEV_BUILD_TIMEOUT:${String(last?.status || 'unknown')}`,
-  );
+  if (accepted.buildTriggerSource !== 'manual') {
+    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_SOURCE_NOT_MANUAL');
+  }
+  if (accepted.branch !== null) {
+    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_BRANCH_NOT_EMPTY');
+  }
+
+  return Object.freeze({
+    ok:true,
+    commitSha,
+    buildUuid:accepted.buildUuid,
+    triggerUuid:accepted.triggerUuid,
+    scriptTag:accepted.workerTag,
+    buildOutcome:accepted.buildOutcome,
+    source:accepted.buildTriggerSource,
+  });
 }
 
 export async function assertCanonicalMainCi(options = {}) {
@@ -153,71 +151,6 @@ export async function assertCanonicalMainCi(options = {}) {
   return Object.freeze({ ok:true, commitSha, requiredContext, checkRunId:Number(success.id) || null });
 }
 
-export function validateBuildIdentity({ build, buildUuid, triggerUuid, scriptTag, commitSha }) {
-  if (!build || typeof build !== 'object' || Array.isArray(build)) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_BODY_INVALID');
-  }
-  if (requiredUuid(build.build_uuid, 'CF_SYNC_DEV_BUILD_UUID_INVALID') !== buildUuid) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_UUID_MISMATCH');
-  }
-  const trigger = build.trigger;
-  if (!trigger || typeof trigger !== 'object' || Array.isArray(trigger)) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_TRIGGER_MISSING');
-  }
-  if (requiredUuid(trigger.trigger_uuid, 'CF_SYNC_DEV_BUILD_TRIGGER_UUID_INVALID') !== triggerUuid) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_TRIGGER_MISMATCH');
-  }
-  if (requiredScriptTag(trigger.external_script_id) !== scriptTag) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_SCRIPT_TAG_MISMATCH');
-  }
-
-  const metadata = build.build_trigger_metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_METADATA_MISSING');
-  }
-  if (String(metadata.build_trigger_source || '') !== 'manual') {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_SOURCE_NOT_MANUAL');
-  }
-  if (String(metadata.branch || '') !== '') {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_BRANCH_NOT_EMPTY');
-  }
-  if (requiredSha(metadata.commit_hash, 'CF_SYNC_DEV_BUILD_METADATA_SHA_INVALID') !== commitSha) {
-    throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_BUILD_COMMIT_MISMATCH');
-  }
-  return true;
-}
-
-async function cloudflareJson({ fetchImpl, apiToken, url, method, body, code }) {
-  let response;
-  try {
-    response = await fetchImpl(url, {
-      method,
-      headers:{
-        authorization:`Bearer ${apiToken}`,
-        accept:'application/json',
-        ...(body ? { 'content-type':'application/json' } : {}),
-      },
-      ...(body ? { body:JSON.stringify(body) } : {}),
-    });
-  } catch (error) {
-    throw new CloudflareSyncDevBuildError(code, error);
-  }
-  let payload = null;
-  try {
-    payload = await response?.json();
-  } catch (error) {
-    throw new CloudflareSyncDevBuildError(`${code}:JSON_INVALID`, error);
-  }
-  if (!response?.ok || payload?.success !== true) {
-    const status = Number(response?.status || 0) || 'UNKNOWN';
-    const message = Array.isArray(payload?.errors) && payload.errors.length
-      ? String(payload.errors[0]?.message || '')
-      : '';
-    throw new CloudflareSyncDevBuildError(`${code}:${status}${message ? `:${message}` : ''}`);
-  }
-  return payload;
-}
-
 async function githubJson({ fetchImpl, githubToken, url, code }) {
   let response;
   try {
@@ -245,18 +178,6 @@ async function githubJson({ fetchImpl, githubToken, url, code }) {
 function requiredSha(value, code) {
   const text = String(value ?? '').trim().toLowerCase();
   if (!GIT_SHA_PATTERN.test(text)) throw new CloudflareSyncDevBuildError(code);
-  return text;
-}
-
-function requiredUuid(value, code) {
-  const text = String(value ?? '').trim().toLowerCase();
-  if (!UUID_PATTERN.test(text)) throw new CloudflareSyncDevBuildError(code);
-  return text;
-}
-
-function requiredScriptTag(value) {
-  const text = String(value ?? '').trim().toLowerCase();
-  if (!ACCOUNT_ID_PATTERN.test(text)) throw new CloudflareSyncDevBuildError('CF_SYNC_DEV_SCRIPT_TAG_INVALID');
   return text;
 }
 
@@ -292,18 +213,6 @@ function requiredText(value, code) {
 function optionalText(value) {
   const text = String(value ?? '').trim();
   return text || null;
-}
-
-function positiveInteger(value, code) {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 1) throw new CloudflareSyncDevBuildError(code);
-  return number;
-}
-
-function nonNegativeInteger(value, code) {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 0) throw new CloudflareSyncDevBuildError(code);
-  return number;
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null;
