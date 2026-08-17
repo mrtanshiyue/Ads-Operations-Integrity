@@ -1,6 +1,7 @@
 const EVENT_ACTIONS = Object.freeze({
   duplicate_suppression: 'optimization_action.observability.duplicate_suppression',
   already_governed_suppression: 'optimization_action.observability.already_governed_suppression',
+  recommendation_quality_suppression: 'optimization_action.observability.recommendation_quality_suppression',
   fingerprint_conflict: 'optimization_action.observability.fingerprint_conflict',
   governance_error: 'optimization_action.observability.governance_error',
 });
