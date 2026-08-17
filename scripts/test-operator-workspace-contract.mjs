@@ -19,7 +19,7 @@ const sandboxWindow = {};
 vm.runInNewContext(source, { window: sandboxWindow, console }, { filename: 'cloudflare-native-operator-workspace-v1.js' });
 const workspace = sandboxWindow.CloudflareOperatorWorkspace;
 assert.ok(workspace, 'Operator Workspace public contract must be installed');
-assert.equal(workspace.version, '1.0.0');
+assert.equal(workspace.version, '1.1.0');
 
 const navigation = Array.from(workspace.navigationContract);
 const keys = navigation.map((entry) => entry.key);
@@ -31,8 +31,10 @@ for (const requiredKey of [
   'negativeKeywords',
   'productKeywordGovernance',
   'searchTerms',
+  'recommendationQueue',
   'targeting',
   'bidIntelligence',
+  'governanceHealth',
   'operationsHealth',
   'dataHealth',
   'auditTrail',
@@ -42,6 +44,15 @@ for (const requiredKey of [
 ]) {
   assert.ok(keys.includes(requiredKey), `Missing Operator Workspace navigation item: ${requiredKey}`);
 }
+
+const byKey = Object.fromEntries(navigation.map((entry) => [entry.key, entry]));
+assert.equal(byKey.searchTerms.kind, 'surface');
+assert.equal(byKey.searchTerms.target, 'decision-intelligence');
+assert.equal(byKey.recommendationQueue.target, 'decision-actions');
+assert.equal(byKey.governanceHealth.target, 'governance-health');
+assert.deepEqual(Array.from(byKey.searchTerms.permissionSets[0]), ['analytics.read']);
+assert.deepEqual(Array.from(byKey.recommendationQueue.permissionSets[0]), ['ads.read']);
+assert.deepEqual(Array.from(byKey.governanceHealth.permissionSets[0]), ['ads.read']);
 
 const groups = Array.from(workspace.groupContract).map((entry) => entry.key);
 assert.deepEqual(groups, ['overview', 'products', 'keywords', 'ads', 'operations', 'administration']);
@@ -76,11 +87,23 @@ assert.equal(analystAccess.storeProductMapping, true);
 assert.equal(analystAccess.positiveKeywords, true);
 assert.equal(analystAccess.productKeywordGovernance, true);
 assert.equal(analystAccess.negativeKeywords, true);
+assert.equal(analystAccess.searchTerms, true);
+assert.equal(analystAccess.recommendationQueue, true);
+assert.equal(analystAccess.governanceHealth, true);
 assert.equal(analystAccess.operationsHealth, true);
 assert.equal(analystAccess.auditTrail, true);
 assert.equal(analystAccess.users, false);
 assert.equal(analystAccess.storeMembership, false);
 assert.equal(analystAccess.rolesAccess, false);
+
+const analyticsOnlyCaps = {
+  globalPermissions: [],
+  storePermissions: { 'store-dev-01': ['analytics.read'] },
+};
+const analyticsOnlyAccess = workspace.evaluateAccess(analyticsOnlyCaps, 'store-dev-01');
+assert.equal(analyticsOnlyAccess.searchTerms, true);
+assert.equal(analyticsOnlyAccess.recommendationQueue, false);
+assert.equal(analyticsOnlyAccess.governanceHealth, false);
 
 const failedClosed = workspace.evaluateAccess(null, 'store-dev-01');
 for (const key of keys) assert.equal(failedClosed[key], false, `Missing capability context must fail closed for ${key}`);
@@ -88,6 +111,13 @@ for (const key of keys) assert.equal(failedClosed[key], false, `Missing capabili
 assert.match(source, /CloudflareProductGovernance/);
 assert.match(source, /CloudflareKeywordGovernance/);
 assert.match(source, /CloudflareNegativeGovernance/);
+assert.match(source, /CloudflareDecisionIntelligence/);
+assert.match(source, /decision-intelligence/);
+assert.match(source, /decision-actions/);
+assert.match(source, /governance-health/);
+assert.match(source, /data-phase9-governance-health/);
+assert.match(source, /OPERATOR WORKSPACE · DAILY OPERATIONS/);
+assert.doesNotMatch(source, /PHASE 3 · OPERATOR WORKSPACE/);
 assert.match(source, /CloudflareOperationsHealth/);
 assert.match(source, /CloudflareAuditConsole/);
 assert.match(source, /CloudflareAccessConsole/);
@@ -105,11 +135,14 @@ assert.doesNotMatch(source, /\bfetch\s*\(|XMLHttpRequest|WebSocket|startSync\s*\
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'phase3-gate33-operator-workspace-v1',
+  contract: 'operator-workspace-v2',
   navigationItems: navigation.length,
   groups: groups.length,
   permissionAware: true,
   bilingual: true,
   responsive: true,
+  searchTermIntelligenceFirstClass: true,
+  recommendationQueueFirstClass: true,
+  governanceHealthFirstClass: true,
   transport: 'existing-native-console-public-apis-only',
 }, null, 2));

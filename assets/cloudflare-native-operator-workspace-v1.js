@@ -1,7 +1,7 @@
 (function initCloudflareNativeOperatorWorkspace(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const LEGACY_ENTRYPOINT_IDS = Object.freeze([
     'btnNativeKeywordGovernance',
     'btnNativeProductGovernance',
@@ -18,9 +18,11 @@
     item('positiveKeywords', 'keywords', 'K', '正向关键词', 'Positive Keywords', 'surface', 'keyword-library', [['keywords.read', 'keywords.manage']]),
     item('productKeywordGovernance', 'keywords', 'M', '产品关键词映射', 'Product Keyword Governance', 'surface', 'keyword-product', [['keywords.read', 'keywords.manage'], ['products.read', 'products.manage']]),
     item('negativeKeywords', 'keywords', 'N', '否定词治理', 'Negative Keywords', 'surface', 'negative-library', [['negatives.read', 'negatives.manage']]),
-    item('searchTerms', 'ads', 'Q', '搜索词', 'Search Terms', 'anchor', '#rankGovernanceCard', [['analytics.read']]),
+    item('searchTerms', 'ads', 'Q', '搜索词情报', 'Search Term Intelligence', 'surface', 'decision-intelligence', [['analytics.read']]),
+    item('recommendationQueue', 'ads', 'R', '建议队列', 'Recommendation Queue', 'surface', 'decision-actions', [['ads.read']]),
     item('targeting', 'ads', 'T', '投放分析', 'Targeting', 'anchor', '#multiDimCard', [['analytics.read']]),
     item('bidIntelligence', 'ads', 'B', '出价情报', 'Bid Intelligence', 'anchor', '#rankGovernanceCard', [['analytics.read']]),
+    item('governanceHealth', 'operations', 'V', '治理健康', 'Governance Health', 'surface', 'governance-health', [['ads.read']]),
     item('operationsHealth', 'operations', 'H', '运营健康', 'Operations Health', 'surface', 'operations-health', [['analytics.read']]),
     item('dataHealth', 'operations', 'D', '数据健康', 'Data Health', 'surface', 'operations-health', [['analytics.read']]),
     item('auditTrail', 'operations', 'A', '审计轨迹', 'Audit Trail', 'surface', 'audit', [['audit.read']]),
@@ -196,7 +198,7 @@
     state.root.innerHTML = `
       <div class="cfOperatorHead">
         <div>
-          <div class="cfOperatorEyebrow">PHASE 3 · OPERATOR WORKSPACE</div>
+          <div class="cfOperatorEyebrow">OPERATOR WORKSPACE · DAILY OPERATIONS</div>
           <h2>${escapeHtml(t('运营工作台', 'Operator Workspace'))}</h2>
         </div>
         <span class="cfOperatorNativeBadge">Cloudflare Native</span>
@@ -264,6 +266,12 @@
         return openConsole(global.CloudflareKeywordGovernance, '[data-cf-keyword-mode="product"]');
       case 'negative-library':
         return openConsole(global.CloudflareNegativeGovernance, '[data-cf-neg-mode="library"]');
+      case 'decision-intelligence':
+        return openDecisionView('intelligence');
+      case 'decision-actions':
+        return openDecisionView('actions');
+      case 'governance-health':
+        return openDecisionView('actions', '[data-phase9-governance-health]');
       case 'operations-health':
         return openConsole(global.CloudflareOperationsHealth);
       case 'audit':
@@ -287,6 +295,21 @@
     return true;
   }
 
+  async function openDecisionView(tab, focusSelector = null) {
+    const decisionApi = global.CloudflareDecisionIntelligence;
+    if (!decisionApi || typeof decisionApi.open !== 'function') return false;
+    await decisionApi.open();
+    const tabButton = global.document?.querySelector(`#cfDecisionPanel [data-tab="${tab}"]`);
+    if (!tabButton) return false;
+    tabButton.click();
+    if (focusSelector) {
+      const focus = () => global.document?.querySelector(focusSelector)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+      queueMicrotask(focus);
+      global.setTimeout?.(focus, 0);
+    }
+    return true;
+  }
+
   function onStoreChange(event) {
     if (event.target?.id !== 'cfOperatorStore') return;
     state.storeId = String(event.target.value || '');
@@ -304,7 +327,7 @@
         : null;
       if (event) global.dispatchEvent(event);
     } catch {
-      // Cross-console context propagation is advisory in Gate 3.3; Gate 3.4 may consume it.
+      // Cross-console store context propagation is advisory; each console remains independently fail closed.
     }
   }
 
