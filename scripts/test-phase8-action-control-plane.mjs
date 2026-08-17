@@ -1,292 +1,132 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import {
-  buildRecommendationPreview,
-  evaluateSearchTermDecision,
-} from '../cloudflare/runtime/decision-intelligence.js';
-import {
-  AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION,
-  COMPENSATING_ACTION_POLICY,
-  LOGICAL_MUTATION_ALLOWLIST,
-  buildExecutionPlan,
-  canMarkActionApplied,
-  classifyMutationTransportOutcome,
-  validatePermitBinding,
-} from '../cloudflare/runtime/amazon-action-execution-safety.js';
+import { handleOptimizationActionsApiRoute } from '../cloudflare/runtime/optimization-actions-api.js';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const [actionsSource, intelligenceApiSource, webEntrySource, uiSource, executionSafetySource] = await Promise.all([
-  readFile(path.join(repoRoot, 'cloudflare/runtime/optimization-actions-api.js'), 'utf8'),
-  readFile(path.join(repoRoot, 'cloudflare/runtime/search-term-intelligence-api.js'), 'utf8'),
-  readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8'),
-  readFile(path.join(repoRoot, 'assets/cloudflare-native-decision-intelligence-v1.js'), 'utf8'),
-  readFile(path.join(repoRoot, 'cloudflare/runtime/amazon-action-execution-safety.js'), 'utf8'),
-]);
+await import('./test-phase8-action-control-plane-core.mjs');
 
-const evidence = {
-  lineageValid: true,
-  factRowCount: 1,
-  invalidLineageCount: 0,
-  sourceReportJobIds: ['job-phase8'],
-  amazonReportIds: ['amazon-report-phase8'],
-  r2ObjectKeys: ['amazon/store-01/search-term.json'],
-  contentSha256s: ['a'.repeat(64)],
-};
-const metrics = {
-  impressions: 1000,
-  clicks: 20,
-  purchases: 0,
-  costMicros: 4_000_000,
-  salesMicros: 0,
+const storeRow = {
+  row_key: 'row-freeze-01',
+  profile_id: 'profile-freeze-01',
+  campaign_id: 'campaign-freeze-01',
+  ad_group_id: 'adgroup-freeze-01',
 };
 
-const freshDecision = evaluateSearchTermDecision({
-  metrics,
-  evidence,
-  freshness: { state: 'fresh', confidenceFactor: 1 },
-});
-const staleDecision = evaluateSearchTermDecision({
-  metrics,
-  evidence,
-  freshness: { state: 'stale', confidenceFactor: 0.5 },
-});
-assert.ok(freshDecision.confidence.score > staleDecision.confidence.score);
-assert.equal(freshDecision.confidence.freshnessFactor, 1);
-assert.equal(staleDecision.confidence.freshnessFactor, 0.5);
+const controlDb = {
+  prepare(sql) {
+    if (sql.includes('user_global_roles')) {
+      return { bind() { return { async first() { return { ok: 1 }; } }; } };
+    }
+    if (sql.includes('FROM stores')) {
+      return { bind() { return { async first() { return { store_id: 'store-dev-01', d1_binding_key: 'STORE_01_DB', status: 'active' }; } }; } };
+    }
+    throw new Error(`unexpected control SQL: ${sql}`);
+  },
+};
 
-const preview = await buildRecommendationPreview({
-  storeId: 'store-dev-01',
-  profileId: 'profile-synth-dev-01',
-  analysisWindow: { startDate: '2026-08-01', endDate: '2026-08-17' },
-  entity: { entityId: 'search-term-row-01', searchTerm: 'reading glasses' },
-  metrics,
-  evidence,
-  freshness: { state: 'aging', latestReportDate: '2026-08-12', ageDays: 5, confidenceFactor: 0.8 },
-  trend: { delta: { spendPct: 0.22, ordersPct: -0.08, acosPp: 13 } },
-  env: { APP_ENV: 'development', RECOMMENDATION_AUTHORITY_ENABLED: 'false' },
-});
-assert.equal(preview.recommendation.actionType, 'negative_keyword.create');
-assert.equal(preview.recommendation.executionAuthorized, false);
-assert.equal(preview.recommendation.governancePersistenceAllowed, true);
-assert.equal(preview.authority.authoritative, false);
-assert.equal(preview.authority.amazonMutationAuthorized, false);
-assert.equal(preview.decision.freshness.state, 'aging');
-assert.match(preview.fingerprint, /^[a-f0-9]{64}$/);
+const storeDb = {
+  prepare(sql) {
+    if (sql.includes('FROM amazon_profiles')) {
+      return { bind() { return { async first() { return { profile_id: storeRow.profile_id }; } }; } };
+    }
+    if (sql.includes('FROM search_term_daily')) {
+      return { bind() { return { async first() { return { ...storeRow }; } }; } };
+    }
+    if (sql.includes('FROM optimization_actions') && sql.includes('idempotency_key')) {
+      return { bind() { return { async first() { return null; } }; } };
+    }
+    throw new Error(`unexpected store SQL: ${sql}`);
+  },
+};
 
-for (const token of [
-  'dryRun',
-  'idempotency_conflict',
-  'recommendation_fingerprint_mismatch',
-  "status='proposed'",
-  "status='rejected'",
-  "status='approved'",
-  'action.proposed',
-  'action.rejected',
-  'action.approved',
-  'action_transition_conflict',
-  'rejection_reason_required',
-  'ads.write',
-  'audit_log',
-  'amazonMutationAttempted: false',
-  'amazonMutationAuthorized: false',
-  'action_execution_disabled',
-]) {
-  assert.match(actionsSource, new RegExp(escapeRegex(token)), `missing action control token: ${token}`);
-}
-assert.match(actionsSource, /WHERE action_id=\?1 AND status='proposed'/);
-assert.match(actionsSource, /optimization_action_events/);
-assert.match(actionsSource, /requestFingerprint/);
-assert.match(actionsSource, /recommendationFingerprint/);
-assert.doesNotMatch(actionsSource, /advertising-api\.amazon\.com/);
-assert.doesNotMatch(actionsSource, /fetch\s*\(/);
+const env = {
+  CONTROL_DB: controlDb,
+  STORE_01_DB: storeDb,
+  APP_ENV: 'development',
+  RECOMMENDATION_AUTHORITY_ENABLED: 'false',
+};
+const actor = { user_id: 'user-dev-owner' };
+const endpoint = 'https://example.test/api/v1/stores/store-dev-01/optimization-actions?dryRun=true';
 
-for (const token of [
-  'previousStartDate',
-  'previousEndDate',
-  'previousMetrics',
-  'comparisonRange',
-  'freshnessContract',
-  "fresh: 'latest report date age <= 2 days'",
-  'confidenceFactor',
-  'latest_report_date',
-  'fact_updated_at',
-  'acosPp',
-  'cvrPp',
-]) {
-  assert.match(intelligenceApiSource, new RegExp(escapeRegex(token)), `missing intelligence context token: ${token}`);
-}
-assert.doesNotMatch(intelligenceApiSource, /advertising-api\.amazon\.com/);
+const baseBody = {
+  dryRun: true,
+  idempotencyKey: 'legacy-preview-fingerprint',
+  fingerprint: 'f'.repeat(64),
+  profileId: storeRow.profile_id,
+  entityType: 'search_term',
+  entityId: storeRow.row_key,
+  actionType: 'negative_keyword.create',
+  sourceType: 'rule',
+  before: { negativeKeywordExists: false },
+  proposed: { keywordText: 'free reading glasses', matchType: 'EXACT' },
+  rationale: 'Freeze execution destination before governance approval.',
+  analysisWindow: { startDate: '2026-08-10', endDate: '2026-08-17' },
+  evidence: {
+    lineageValid: true,
+    factRowCount: 1,
+    invalidLineageCount: 0,
+    sourceReportJobIds: ['job-freeze-01'],
+    amazonReportIds: ['amazon-freeze-01'],
+    r2ObjectKeys: ['amazon/store-dev-01/freeze.json'],
+    contentSha256s: ['a'.repeat(64)],
+  },
+  confidence: { score: 0.91, band: 'high' },
+  scores: { waste: { score: 82 } },
+  freshness: { state: 'fresh', latestReportDate: '2026-08-17', ageDays: 0, confidenceFactor: 1 },
+};
 
-assert.match(webEntrySource, /reject\|approve\|apply\|revert/);
-assert.match(webEntrySource, /handleOptimizationActionsApiRoute/);
-
-for (const token of [
-  'Evidence Drilldown',
-  'Dry-run validation',
-  'Persist proposed action',
-  'Optimization Action Inbox',
-  'Approve governance',
-  'Rejection reason',
-  'Execution Disabled',
-  'Freshness',
-  'Authority',
-  'Comparable trend',
-  'Source provenance',
-  'Development preview / non-authoritative',
-]) {
-  assert.match(uiSource, new RegExp(escapeRegex(token)), `missing Phase 8 UI token: ${token}`);
-}
-assert.doesNotMatch(uiSource, /\/apply['"`]/);
-assert.doesNotMatch(uiSource, /\/revert['"`]/);
-
-const storeMigrationDir = path.join(repoRoot, 'cloudflare/foundation/migrations/store');
-const storeMigrationNames = (await readdir(storeMigrationDir)).filter((name) => name.endsWith('.sql')).sort();
-const storeMigrationSources = await Promise.all(storeMigrationNames.map((name) => readFile(path.join(storeMigrationDir, name), 'utf8')));
-const combinedMigrations = storeMigrationSources.join('\n');
-assert.match(combinedMigrations, /CREATE TABLE optimization_actions/);
-assert.match(combinedMigrations, /CREATE TABLE optimization_action_events/);
-assert.match(combinedMigrations, /CREATE TABLE optimization_execution_permits/);
-assert.match(combinedMigrations, /CREATE TABLE optimization_execution_receipts/);
-assert.match(combinedMigrations, /CREATE TABLE optimization_execution_verifications/);
-assert.match(combinedMigrations, /idx_execution_permits_one_issued_per_action_transition/);
-assert.match(combinedMigrations, /execution_permit_binding_immutable/);
-assert.match(combinedMigrations, /execution_receipt_immutable/);
-assert.match(combinedMigrations, /execution_verification_immutable/);
-assert.doesNotMatch(combinedMigrations, /CREATE TABLE\s+(?:recommendations|recommendation_actions)\b/i);
-
-assert.equal(AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION, 'amazon-action-execution-safety-v1');
-assert.deepEqual(Object.keys(LOGICAL_MUTATION_ALLOWLIST).sort(), ['keyword.create', 'negative_keyword.create']);
-assert.equal(LOGICAL_MUTATION_ALLOWLIST['negative_keyword.create'].endpointMappingVerified, false);
-assert.equal(LOGICAL_MUTATION_ALLOWLIST['keyword.create'].endpointMappingVerified, false);
-assert.equal(COMPENSATING_ACTION_POLICY.automaticRollbackAuthorized, false);
-
-const requestFingerprint = '1'.repeat(64);
-const targetReadyAction = {
-  action_id: 'act_execution_ready_shape',
-  profile_id: 'profile-real-01',
-  entity_type: 'search_term',
-  entity_id: 'row-real-01',
-  action_type: 'negative_keyword.create',
-  status: 'approved',
-  proposed_json: JSON.stringify({
-    scope: 'ad_group',
-    campaignId: 'campaign-01',
-    adGroupId: 'adgroup-01',
-    keywordText: 'free reading glasses',
-    matchType: 'EXACT',
+const freezeResponse = await handleOptimizationActionsApiRoute({
+  request: new Request(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'cf-ray': 'ray-freeze-01' },
+    body: JSON.stringify(baseBody),
   }),
-  rationale_json: JSON.stringify({ governance: { requestFingerprint } }),
-  external_request_id: null,
-  applied_at: null,
-};
-const targetReadyPlan = await buildExecutionPlan({ storeId: 'store-01', action: targetReadyAction });
-assert.equal(targetReadyPlan.valid, true);
-assert.equal(targetReadyPlan.dryRunReady, true);
-assert.equal(targetReadyPlan.permitIssuanceReady, false);
-assert.equal(targetReadyPlan.networkDispatchAuthorized, false);
-assert.equal(targetReadyPlan.mutation.endpointMappingVerified, false);
-assert.match(targetReadyPlan.targetFingerprint, /^[a-f0-9]{64}$/);
-assert.match(targetReadyPlan.executionFingerprint, /^[a-f0-9]{64}$/);
-
-const legacyMissingScopePlan = await buildExecutionPlan({
-  storeId: 'store-01',
-  action: {
-    ...targetReadyAction,
-    action_id: 'act_legacy_missing_scope',
-    proposed_json: JSON.stringify({ keywordText: 'free reading glasses', matchType: 'EXACT' }),
-  },
+  env,
+  actor,
+  url: new URL(endpoint),
 });
-assert.equal(legacyMissingScopePlan.valid, false);
-assert.ok(legacyMissingScopePlan.errors.includes('destination_scope_not_frozen'));
+assert.equal(freezeResponse.status, 200);
+const frozen = await freezeResponse.json();
+assert.equal(frozen.dryRun, true);
+assert.equal(frozen.valid, true);
+assert.equal(frozen.normalized.proposed.scope, 'ad_group');
+assert.equal(frozen.normalized.proposed.campaignId, storeRow.campaign_id);
+assert.equal(frozen.normalized.proposed.adGroupId, storeRow.ad_group_id);
+assert.equal(frozen.normalized.idempotencyKey, 'legacy-preview-fingerprint');
+assert.notEqual(frozen.normalized.recommendationFingerprint, baseBody.fingerprint);
+assert.match(frozen.normalized.requestFingerprint, /^[a-f0-9]{64}$/);
+assert.equal(frozen.execution.amazonMutationAuthorized, false);
 
-const unapprovedPlan = await buildExecutionPlan({ storeId: 'store-01', action: { ...targetReadyAction, status: 'proposed' } });
-assert.equal(unapprovedPlan.valid, false);
-assert.ok(unapprovedPlan.errors.includes('approved_action_required'));
-
-const permitCheck = validatePermitBinding({
-  permit: {
-    state: 'issued',
-    transition: 'apply',
-    actionId: targetReadyPlan.action.actionId,
-    profileId: targetReadyPlan.action.profileId,
-    entityId: targetReadyPlan.action.entityId,
-    actionType: targetReadyPlan.action.actionType,
-    requestFingerprint: targetReadyPlan.requestFingerprint,
-    targetFingerprint: targetReadyPlan.targetFingerprint,
-    executionFingerprint: targetReadyPlan.executionFingerprint,
-    expiresAt: '2026-08-17T17:00:00Z',
-  },
-  plan: targetReadyPlan,
-  now: new Date('2026-08-17T16:00:00Z'),
+const mismatchResponse = await handleOptimizationActionsApiRoute({
+  request: new Request(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      ...baseBody,
+      proposed: {
+        ...baseBody.proposed,
+        scope: 'ad_group',
+        campaignId: 'spoofed-campaign',
+        adGroupId: storeRow.ad_group_id,
+      },
+    }),
+  }),
+  env,
+  actor,
+  url: new URL(endpoint),
 });
-assert.equal(permitCheck.valid, false);
-assert.ok(permitCheck.errors.includes('amazon_endpoint_mapping_unverified'));
-assert.equal(permitCheck.networkDispatchAuthorized, false);
-
-assert.deepEqual(classifyMutationTransportOutcome({ dispatched: false }), {
-  transportOutcome: 'unknown',
-  retryDisposition: 'retry_before_dispatch',
-  readbackRequired: false,
-  reason: 'request_not_dispatched',
-});
-const acceptedTransport = classifyMutationTransportOutcome({ dispatched: true, httpStatus: 202, amazonRequestId: 'req-01' });
-assert.equal(acceptedTransport.retryDisposition, 'readback_required');
-assert.equal(acceptedTransport.readbackRequired, true);
-const unknownTransport = classifyMutationTransportOutcome({ dispatched: true, networkError: new Error('socket closed') });
-assert.equal(unknownTransport.retryDisposition, 'readback_required');
-assert.equal(unknownTransport.reason, 'dispatched_outcome_unknown');
-
-const finalization = canMarkActionApplied({
-  plan: targetReadyPlan,
-  receipt: { transportOutcome: 'accepted', executionFingerprint: targetReadyPlan.executionFingerprint },
-  verification: {
-    result: 'confirmed',
-    expectedFingerprint: targetReadyPlan.executionFingerprint,
-    observedFingerprint: targetReadyPlan.executionFingerprint,
-  },
-});
-assert.equal(finalization.allowed, true);
-assert.equal(finalization.readbackConfirmed, true);
-assert.equal(finalization.fingerprintsMatch, true);
-assert.equal(finalization.networkDispatchAuthorized, false);
-
-for (const token of [
-  'networkDispatchAuthorized: false',
-  'no_blind_retry_after_dispatch',
-  'amazon_readback_confirmation_required',
-  'destination_scope_not_frozen',
-  'amazon_endpoint_mapping_unverified',
-  'create_separately_governed_compensating_action',
-]) {
-  assert.match(executionSafetySource, new RegExp(escapeRegex(token)), `missing execution safety token: ${token}`);
-}
-assert.doesNotMatch(executionSafetySource, /fetch\s*\(/);
-assert.doesNotMatch(executionSafetySource, /advertising-api\.amazon\.com/);
+assert.equal(mismatchResponse.status, 409);
+const mismatch = await mismatchResponse.json();
+assert.equal(mismatch.error, 'execution_destination_mismatch');
+assert.equal(mismatch.field, 'campaignId');
+assert.equal(mismatch.amazonMutationAttempted, false);
+assert.equal(mismatch.amazonMutationAuthorized, false);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'operational-recommendation-and-execution-safety-v2',
-  proposedPersistence: true,
-  deterministicIdempotency: true,
-  rejectLifecycle: true,
-  approvalGovernance: true,
-  conditionalMutation: true,
-  evidenceDrilldown: true,
-  comparableTrend: true,
-  freshnessAwareConfidence: true,
-  executionPermitSchema: true,
-  immutableExecutionReceiptSchema: true,
-  readbackVerificationSchema: true,
-  singleUsePermitContract: true,
-  legacyMissingTargetFailsClosed: true,
-  endpointMapping: 'unverified-and-blocking',
-  unknownOutcomeRetry: 'readback-required-no-blind-retry',
+  contract: 'optimization-action-execution-target-freeze-v1',
+  targetSource: 'server-authoritative search_term_daily row',
+  scope: 'ad_group',
+  fingerprintIncludesFrozenDestination: true,
+  stalePreviewFingerprintAcceptedOnlyAfterServerRecompute: true,
+  spoofedDestinationRejected: true,
   amazonExecution: 'disabled',
-  productionMutation: false,
 }, null, 2));
-
-function escapeRegex(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
