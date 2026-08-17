@@ -26,7 +26,8 @@ export const LOGICAL_MUTATION_ALLOWLIST = Object.freeze({
     apiContract: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
     method: 'POST',
     endpointPath: '/adsApi/v1/create/targets',
-    endpointMappingVerified: true,
+    endpointMappingVerified: false,
+    verifiedContractVersion: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
     responseContract: 'http_207_multistatus_error_partialSuccess_success',
     allowedMatchTypes: Object.freeze(['EXACT', 'PHRASE']),
     requiredScope: 'ad_group',
@@ -40,6 +41,7 @@ export const LOGICAL_MUTATION_ALLOWLIST = Object.freeze({
     method: 'POST',
     endpointPath: '/adsApi/v1/create/targets',
     endpointMappingVerified: false,
+    verifiedContractVersion: null,
     blockingReason: 'positive_keyword_bid_mapping_unverified',
     allowedMatchTypes: Object.freeze(['BROAD', 'PHRASE', 'EXACT']),
     requiredScope: 'ad_group',
@@ -90,7 +92,13 @@ export async function buildExecutionPlan({ storeId, action } = {}) {
     : null;
 
   const valid = errors.length === 0;
-  const endpointMappingVerified = Boolean(mapping?.endpointMappingVerified && mapping?.endpointPath && mapping?.method);
+  const frozenMutationContract = text(normalized.proposed?.amazonMutationContract);
+  const endpointMappingVerified = Boolean(
+    mapping?.verifiedContractVersion
+    && mapping?.endpointPath
+    && mapping?.method
+    && frozenMutationContract === mapping.verifiedContractVersion
+  );
   return freeze({
     schemaVersion: AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION,
     transition: 'apply',
@@ -108,10 +116,13 @@ export async function buildExecutionPlan({ storeId, action } = {}) {
     mutation: mapping ? {
       capability: mapping.capability,
       apiContract: mapping.apiContract || null,
+      frozenContract: frozenMutationContract || null,
       method: mapping.method || null,
       endpointPath: mapping.endpointPath,
       endpointMappingVerified,
-      blockingReason: endpointMappingVerified ? null : (mapping.blockingReason || 'amazon_endpoint_mapping_unverified'),
+      blockingReason: endpointMappingVerified
+        ? null
+        : (mapping.blockingReason || (frozenMutationContract ? 'amazon_mutation_contract_mismatch' : 'amazon_mutation_contract_not_frozen')),
       responseContract: mapping.responseContract || null,
       target,
     } : null,
