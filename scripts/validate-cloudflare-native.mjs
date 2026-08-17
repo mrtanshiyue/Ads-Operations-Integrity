@@ -1,11 +1,15 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  validatePhase5LiveReadActivation,
+} from './phase5-live-read-activation-contract.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc');
 const syncConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.sync.jsonc');
 const syncWorkerPath = path.join(repoRoot, 'cloudflare/runtime/sync-worker.js');
+const activationStatePath = path.join(repoRoot, 'docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json');
 const args = new Set(process.argv.slice(2));
 const envArgIndex = process.argv.indexOf('--env');
 const envName = envArgIndex >= 0 ? process.argv[envArgIndex + 1] : 'dev';
@@ -15,10 +19,11 @@ if (!['dev', 'production'].includes(envName)) {
   throw new Error(`Unsupported environment: ${envName}`);
 }
 
-const [webConfig, syncConfig, syncWorkerSource] = await Promise.all([
+const [webConfig, syncConfig, syncWorkerSource, activationState] = await Promise.all([
   readConfig(webConfigPath),
   readConfig(syncConfigPath),
   readFile(syncWorkerPath, 'utf8'),
+  readConfig(activationStatePath),
 ]);
 const webEnv = webConfig.env?.[envName];
 const syncEnv = syncConfig.env?.[envName];
@@ -28,6 +33,7 @@ if (!syncEnv) throw new Error(`Missing env.${envName} in wrangler.sync.jsonc`);
 const errors = [];
 const warnings = [];
 const unresolved = [];
+let phase5Activation = null;
 const expectedStoreBindings = envName === 'production'
   ? ['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']
   : ['STORE_01_DB'];
@@ -38,6 +44,7 @@ const expectedSyncScriptName = envName === 'production' ? 'ads-operations-sync-p
 validateWebRuntime();
 validateSyncRuntime();
 validateSharedResources();
+validatePhase5Activation();
 validateReadiness();
 
 if (unresolved.length) {
@@ -55,6 +62,7 @@ console.log(JSON.stringify({
   ok: true,
   env: envName,
   requireReady,
+  phase5Activation,
   web: {
     main: webConfig.main,
     d1Bindings: bindingNames(webEnv.d1_databases),
@@ -92,8 +100,8 @@ function validateWebRuntime() {
   if (envName === 'dev' && !['observe', 'enforce'].includes(webEnv.vars?.ACCESS_MODE)) {
     errors.push('dev web ACCESS_MODE must be observe or enforce');
   }
-  if (webEnv.vars?.SYNC_TRIGGER_ENABLED !== 'false') {
-    errors.push('SYNC_TRIGGER_ENABLED must remain false until the Amazon Ads adapter is complete and explicitly approved');
+  if (envName === 'production' && webEnv.vars?.SYNC_TRIGGER_ENABLED !== 'false') {
+    errors.push('production SYNC_TRIGGER_ENABLED must remain false during Phase 5');
   }
 
   const workflows = Array.isArray(webEnv.workflows) ? webEnv.workflows : [];
@@ -129,12 +137,12 @@ function validateSyncRuntime() {
     if (workflow.class_name !== 'AmazonAdsSyncWorkflow') errors.push('sync Workflow class_name must be AmazonAdsSyncWorkflow');
     if (workflow.name !== expectedWorkflowName) errors.push(`sync Workflow name must be ${expectedWorkflowName}`);
     if (Array.isArray(workflow.schedules) && workflow.schedules.length) {
-      errors.push('sync Workflow schedules must remain disabled until Amazon Ads OAuth/adapter is production-ready');
+      errors.push('sync Workflow schedules must remain disabled during controlled Phase 5 live-read activation');
     }
   }
 
-  if (syncEnv.vars?.AMAZON_ADS_ENABLED !== 'false') {
-    errors.push('AMAZON_ADS_ENABLED must remain false until the Amazon Ads adapter implementation is complete and explicitly approved');
+  if (envName === 'production' && syncEnv.vars?.AMAZON_ADS_ENABLED !== 'false') {
+    errors.push('production AMAZON_ADS_ENABLED must remain false during Phase 5');
   }
 }
 
@@ -192,6 +200,18 @@ function validateSharedResources() {
   }
   if (webWorkflow?.script_name !== syncEnv.name) {
     errors.push('web Workflow script_name does not match the sync Worker environment name');
+  }
+}
+
+function validatePhase5Activation() {
+  try {
+    phase5Activation = validatePhase5LiveReadActivation({
+      state:activationState,
+      nativeConfig:webConfig,
+      syncConfig,
+    });
+  } catch (error) {
+    errors.push(`Phase 5 activation contract failed: ${String(error?.code || error?.message || 'unknown')}`);
   }
 }
 
