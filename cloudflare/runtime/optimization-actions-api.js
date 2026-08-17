@@ -66,7 +66,7 @@ async function executionReadinessDryRun({ request, env, actor, url }) {
   const plan = await buildExecutionPlan({ storeId, action });
   const mutationEnvelope = await buildDormantNegativeKeywordMutationEnvelope(plan);
   return json(request, {
-    schemaVersion: 'optimization-action-execution-dry-run-v2',
+    schemaVersion: 'optimization-action-execution-dry-run-v1',
     storeId,
     actionId,
     valid: plan.valid,
