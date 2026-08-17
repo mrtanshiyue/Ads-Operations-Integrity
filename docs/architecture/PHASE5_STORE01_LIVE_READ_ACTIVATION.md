@@ -85,7 +85,7 @@ single_run_open
 amazon_read_ready
 ```
 
-Emergency rollback may move `amazon_read_ready` to `safe_disabled`. A direct `safe_disabled → single_run_open` transition is forbidden.
+Emergency rollback may move either `amazon_read_ready` or `single_run_open` directly to `safe_disabled`. A normal direct `safe_disabled → single_run_open` transition is forbidden.
 
 The activation state, Wrangler flags, Store 01-only Dev bindings, implemented dataset scope, and Production-disabled invariants are validated by canonical CI and by `validate-cloudflare-native.mjs`. Dashboard-only or otherwise unreviewed toggle changes are not an approved activation mechanism.
 
@@ -308,7 +308,7 @@ under the same Git/CI/exact-SHA deployment controls. This prevents the Web API f
 
 ### Stop Amazon producer execution
 
-If credentials, profile identity, report authority, R2 identity, Store D1 integrity, or unexpected Amazon behavior is in doubt, move activation state to `safe_disabled` and set:
+If credentials, profile identity, report authority, R2 identity, Store D1 integrity, or unexpected Amazon behavior is in doubt, move activation state directly to `safe_disabled` from either active Dev state and set:
 
 ```text
 AMAZON_ADS_ENABLED=false
