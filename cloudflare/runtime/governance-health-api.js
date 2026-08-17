@@ -2,6 +2,7 @@ const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'ST
 const OBSERVABILITY_ACTIONS = Object.freeze({
   duplicateSuppression: 'optimization_action.observability.duplicate_suppression',
   alreadyGovernedSuppression: 'optimization_action.observability.already_governed_suppression',
+  recommendationQualitySuppression: 'optimization_action.observability.recommendation_quality_suppression',
   fingerprintConflict: 'optimization_action.observability.fingerprint_conflict',
   governanceError: 'optimization_action.observability.governance_error',
 });
@@ -87,7 +88,7 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
   const observed7d = Object.fromEntries(auditRows.map((row) => [row.action, number(row.observed_count)]));
 
   return json(request, {
-    schemaVersion: 'governance-health-v2',
+    schemaVersion: 'governance-health-v3',
     generatedAt: new Date().toISOString(),
     storeId,
     execution: {
@@ -124,6 +125,7 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
       observability7d: {
         duplicateSuppressions: observed(observed7d, OBSERVABILITY_ACTIONS.duplicateSuppression),
         alreadyGovernedSuppressions: observed(observed7d, OBSERVABILITY_ACTIONS.alreadyGovernedSuppression),
+        recommendationQualitySuppressions: observed(observed7d, OBSERVABILITY_ACTIONS.recommendationQualitySuppression),
         fingerprintConflicts: observed(observed7d, OBSERVABILITY_ACTIONS.fingerprintConflict),
         governanceErrors: observed(observed7d, OBSERVABILITY_ACTIONS.governanceError),
       },
@@ -147,6 +149,12 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
         durable: true,
         source: 'control audit_log / optimization_action.observability.already_governed_suppression',
         window: '7d',
+      },
+      recommendationQualitySuppressionCount: {
+        durable: true,
+        source: 'control audit_log / optimization_action.observability.recommendation_quality_suppression',
+        window: '7d',
+        cooldownBasis: 'current_recommendation_analysis_window',
       },
       fingerprintConflictCount: {
         durable: true,
