@@ -3,6 +3,13 @@ import {
   AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
   buildExecutionPlan,
 } from './amazon-action-execution-safety.js';
+import { buildDormantNegativeKeywordMutationEnvelope } from './amazon-negative-keyword-mutation-adapter.js';
+import {
+  DEFAULT_EXECUTION_PERMIT_TTL_SECONDS,
+  MAX_EXECUTION_PERMIT_TTL_SECONDS,
+  MIN_EXECUTION_PERMIT_TTL_SECONDS,
+  issueSingleUseExecutionPermit,
+} from './optimization-execution-control-plane.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const EXECUTION_SCOPED_ACTION_TYPES = new Set(['negative_keyword.create', 'keyword.create']);
@@ -25,6 +32,9 @@ export async function handleOptimizationActionsApiRoute(context) {
 
   if (isApplyReadinessDryRun(request, url)) {
     return executionReadinessDryRun(context);
+  }
+  if (isPermitIssuance(request, url)) {
+    return executionPermitIssuance(context);
   }
 
   if (!isProposalCreate(request, url)) return handleOptimizationActionsApiCoreRoute(context);
@@ -50,30 +60,80 @@ async function executionReadinessDryRun({ request, env, actor, url }) {
   const route = await authorizedStoreDb(env, actor.user_id, storeId, 'ads.write');
   if (route.error) return json(request, { error: route.error, permission: route.permission }, route.status);
 
-  const action = await route.storeDb.prepare(`
-    SELECT action_id, profile_id, entity_type, entity_id, action_type, proposed_json,
-           rationale_json, status, external_request_id, applied_at
-    FROM optimization_actions
-    WHERE action_id=?1
-    LIMIT 1
-  `).bind(actionId).first();
+  const action = await findExecutionAction(route.storeDb, actionId);
   if (!action) return json(request, { error: 'action_not_found' }, 404);
 
   const plan = await buildExecutionPlan({ storeId, action });
+  const mutationEnvelope = await buildDormantNegativeKeywordMutationEnvelope(plan);
   return json(request, {
-    schemaVersion: 'optimization-action-execution-dry-run-v1',
+    schemaVersion: 'optimization-action-execution-dry-run-v2',
     storeId,
     actionId,
     valid: plan.valid,
     plan,
+    mutationEnvelope,
     execution: {
       mode: 'dry_run_only',
       permitIssued: false,
       receiptWritten: false,
       amazonMutationAttempted: false,
       amazonMutationAuthorized: false,
+      networkDispatchAuthorized: false,
     },
   }, 200);
+}
+
+async function executionPermitIssuance({ request, env, actor, url }) {
+  const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/optimization-actions\/([^/]+)\/execution-permits$/);
+  if (!match) return null;
+  const storeId = safeDecode(match[1]);
+  const actionId = safeDecode(match[2]);
+  if (!storeId) return json(request, { error: 'invalid_store_id' }, 400);
+  if (!actionId) return json(request, { error: 'invalid_action_id' }, 400);
+
+  const route = await authorizedStoreDb(env, actor.user_id, storeId, 'ads.write');
+  if (route.error) return json(request, { error: route.error, permission: route.permission }, route.status);
+  const body = await readPermitRequest(request);
+  if (body.error) return json(request, { error: body.error }, 400);
+
+  const action = await findExecutionAction(route.storeDb, actionId);
+  if (!action) return json(request, { error: 'action_not_found' }, 404);
+  const plan = await buildExecutionPlan({ storeId, action });
+  const result = await issueSingleUseExecutionPermit({
+    db: route.storeDb,
+    actorId: actor.user_id,
+    action,
+    plan,
+    ttlSeconds: body.expiresInSeconds,
+  });
+
+  if (!result.issued) {
+    return json(request, {
+      error: 'execution_permit_not_issued',
+      storeId,
+      actionId,
+      errors: result.errors,
+      permitIssuanceReady: Boolean(plan.permitIssuanceReady),
+      amazonMutationAttempted: false,
+      amazonMutationAuthorized: false,
+      networkDispatchAuthorized: false,
+    }, 409);
+  }
+
+  return json(request, {
+    schemaVersion: 'optimization-action-execution-permit-v1',
+    storeId,
+    actionId,
+    idempotentReuse: Boolean(result.idempotentReuse),
+    permit: result.permit,
+    execution: {
+      mode: 'permit_only',
+      singleUse: true,
+      amazonMutationAttempted: false,
+      amazonMutationAuthorized: false,
+      networkDispatchAuthorized: false,
+    },
+  }, result.idempotentReuse ? 200 : 201);
 }
 
 async function freezeProposalExecutionTarget({ request, env, actor, url }) {
@@ -166,6 +226,34 @@ async function freezeProposalExecutionTarget({ request, env, actor, url }) {
   };
 }
 
+async function findExecutionAction(db, actionId) {
+  return db.prepare(`
+    SELECT action_id, profile_id, entity_type, entity_id, action_type, proposed_json,
+           rationale_json, status, external_request_id, applied_at
+    FROM optimization_actions
+    WHERE action_id=?1
+    LIMIT 1
+  `).bind(actionId).first();
+}
+
+async function readPermitRequest(request) {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(contentLength) && contentLength > BODY_LIMIT) return { error: 'request_body_too_large' };
+  const raw = await request.text();
+  if (raw.length > BODY_LIMIT) return { error: 'request_body_too_large' };
+  let body = {};
+  if (raw.trim()) {
+    try { body = JSON.parse(raw); } catch { return { error: 'invalid_json' }; }
+  }
+  if (!plainObject(body)) return { error: 'invalid_json_object' };
+  if (Object.keys(body).some((key) => key !== 'expiresInSeconds')) return { error: 'unsupported_permit_field' };
+  const ttl = body.expiresInSeconds === undefined ? DEFAULT_EXECUTION_PERMIT_TTL_SECONDS : Number(body.expiresInSeconds);
+  if (!Number.isInteger(ttl) || ttl < MIN_EXECUTION_PERMIT_TTL_SECONDS || ttl > MAX_EXECUTION_PERMIT_TTL_SECONDS) {
+    return { error: 'invalid_permit_ttl' };
+  }
+  return { expiresInSeconds: ttl };
+}
+
 function suppliedDestinationMismatch(proposed, campaignId, adGroupId) {
   if (proposed.scope !== undefined && text(proposed.scope).toLowerCase() !== 'ad_group') return 'scope';
   if (proposed.campaignId !== undefined && text(proposed.campaignId) !== campaignId) return 'campaignId';
@@ -183,6 +271,11 @@ function isApplyReadinessDryRun(request, url) {
   return request.method.toUpperCase() === 'POST'
     && /^\/api\/v1\/stores\/[^/]+\/optimization-actions\/[^/]+\/apply$/.test(url.pathname)
     && url.searchParams.get('dryRun') === 'true';
+}
+
+function isPermitIssuance(request, url) {
+  return request.method.toUpperCase() === 'POST'
+    && /^\/api\/v1\/stores\/[^/]+\/optimization-actions\/[^/]+\/execution-permits$/.test(url.pathname);
 }
 
 async function authorizedStoreDb(env, userId, storeId, permission) {
