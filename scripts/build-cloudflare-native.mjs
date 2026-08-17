@@ -73,3 +73,4 @@ await import('./test-operator-context-contract.mjs');
 await import('./test-decision-intelligence-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
 await import('./test-phase11-execution-readiness-ui-contract.mjs');
+await import('./test-phase11-execution-safety.mjs');
