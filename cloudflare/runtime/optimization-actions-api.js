@@ -1,4 +1,5 @@
 import { handleOptimizationActionsApiRoute as handleOptimizationActionsApiCoreRoute } from './optimization-actions-api-core.js';
+import { buildExecutionPlan } from './amazon-action-execution-safety.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const EXECUTION_SCOPED_ACTION_TYPES = new Set(['negative_keyword.create', 'keyword.create']);
@@ -17,10 +18,15 @@ const BODY_LIMIT = 48 * 1024;
 */
 
 export async function handleOptimizationActionsApiRoute(context) {
-  const { request, env, actor, url } = context;
+  const { request, url } = context;
+
+  if (isApplyReadinessDryRun(request, url)) {
+    return executionReadinessDryRun(context);
+  }
+
   if (!isProposalCreate(request, url)) return handleOptimizationActionsApiCoreRoute(context);
 
-  const transformed = await freezeProposalExecutionTarget({ request, env, actor, url });
+  const transformed = await freezeProposalExecutionTarget(context);
   if (transformed?.response) return transformed.response;
   if (!transformed?.request) return handleOptimizationActionsApiCoreRoute(context);
 
@@ -28,6 +34,43 @@ export async function handleOptimizationActionsApiRoute(context) {
     ...context,
     request: transformed.request,
   });
+}
+
+async function executionReadinessDryRun({ request, env, actor, url }) {
+  const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/optimization-actions\/([^/]+)\/apply$/);
+  if (!match) return handleOptimizationActionsApiCoreRoute({ request, env, actor, url });
+  const storeId = safeDecode(match[1]);
+  const actionId = safeDecode(match[2]);
+  if (!storeId) return json(request, { error: 'invalid_store_id' }, 400);
+  if (!actionId) return json(request, { error: 'invalid_action_id' }, 400);
+
+  const route = await authorizedStoreDb(env, actor.user_id, storeId, 'ads.write');
+  if (route.error) return json(request, { error: route.error, permission: route.permission }, route.status);
+
+  const action = await route.storeDb.prepare(`
+    SELECT action_id, profile_id, entity_type, entity_id, action_type, proposed_json,
+           rationale_json, status, external_request_id, applied_at
+    FROM optimization_actions
+    WHERE action_id=?1
+    LIMIT 1
+  `).bind(actionId).first();
+  if (!action) return json(request, { error: 'action_not_found' }, 404);
+
+  const plan = await buildExecutionPlan({ storeId, action });
+  return json(request, {
+    schemaVersion: 'optimization-action-execution-dry-run-v1',
+    storeId,
+    actionId,
+    valid: plan.valid,
+    plan,
+    execution: {
+      mode: 'dry_run_only',
+      permitIssued: false,
+      receiptWritten: false,
+      amazonMutationAttempted: false,
+      amazonMutationAuthorized: false,
+    },
+  }, 200);
 }
 
 async function freezeProposalExecutionTarget({ request, env, actor, url }) {
@@ -51,21 +94,14 @@ async function freezeProposalExecutionTarget({ request, env, actor, url }) {
   if (body.entityType !== 'search_term' || !EXECUTION_SCOPED_ACTION_TYPES.has(String(body.actionType || ''))) return null;
   if (!plainObject(body.proposed)) return null;
 
-  const allowed = await hasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.write');
-  if (!allowed) return null;
-  const store = await env.CONTROL_DB.prepare(`
-    SELECT store_id, d1_binding_key, status
-    FROM stores
-    WHERE store_id=?1 AND status <> 'disabled'
-    LIMIT 1
-  `).bind(storeId).first();
-  if (!store || !STORE_BINDINGS.has(store.d1_binding_key) || !env[store.d1_binding_key]) return null;
+  const route = await authorizedStoreDb(env, actor.user_id, storeId, 'ads.write');
+  if (route.error) return null;
 
   const profileId = text(body.profileId);
   const entityId = text(body.entityId);
   if (!profileId || !entityId) return null;
 
-  const entity = await env[store.d1_binding_key].prepare(`
+  const entity = await route.storeDb.prepare(`
     SELECT row_key, profile_id, campaign_id, ad_group_id
     FROM search_term_daily
     WHERE row_key=?1 AND profile_id=?2
@@ -133,6 +169,28 @@ function suppliedDestinationMismatch(proposed, campaignId, adGroupId) {
 function isProposalCreate(request, url) {
   return request.method.toUpperCase() === 'POST'
     && /^\/api\/v1\/stores\/[^/]+\/optimization-actions$/.test(url.pathname);
+}
+
+function isApplyReadinessDryRun(request, url) {
+  return request.method.toUpperCase() === 'POST'
+    && /^\/api\/v1\/stores\/[^/]+\/optimization-actions\/[^/]+\/apply$/.test(url.pathname)
+    && url.searchParams.get('dryRun') === 'true';
+}
+
+async function authorizedStoreDb(env, userId, storeId, permission) {
+  const allowed = await hasStorePermission(env.CONTROL_DB, userId, storeId, permission);
+  if (!allowed) return { error: 'forbidden', permission, status: 403 };
+  const store = await env.CONTROL_DB.prepare(`
+    SELECT store_id, d1_binding_key, status
+    FROM stores
+    WHERE store_id=?1 AND status <> 'disabled'
+    LIMIT 1
+  `).bind(storeId).first();
+  if (!store) return { error: 'store_not_found', status: 404 };
+  if (!STORE_BINDINGS.has(store.d1_binding_key)) return { error: 'store_db_unavailable', status: 503 };
+  const storeDb = env[store.d1_binding_key];
+  if (!storeDb) return { error: 'store_db_unavailable', status: 503 };
+  return { store, storeDb };
 }
 
 async function hasStorePermission(db, userId, storeId, permission) {
