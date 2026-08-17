@@ -27,12 +27,14 @@ for (const name of AMAZON_ADS_DEV_SECRET_NAMES) {
 const sanitized = sanitizeAmazonAdsDevProvisionEnv({
   ...secrets,
   CLOUDFLARE_API_TOKEN:'cloudflare-token',
+  CLOUDFLARE_ACCOUNT_ID:'19cd528b5c32e8da423da3cf66a9f05d',
   CI:'true',
 });
 for (const name of AMAZON_ADS_DEV_SECRET_NAMES) {
   assert.equal(Object.prototype.hasOwnProperty.call(sanitized, name), false);
 }
 assert.equal(sanitized.CLOUDFLARE_API_TOKEN, 'cloudflare-token');
+assert.equal(sanitized.CLOUDFLARE_ACCOUNT_ID, '19cd528b5c32e8da423da3cf66a9f05d');
 assert.equal(sanitized.CI, 'true');
 
 assert.deepEqual(parseAmazonAdsDevSecretList(JSON.stringify([
@@ -57,23 +59,45 @@ assert.equal(resolveCurrentGitCommit({
 }), sha);
 
 {
+  const events = [];
   const spawnCalls = [];
   const smokeCalls = [];
-  const releaseCalls = [];
+  const exactBuildCalls = [];
   const credentialSmokeCalls = [];
   const result = await runAmazonAdsDevSecretProvision({
     cwd:'/repo',
     env:{
       ...secrets,
       CLOUDFLARE_API_TOKEN:'cloudflare-token',
+      CLOUDFLARE_ACCOUNT_ID:'19cd528b5c32e8da423da3cf66a9f05d',
       SYNC_DEV_HEALTH_URL:'https://sync.example.workers.dev/health',
       SYNC_DEV_CREDENTIAL_SMOKE_URL:'https://sync.example.workers.dev/health/amazon-credentials',
     },
     commitSha:sha,
+    async exactBuild(options) {
+      exactBuildCalls.push(options);
+      const number = exactBuildCalls.length;
+      events.push(`exact-build-${number}`);
+      for (const name of AMAZON_ADS_DEV_SECRET_NAMES) {
+        assert.equal(Object.prototype.hasOwnProperty.call(options.env, name), false);
+      }
+      return {
+        ok:true,
+        commitSha:sha,
+        buildOutcome:'success',
+        buildUuid:number === 1
+          ? '11111111-1111-4111-8111-111111111111'
+          : '22222222-2222-4222-8222-222222222222',
+      };
+    },
     spawn(command, args, options) {
       spawnCalls.push({ command, args, options });
-      if (args.includes('bulk')) return { status:0 };
+      if (args.includes('bulk')) {
+        events.push('secret-bulk');
+        return { status:0 };
+      }
       if (args.includes('list')) {
+        events.push('secret-list');
         return {
           status:0,
           stdout:JSON.stringify(AMAZON_ADS_DEV_SECRET_NAMES.map((name) => ({ name, type:'secret_text' }))),
@@ -83,16 +107,17 @@ assert.equal(resolveCurrentGitCommit({
     },
     async smoke(options) {
       smokeCalls.push(options);
+      const number = smokeCalls.length;
+      events.push(`health-${number}`);
       return {
-        deploymentExact:smokeCalls.length === 2,
-        runtimeVersionId:'version-after-secrets',
+        deploymentExact:true,
+        amazonAdsEnabled:false,
+        runtimeVersionId:number === 1 ? 'version-pre-secrets' : 'version-after-secrets',
       };
-    },
-    release(options) {
-      releaseCalls.push(options);
     },
     async credentialSmoke(options) {
       credentialSmokeCalls.push(options);
+      events.push('credential-smoke');
       return {
         ok:true,
         lwaTokenRefresh:'pass',
@@ -100,6 +125,19 @@ assert.equal(resolveCurrentGitCommit({
       };
     },
   });
+
+  assert.deepEqual(events, [
+    'exact-build-1',
+    'health-1',
+    'secret-bulk',
+    'secret-list',
+    'exact-build-2',
+    'health-2',
+    'credential-smoke',
+  ]);
+  assert.equal(exactBuildCalls.length, 2);
+  assert.equal(exactBuildCalls[0].commitSha, sha);
+  assert.equal(exactBuildCalls[1].commitSha, sha);
 
   assert.equal(spawnCalls.length, 2);
   const bulk = spawnCalls[0];
@@ -121,13 +159,9 @@ assert.equal(resolveCurrentGitCommit({
 
   assert.equal(smokeCalls.length, 2);
   assert.equal(smokeCalls[0].expectedCommit, sha);
-  assert.equal(typeof smokeCalls[1].deploymentEquivalent, 'function');
-  assert.equal(await smokeCalls[1].deploymentEquivalent(), false);
-  assert.equal(releaseCalls.length, 1);
-  assert.equal(releaseCalls[0].commitSha, sha);
-  for (const name of AMAZON_ADS_DEV_SECRET_NAMES) {
-    assert.equal(Object.prototype.hasOwnProperty.call(releaseCalls[0].env, name), false);
-  }
+  assert.equal(smokeCalls[0].requireExact, true);
+  assert.equal(smokeCalls[1].expectedCommit, sha);
+  assert.equal(smokeCalls[1].requireExact, true);
 
   assert.equal(credentialSmokeCalls.length, 1);
   assert.equal(credentialSmokeCalls[0].refreshToken, secrets.AMAZON_ADS_REFRESH_TOKEN);
@@ -142,12 +176,15 @@ assert.equal(resolveCurrentGitCommit({
     commitSha:sha,
     secretNames:[...AMAZON_ADS_DEV_SECRET_NAMES].sort(),
     amazonAdsEnabled:false,
+    prebuildUuid:'11111111-1111-4111-8111-111111111111',
+    postbuildUuid:'22222222-2222-4222-8222-222222222222',
     runtimeVersionId:'version-after-secrets',
     lwaTokenRefresh:'pass',
   });
 }
 
 {
+  let exactBuildCalls = 0;
   let smokeCalls = 0;
   let spawnCalls = 0;
   let credentialSmokeCalls = 0;
@@ -155,16 +192,17 @@ assert.equal(resolveCurrentGitCommit({
     () => runAmazonAdsDevSecretProvision({
       env:secrets,
       commitSha:sha,
+      async exactBuild() {
+        exactBuildCalls += 1;
+        return { commitSha:sha, buildOutcome:'success', buildUuid:'11111111-1111-4111-8111-111111111111' };
+      },
       async smoke() {
         smokeCalls += 1;
-        return { deploymentExact:true };
+        return { deploymentExact:true, amazonAdsEnabled:false };
       },
       spawn() {
         spawnCalls += 1;
         return { status:17 };
-      },
-      release() {
-        throw new Error('release must not run');
       },
       async credentialSmoke() {
         credentialSmokeCalls += 1;
@@ -173,25 +211,29 @@ assert.equal(resolveCurrentGitCommit({
     }),
     /AMAZON_ADS_DEV_SECRET_BULK_FAILED:17/,
   );
+  assert.equal(exactBuildCalls, 1);
   assert.equal(smokeCalls, 1);
   assert.equal(spawnCalls, 1);
   assert.equal(credentialSmokeCalls, 0);
 }
 
 {
-  let releaseCalls = 0;
+  let exactBuildCalls = 0;
   let credentialSmokeCalls = 0;
   await assert.rejects(
     () => runAmazonAdsDevSecretProvision({
       env:secrets,
       commitSha:sha,
-      async smoke() { return { deploymentExact:true }; },
+      async exactBuild() {
+        exactBuildCalls += 1;
+        return { commitSha:sha, buildOutcome:'success', buildUuid:'11111111-1111-4111-8111-111111111111' };
+      },
+      async smoke() { return { deploymentExact:true, amazonAdsEnabled:false }; },
       spawn(command, args) {
         if (args.includes('bulk')) return { status:0 };
         if (args.includes('list')) return { status:0, stdout:'[]' };
         throw new Error(`unexpected command ${command}`);
       },
-      release() { releaseCalls += 1; },
       async credentialSmoke() {
         credentialSmokeCalls += 1;
         return { lwaTokenRefresh:'pass' };
@@ -200,16 +242,27 @@ assert.equal(resolveCurrentGitCommit({
     (error) => error instanceof AmazonAdsDevSecretProvisionError
       && error.code.startsWith('AMAZON_ADS_DEV_SECRET_LIST_MISSING:'),
   );
-  assert.equal(releaseCalls, 0);
+  assert.equal(exactBuildCalls, 1);
   assert.equal(credentialSmokeCalls, 0);
 }
 
 {
+  let exactBuildCalls = 0;
   await assert.rejects(
     () => runAmazonAdsDevSecretProvision({
       env:secrets,
       commitSha:sha,
-      async smoke() { return { deploymentExact:true, runtimeVersionId:'version-after-secrets' }; },
+      async exactBuild() {
+        exactBuildCalls += 1;
+        return {
+          commitSha:sha,
+          buildOutcome:'success',
+          buildUuid:exactBuildCalls === 1
+            ? '11111111-1111-4111-8111-111111111111'
+            : '22222222-2222-4222-8222-222222222222',
+        };
+      },
+      async smoke() { return { deploymentExact:true, amazonAdsEnabled:false, runtimeVersionId:'version-after-secrets' }; },
       spawn(command, args) {
         if (args.includes('bulk')) return { status:0 };
         if (args.includes('list')) {
@@ -220,11 +273,36 @@ assert.equal(resolveCurrentGitCommit({
         }
         throw new Error(`unexpected command ${command}`);
       },
-      release() {},
       async credentialSmoke() { return { lwaTokenRefresh:'fail' }; },
     }),
     /AMAZON_ADS_DEV_CREDENTIAL_SMOKE_NOT_PASS/,
   );
+  assert.equal(exactBuildCalls, 2);
+}
+
+{
+  let spawnCalls = 0;
+  await assert.rejects(
+    () => runAmazonAdsDevSecretProvision({
+      env:secrets,
+      commitSha:sha,
+      async exactBuild() {
+        return { commitSha:sha, buildOutcome:'failure', buildUuid:'11111111-1111-4111-8111-111111111111' };
+      },
+      spawn() {
+        spawnCalls += 1;
+        return { status:0 };
+      },
+      async smoke() {
+        throw new Error('health must not run after failed prebuild');
+      },
+      async credentialSmoke() {
+        throw new Error('credential smoke must not run after failed prebuild');
+      },
+    }),
+    /AMAZON_ADS_DEV_PREBUILD_NOT_SUCCESS/,
+  );
+  assert.equal(spawnCalls, 0);
 }
 
 console.log('Cloudflare Amazon Ads Dev secret provisioning tests: PASS');
