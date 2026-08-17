@@ -1,5 +1,5 @@
 export const SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION = 'search-term-intelligence-v1';
-export const SEARCH_TERM_MODEL_VERSION = 'search-term-preview-model-v1';
+export const SEARCH_TERM_MODEL_VERSION = 'search-term-preview-model-v2';
 export const SEARCH_TERM_RULE_VERSION = 'search-term-rules-v1';
 
 export const DEFAULT_SEARCH_TERM_RULES = Object.freeze({
@@ -335,10 +335,15 @@ function buildExplanation(decision, trend) {
 }
 
 function normalizeWindow(value = {}) {
-  return Object.freeze({
-    startDate: text(value.startDate),
-    endDate: text(value.endDate),
-  });
+  const startDate = text(value.startDate);
+  const endDate = text(value.endDate);
+  const validDates = /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+    && /^\d{4}-\d{2}-\d{2}$/.test(endDate)
+    && endDate >= startDate;
+  const days = validDates
+    ? Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1
+    : null;
+  return Object.freeze({ startDate, endDate, days });
 }
 
 function canonicalize(value) {
