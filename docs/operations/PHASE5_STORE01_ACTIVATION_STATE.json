@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "phase5-store01-live-read-activation-v1",
+  "schemaVersion": "phase5-store01-live-read-activation-v2",
   "phase": "5",
   "storeId": "store-dev-01",
   "storeCode": "DEV01",
@@ -11,6 +11,7 @@
   "amazonAdsEnabled": false,
   "syncTriggerEnabled": false,
   "singleRunOnly": true,
+  "singleRunPermit": null,
   "amazonMutationAuthorized": false,
   "productionMutationAuthorized": false,
   "productionAmazonAdsEnabled": false,
