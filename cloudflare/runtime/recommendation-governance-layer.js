@@ -1,13 +1,23 @@
 import { bestEffortGovernanceObservability } from './governance-observability.js';
+import { applyRecommendationQualityPolicy } from './recommendation-quality-policy.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
-const OPEN_GOVERNANCE_STATUSES = new Set(['proposed', 'approved', 'applying', 'applied']);
 const QUALITY_SUPPRESSION_CODES = new Set([
   'invalid_lineage',
   'stale_data',
   'insufficient_sample',
   'low_confidence',
   'trend_deterioration',
+]);
+const ENTITY_COLLISION_CODES = new Set(['existing_negative_collision', 'existing_keyword_collision']);
+const QUALITY_GOVERNANCE_CODES = new Set([
+  'profile_store_integrity_mismatch',
+  'semantic_recommendation_conflict',
+  'proposed_action_conflict',
+  'approved_not_executed',
+  'semantic_governance_conflict',
+  'recent_rejection_cooldown',
+  'repeated_suggestion_cooldown',
 ]);
 
 export async function enrichRecommendationGovernanceResponse({ request, response, env, actor, url, ctx }) {
@@ -26,57 +36,27 @@ export async function enrichRecommendationGovernanceResponse({ request, response
     const storeDb = await resolveStoreDb(env, storeId);
     if (!storeDb) return response;
 
-    const openActions = await storeDb.prepare(`
-      SELECT action_id, profile_id, entity_id, action_type, status, created_at,
+    const actionHistory = await storeDb.prepare(`
+      SELECT action_id, profile_id, entity_id, action_type, status, created_at, updated_at,
+             applied_at, external_request_id, proposed_json,
              json_extract(rationale_json, '$.governance.recommendationFingerprint') AS recommendation_fingerprint
       FROM optimization_actions
       WHERE profile_id=?1
-        AND status IN ('proposed','approved','applying','applied')
       ORDER BY created_at DESC
-      LIMIT 500
+      LIMIT 1000
     `).bind(payload.profile.profileId).all();
 
-    const byFingerprint = new Map();
-    const byEntityAction = new Map();
-    for (const row of openActions.results || []) {
-      if (!OPEN_GOVERNANCE_STATUSES.has(String(row.status || ''))) continue;
-      const record = publicGovernanceRecord(row);
-      if (record.recommendationFingerprint && !byFingerprint.has(record.recommendationFingerprint)) {
-        byFingerprint.set(record.recommendationFingerprint, record);
-      }
-      const entityKey = governanceEntityKey(row.entity_id, row.action_type);
-      if (entityKey && !byEntityAction.has(entityKey)) byEntityAction.set(entityKey, record);
-    }
-
-    let duplicateSuppressionCount = 0;
-    let alreadyGovernedSuppressionCount = 0;
-    const items = payload.items.map((item) => {
-      if (!item?.recommendation || !item.fingerprint) return item;
-      const exact = byFingerprint.get(item.fingerprint);
-      const entityKey = governanceEntityKey(item.recommendation.entityId, item.recommendation.actionType);
-      const governed = exact || (entityKey ? byEntityAction.get(entityKey) : null);
-      if (!governed) return item;
-
-      const code = exact ? 'duplicate_recommendation' : 'already_governed_action';
-      if (exact) duplicateSuppressionCount += 1;
-      else alreadyGovernedSuppressionCount += 1;
-      return {
-        ...item,
-        recommendation: null,
-        fingerprint: null,
-        suppression: {
-          code,
-          reason: exact
-            ? 'The same deterministic recommendation is already present in the governance queue.'
-            : 'An open governance action already exists for this entity and action type.',
-          governanceAction: governed,
-          governancePersistenceAllowed: false,
-        },
-      };
+    const policy = applyRecommendationQualityPolicy({
+      payload,
+      history: (actionHistory.results || []).map(historyRecord),
+      storeId,
     });
+    const items = policy.items;
+    const counts = policy.counts;
 
     const qualitySuppressedCount = items.filter((item) => QUALITY_SUPPRESSION_CODES.has(item?.suppression?.code)).length;
-    const collisionSuppressedCount = items.filter((item) => ['existing_negative_collision', 'existing_keyword_collision'].includes(item?.suppression?.code)).length;
+    const collisionSuppressedCount = items.filter((item) => ENTITY_COLLISION_CODES.has(item?.suppression?.code)).length;
+    const governanceQualitySuppressionCount = items.filter((item) => QUALITY_GOVERNANCE_CODES.has(item?.suppression?.code)).length;
     const suppressedCount = items.filter((item) => item?.suppression).length;
     const recommendationCandidateCount = items.filter((item) => item?.recommendation).length;
     const authoritativeRecommendationCount = items.filter((item) => item?.recommendation && item?.authority?.authoritative).length;
@@ -90,29 +70,40 @@ export async function enrichRecommendationGovernanceResponse({ request, response
       suppressedCount,
       qualitySuppressedCount,
       collisionSuppressedCount,
-      duplicateSuppressionCount,
-      alreadyGovernedSuppressionCount,
+      governanceQualitySuppressionCount,
+      duplicateSuppressionCount: counts.duplicateSuppressionCount,
+      alreadyGovernedSuppressionCount: counts.alreadyGovernedSuppressionCount,
+      proposedActionConflictCount: counts.proposedActionConflictCount,
+      approvedNotExecutedCount: counts.approvedNotExecutedCount,
+      semanticConflictCount: counts.semanticConflictCount,
+      recentRejectionCooldownCount: counts.recentRejectionCooldownCount,
+      repeatedSuggestionCooldownCount: counts.repeatedSuggestionCooldownCount,
+      profileStoreIntegrityMismatchCount: counts.profileStoreIntegrityMismatchCount,
       observationCount,
     };
     payload.governanceSuppressionContract = {
-      schemaVersion: 'recommendation-governance-suppression-v2',
+      schemaVersion: 'recommendation-governance-suppression-v3',
       exactFingerprintDuplicate: true,
       openEntityActionSuppression: true,
+      semanticConflictSuppression: true,
+      approvedNotExecutedSuppression: true,
+      analysisWindowCooldown: true,
+      profileStoreIntegrity: true,
       durableObservability: true,
       failureMode: 'fail_open_to_core_intelligence',
-      openStatuses: [...OPEN_GOVERNANCE_STATUSES],
+      qualityPolicy: policy.contract,
       amazonMutationAuthorized: false,
     };
 
     const writes = [];
-    if (duplicateSuppressionCount > 0) {
+    if (counts.duplicateSuppressionCount > 0) {
       writes.push(bestEffortGovernanceObservability({
         env,
         request,
         actorUserId: actor?.user_id || null,
         storeId,
         eventType: 'duplicate_suppression',
-        count: duplicateSuppressionCount,
+        count: counts.duplicateSuppressionCount,
         entityId: payload.profile.profileId,
         details: {
           profileId: payload.profile.profileId,
@@ -121,19 +112,44 @@ export async function enrichRecommendationGovernanceResponse({ request, response
         },
       }));
     }
-    if (alreadyGovernedSuppressionCount > 0) {
+    if (counts.alreadyGovernedSuppressionCount > 0) {
       writes.push(bestEffortGovernanceObservability({
         env,
         request,
         actorUserId: actor?.user_id || null,
         storeId,
         eventType: 'already_governed_suppression',
-        count: alreadyGovernedSuppressionCount,
+        count: counts.alreadyGovernedSuppressionCount,
         entityId: payload.profile.profileId,
         details: {
           profileId: payload.profile.profileId,
           suppressionCode: 'already_governed_action',
           requestPath: url.pathname,
+        },
+      }));
+    }
+    if (governanceQualitySuppressionCount > 0) {
+      writes.push(bestEffortGovernanceObservability({
+        env,
+        request,
+        actorUserId: actor?.user_id || null,
+        storeId,
+        eventType: 'recommendation_quality_suppression',
+        count: governanceQualitySuppressionCount,
+        entityId: payload.profile.profileId,
+        details: {
+          profileId: payload.profile.profileId,
+          requestPath: url.pathname,
+          counts: {
+            proposedActionConflictCount: counts.proposedActionConflictCount,
+            approvedNotExecutedCount: counts.approvedNotExecutedCount,
+            semanticConflictCount: counts.semanticConflictCount,
+            recentRejectionCooldownCount: counts.recentRejectionCooldownCount,
+            repeatedSuggestionCooldownCount: counts.repeatedSuggestionCooldownCount,
+            profileStoreIntegrityMismatchCount: counts.profileStoreIntegrityMismatchCount,
+          },
+          suppressionPrecedence: policy.contract.suppressionPrecedence,
+          cooldownBasis: policy.contract.cooldown.basis,
         },
       }));
     }
@@ -181,28 +197,27 @@ async function resolveStoreDb(env, storeId) {
   return env[store.d1_binding_key] || null;
 }
 
-function publicGovernanceRecord(row) {
+function historyRecord(row) {
   return {
     actionId: row.action_id,
-    status: row.status,
+    profileId: row.profile_id,
     entityId: row.entity_id,
     actionType: row.action_type,
-    recommendationFingerprint: row.recommendation_fingerprint || null,
+    status: row.status,
     createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    appliedAt: row.applied_at || null,
+    externalRequestId: row.external_request_id || null,
+    proposedJson: row.proposed_json || null,
+    recommendationFingerprint: row.recommendation_fingerprint || null,
   };
-}
-
-function governanceEntityKey(entityId, actionType) {
-  const entity = String(entityId || '').trim();
-  const action = String(actionType || '').trim();
-  return entity && action ? `${entity}\u0000${action}` : null;
 }
 
 function replaceJsonResponse(response, payload) {
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('cache-control', 'no-store');
-  headers.set('x-aoi-recommendation-governance-layer', 'v2');
+  headers.set('x-aoi-recommendation-governance-layer', 'v3');
   headers.delete('content-length');
   return new Response(JSON.stringify(payload), { status: response.status, headers });
 }
