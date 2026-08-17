@@ -44,19 +44,20 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
       SELECT oa.action_id, oa.profile_id, oa.entity_type, oa.entity_id, oa.action_type, oa.status,
              oa.created_by, oa.approved_by, oa.rationale_json, oa.created_at, oa.updated_at,
              (SELECT e.actor_id FROM optimization_action_events e
-              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.approved','action.rejected')
+              WHERE e.action_id=oa.action_id
+                AND e.event_type IN ('action.approved','approved','action.rejected','rejected')
               ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS reviewer_id,
              (SELECT json_extract(e.details_json,'$.reason') FROM optimization_action_events e
-              WHERE e.action_id=oa.action_id AND e.event_type='action.rejected'
+              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.rejected','rejected')
               ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS rejection_reason,
              (SELECT e.occurred_at FROM optimization_action_events e
-              WHERE e.action_id=oa.action_id AND e.event_type='action.proposed'
+              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.proposed','proposed')
               ORDER BY e.occurred_at ASC, e.event_id ASC LIMIT 1) AS proposed_at,
              (SELECT e.occurred_at FROM optimization_action_events e
-              WHERE e.action_id=oa.action_id AND e.event_type='action.approved'
+              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.approved','approved')
               ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS approved_at,
              (SELECT e.occurred_at FROM optimization_action_events e
-              WHERE e.action_id=oa.action_id AND e.event_type='action.rejected'
+              WHERE e.action_id=oa.action_id AND e.event_type IN ('action.rejected','rejected')
               ORDER BY e.occurred_at DESC, e.event_id DESC LIMIT 1) AS rejected_at
       FROM optimization_actions oa
       ORDER BY oa.created_at DESC
@@ -132,6 +133,11 @@ export async function handleGovernanceHealthApiRoute({ request, env, actor, url 
     coverage: {
       durableActionLifecycle: true,
       durableApprovalRejectionAudit: true,
+      actionEventVocabulary: {
+        canonical: 'action.<transition>',
+        legacyUnprefixedReadCompatibility: true,
+        acceptedTransitions: ['proposed', 'approved', 'rejected'],
+      },
       duplicateSuppressionCount: {
         durable: true,
         source: 'control audit_log / optimization_action.observability.duplicate_suppression',
