@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { handleSyncApiRoute } from '../cloudflare/runtime/sync-api.js';
 
+const PERMIT_ID = 'phase5.store01.search-term.2026-08-15.seller.v1';
+const REPORT_DATE = '2026-08-15';
+
 function statement(firstValue, counters, kind) {
   return {
     bind() { return this; },
@@ -39,14 +42,13 @@ function controlDb(counters) {
   };
 }
 
-async function rejectWithoutDurableSideEffects(datasets, expectedError) {
+function harness() {
   const counters = {
     controlReads:0,
     controlWrites:0,
     storeDbCalls:0,
     workflowCalls:0,
   };
-
   const storeDb = {
     prepare(sql) {
       counters.storeDbCalls += 1;
@@ -63,55 +65,94 @@ async function rejectWithoutDurableSideEffects(datasets, expectedError) {
       throw new Error('workflow_must_not_be_touched');
     },
   };
+  return { counters, storeDb, workflow };
+}
 
+async function rejectWithoutDurableSideEffects({
+  datasets = ['search_term_daily'],
+  startDate = REPORT_DATE,
+  endDate = startDate,
+  idempotencyKey = PERMIT_ID,
+  envOverrides = {},
+  expectedError,
+  expectedStatus,
+  expectedControlReads = 2,
+}) {
+  const { counters, storeDb, workflow } = harness();
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/sync', {
     method:'POST',
     headers:{
       'content-type':'application/json',
-      'idempotency-key':'phase5-entry-guard-001',
+      'idempotency-key':idempotencyKey,
     },
-    body:JSON.stringify({
-      startDate:'2026-08-15',
-      endDate:'2026-08-15',
-      datasets,
-    }),
+    body:JSON.stringify({ startDate, endDate, datasets }),
   });
 
   const response = await handleSyncApiRoute({
     request,
     actor:{ user_id:'user-dev-owner' },
     env:{
+      APP_ENV:'development',
       CONTROL_DB:controlDb(counters),
       STORE_01_DB:storeDb,
       AMAZON_SYNC_WORKFLOW:workflow,
       SYNC_TRIGGER_ENABLED:'true',
+      PHASE5_SINGLE_RUN_PERMIT_ID:PERMIT_ID,
+      PHASE5_SINGLE_RUN_REPORT_DATE:REPORT_DATE,
+      ...envOverrides,
     },
   });
   const body = await response.json();
 
-  assert.equal(response.status, 400);
+  assert.equal(response.status, expectedStatus);
   assert.equal(body.error, expectedError);
-  assert.equal(counters.controlReads, 2, 'permission and store route may be read before capability rejection');
-  assert.equal(counters.controlWrites, 0, 'capability rejection must not create audit or other Control D1 writes');
-  assert.equal(counters.storeDbCalls, 0, 'capability rejection must precede sync_runs registration');
-  assert.equal(counters.workflowCalls, 0, 'capability rejection must precede Workflow creation/status calls');
+  assert.equal(counters.controlReads, expectedControlReads);
+  assert.equal(counters.controlWrites, 0, 'rejection must not create audit or other Control D1 writes');
+  assert.equal(counters.storeDbCalls, 0, 'rejection must precede sync_runs registration');
+  assert.equal(counters.workflowCalls, 0, 'rejection must precede Workflow creation/status calls');
 }
 
-await rejectWithoutDurableSideEffects(
-  ['campaign_daily'],
-  'PRODUCER_DATASET_NOT_IMPLEMENTED:campaign_daily',
-);
-await rejectWithoutDurableSideEffects(
-  ['search_term_daily', 'placement_daily'],
-  'PRODUCER_DATASET_NOT_IMPLEMENTED:placement_daily',
-);
+await rejectWithoutDurableSideEffects({
+  datasets:['campaign_daily'],
+  expectedError:'PRODUCER_DATASET_NOT_IMPLEMENTED:campaign_daily',
+  expectedStatus:400,
+});
+await rejectWithoutDurableSideEffects({
+  datasets:['search_term_daily', 'placement_daily'],
+  expectedError:'PRODUCER_DATASET_NOT_IMPLEMENTED:placement_daily',
+  expectedStatus:400,
+});
+await rejectWithoutDurableSideEffects({
+  envOverrides:{
+    PHASE5_SINGLE_RUN_PERMIT_ID:'',
+    PHASE5_SINGLE_RUN_REPORT_DATE:'',
+  },
+  expectedError:'phase5_single_run_permit_missing',
+  expectedStatus:503,
+  expectedControlReads:1,
+});
+await rejectWithoutDurableSideEffects({
+  idempotencyKey:'phase5.store01.search-term.2026-08-15.vendor.v1',
+  expectedError:'phase5_single_run_permit_mismatch',
+  expectedStatus:409,
+});
+await rejectWithoutDurableSideEffects({
+  startDate:'2026-08-14',
+  endDate:'2026-08-14',
+  expectedError:'phase5_single_run_intent_mismatch',
+  expectedStatus:409,
+});
 
 console.log(JSON.stringify({
   ok:true,
   phase:'5',
-  contract:'sync-api-producer-capability-entry-guard-v1',
+  contract:'sync-api-producer-capability-entry-guard-v2',
   implementedEntryDataset:'search_term_daily',
   unsupportedDatasetStatus:400,
+  exactSingleRunPermit:true,
+  missingPermitStatus:503,
+  permitMismatchStatus:409,
+  intentMismatchStatus:409,
   storeD1WritesBeforeRejection:0,
   workflowCallsBeforeRejection:0,
 }, null, 2));

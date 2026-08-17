@@ -22,6 +22,7 @@ export const PHASE5_ACTIVATION_STATES = Object.freeze({
 
 export const PHASE5_IMPLEMENTED_DATASETS = Object.freeze(['search_term_daily']);
 export const PHASE5_DEV_D1_BINDINGS = Object.freeze(['CONTROL_DB', 'STORE_01_DB']);
+const SINGLE_RUN_PERMIT_PATTERN = /^phase5\.store01\.search-term\.(\d{4}-\d{2}-\d{2})\.(seller|vendor)\.v1$/;
 
 export class Phase5ActivationContractError extends Error {
   constructor(code) {
@@ -36,7 +37,7 @@ export function validatePhase5LiveReadActivation({ state, nativeConfig, syncConf
   const native = requiredObject(nativeConfig, 'PHASE5_NATIVE_CONFIG_INVALID');
   const sync = requiredObject(syncConfig, 'PHASE5_SYNC_CONFIG_INVALID');
 
-  if (activation.schemaVersion !== 'phase5-store01-live-read-activation-v1') {
+  if (activation.schemaVersion !== 'phase5-store01-live-read-activation-v2') {
     fail('PHASE5_ACTIVATION_SCHEMA_INVALID');
   }
   if (String(activation.phase) !== '5') fail('PHASE5_ACTIVATION_PHASE_INVALID');
@@ -90,6 +91,11 @@ export function validatePhase5LiveReadActivation({ state, nativeConfig, syncConf
     'PHASE5_NATIVE_DEV_SYNC_FLAG_MISMATCH',
   );
 
+  const singleRunPermit = validateSingleRunPermit({
+    activation,
+    nativeDevVars:nativeDev.vars || {},
+  });
+
   assertExactBindings(nativeDev.d1_databases, PHASE5_DEV_D1_BINDINGS, 'PHASE5_NATIVE_DEV_D1_SCOPE_INVALID');
   assertExactBindings(syncDev.d1_databases, PHASE5_DEV_D1_BINDINGS, 'PHASE5_SYNC_DEV_D1_SCOPE_INVALID');
   assertDevR2(nativeDev.r2_buckets, 'PHASE5_NATIVE_DEV_R2_SCOPE_INVALID');
@@ -110,6 +116,12 @@ export function validatePhase5LiveReadActivation({ state, nativeConfig, syncConf
     false,
     'PHASE5_PRODUCTION_AMAZON_ADS_MUST_REMAIN_FALSE',
   );
+  if (String(nativeProd.vars?.PHASE5_SINGLE_RUN_PERMIT_ID || '') !== '') {
+    fail('PHASE5_PRODUCTION_SINGLE_RUN_PERMIT_FORBIDDEN');
+  }
+  if (String(nativeProd.vars?.PHASE5_SINGLE_RUN_REPORT_DATE || '') !== '') {
+    fail('PHASE5_PRODUCTION_SINGLE_RUN_REPORT_DATE_FORBIDDEN');
+  }
 
   return Object.freeze({
     ok:true,
@@ -122,9 +134,38 @@ export function validatePhase5LiveReadActivation({ state, nativeConfig, syncConf
     amazonAdsEnabled:activation.amazonAdsEnabled,
     syncTriggerEnabled:activation.syncTriggerEnabled,
     singleRunOnly:true,
+    singleRunPermit,
     productionMutationAuthorized:false,
     amazonMutationAuthorized:false,
     devD1Bindings:Object.freeze([...PHASE5_DEV_D1_BINDINGS]),
+  });
+}
+
+function validateSingleRunPermit({ activation, nativeDevVars }) {
+  const runtimePermitId = String(nativeDevVars.PHASE5_SINGLE_RUN_PERMIT_ID || '').trim();
+  const runtimeReportDate = String(nativeDevVars.PHASE5_SINGLE_RUN_REPORT_DATE || '').trim();
+
+  if (activation.state !== 'single_run_open') {
+    if (activation.singleRunPermit !== null) fail('PHASE5_SINGLE_RUN_PERMIT_MUST_BE_NULL');
+    if (runtimePermitId) fail('PHASE5_SINGLE_RUN_RUNTIME_PERMIT_MUST_BE_EMPTY');
+    if (runtimeReportDate) fail('PHASE5_SINGLE_RUN_RUNTIME_REPORT_DATE_MUST_BE_EMPTY');
+    return null;
+  }
+
+  const permit = requiredObject(activation.singleRunPermit, 'PHASE5_SINGLE_RUN_PERMIT_REQUIRED');
+  const permitId = String(permit.permitId || '').trim();
+  const reportDate = String(permit.reportDate || '').trim();
+  const match = permitId.match(SINGLE_RUN_PERMIT_PATTERN);
+  if (!match) fail('PHASE5_SINGLE_RUN_PERMIT_ID_INVALID');
+  if (!validIsoDate(reportDate)) fail('PHASE5_SINGLE_RUN_REPORT_DATE_INVALID');
+  if (match[1] !== reportDate) fail('PHASE5_SINGLE_RUN_PERMIT_DATE_MISMATCH');
+  if (runtimePermitId !== permitId) fail('PHASE5_SINGLE_RUN_RUNTIME_PERMIT_MISMATCH');
+  if (runtimeReportDate !== reportDate) fail('PHASE5_SINGLE_RUN_RUNTIME_REPORT_DATE_MISMATCH');
+
+  return Object.freeze({
+    permitId,
+    reportDate,
+    accountType:match[2],
   });
 }
 
@@ -169,6 +210,12 @@ function assertBooleanText(actual, expected, code) {
 function assertExactStringArray(actual, expected, code) {
   if (!Array.isArray(actual) || actual.some((value) => typeof value !== 'string')) fail(code);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(code);
+}
+
+function validIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 function requiredObject(value, code) {
