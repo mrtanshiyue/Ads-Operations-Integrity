@@ -3,6 +3,25 @@ import { canonicalJson } from './decision-intelligence.js';
 
 export const NEGATIVE_KEYWORD_DORMANT_ADAPTER_VERSION = 'amazon-negative-keyword-dormant-adapter-v1';
 
+export const AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT = Object.freeze({
+  schemaVersion: 'amazon-unified-request-id-observability-v1',
+  source: Object.freeze({
+    repository: 'amzn/ads-advanced-tools-docs',
+    collectionPath: 'postman/Amazon_Ads_Unified_API.postman_collection.json',
+    operation: 'POST /adsApi/v1/create/targets',
+    verifiedOn: '2026-08-17',
+  }),
+  authoritativeExtractionAvailable: false,
+  authoritativeHeaderName: null,
+  authoritativeBodyField: null,
+  extractionPolicy: 'explicit_transport_evidence_only',
+  receiptFieldRequired: false,
+  receiptFieldNullable: true,
+  legacyHeaderInferenceAllowed: false,
+  safetyGate: false,
+  reason: 'official_unified_create_targets_contract_does_not_define_request_id_extraction',
+});
+
 export async function buildDormantNegativeKeywordMutationEnvelope(plan) {
   const request = buildAmazonMutationRequest(plan);
   if (!request.ready) {
