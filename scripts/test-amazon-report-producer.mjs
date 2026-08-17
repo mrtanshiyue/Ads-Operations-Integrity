@@ -4,6 +4,7 @@ import {
   reserveReportJob,
   createAmazonReportOnce,
 } from '../cloudflare/runtime/amazon-report-producer.js';
+import { resolveReportContract } from '../cloudflare/runtime/amazon-report-contract.js';
 
 function expectCodeAsync(fn, code) {
   return fn().then(
@@ -11,6 +12,15 @@ function expectCodeAsync(fn, code) {
     (error) => assert.equal(error.code, code),
   );
 }
+
+const sellerContract = resolveReportContract('search_term_daily', 'seller');
+const vendorContract = resolveReportContract('search_term_daily', 'vendor');
+assert.equal(sellerContract.reportTypeId, 'spSearchTerm');
+assert.equal(sellerContract.timeUnit, 'DAILY');
+assert.equal(sellerContract.retentionDays, 65);
+assert.equal(sellerContract.attribution.windowDays, 7);
+assert.equal(vendorContract.retentionDays, 65);
+assert.equal(vendorContract.attribution.windowDays, 14);
 
 const intent = {
   storeId: 'store-dev-01',
@@ -204,6 +214,11 @@ const queued = {
 
 console.log(JSON.stringify({
   ok: true,
+  searchTermReportType: 'spSearchTerm',
+  searchTermTimeUnit: 'DAILY',
+  searchTermLookbackDays: 65,
+  sellerAttributionDays: 7,
+  vendorAttributionDays: 14,
   deterministicPlanning: true,
   reservationReplay: true,
   createReportExactlyOnce: true,
