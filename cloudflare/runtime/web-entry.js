@@ -46,7 +46,7 @@ const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|key
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
-const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:apply|revert))?)?$/;
+const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert))?)?$/;
 
 export default {
   async fetch(request, env, ctx) {
