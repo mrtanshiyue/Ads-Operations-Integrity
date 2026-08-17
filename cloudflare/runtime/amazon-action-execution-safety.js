@@ -1,21 +1,53 @@
 import { deterministicFingerprint } from './decision-intelligence.js';
 
 export const AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION = 'amazon-action-execution-safety-v1';
+export const AMAZON_UNIFIED_TARGET_CONTRACT_VERSION = 'amazon-ads-unified-target-v1-2026-08-17';
+
+export const AMAZON_UNIFIED_TARGET_CONTRACT_SOURCE = Object.freeze({
+  repository: 'amzn/ads-advanced-tools-docs',
+  collectionPath: 'postman/Amazon_Ads_Unified_API.postman_collection.json',
+  apiFamily: 'Amazon Ads Unified API',
+  apiVersion: 'adsApi/v1',
+  verifiedOn: '2026-08-17',
+});
+
+const UNIFIED_CREATE_TARGET_HEADERS = Object.freeze([
+  'Authorization',
+  'Amazon-Ads-AccountId',
+  'Amazon-Ads-ClientId',
+  'Amazon-Advertising-API-Scope',
+  'Content-Type',
+  'Accept',
+]);
 
 export const LOGICAL_MUTATION_ALLOWLIST = Object.freeze({
   'negative_keyword.create': Object.freeze({
     capability: 'sponsored_products.negative_keyword.create',
-    endpointPath: null,
+    apiContract: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+    method: 'POST',
+    endpointPath: '/adsApi/v1/create/targets',
     endpointMappingVerified: false,
+    verifiedContractVersion: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+    responseContract: 'http_207_multistatus_error_partialSuccess_success',
     allowedMatchTypes: Object.freeze(['EXACT', 'PHRASE']),
     requiredScope: 'ad_group',
+    adProduct: 'SPONSORED_PRODUCTS',
+    targetType: 'KEYWORD',
+    negative: true,
   }),
   'keyword.create': Object.freeze({
     capability: 'sponsored_products.keyword.create',
-    endpointPath: null,
+    apiContract: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+    method: 'POST',
+    endpointPath: '/adsApi/v1/create/targets',
     endpointMappingVerified: false,
+    verifiedContractVersion: null,
+    blockingReason: 'positive_keyword_bid_mapping_unverified',
     allowedMatchTypes: Object.freeze(['BROAD', 'PHRASE', 'EXACT']),
     requiredScope: 'ad_group',
+    adProduct: 'SPONSORED_PRODUCTS',
+    targetType: 'KEYWORD',
+    negative: false,
   }),
 });
 
@@ -60,7 +92,13 @@ export async function buildExecutionPlan({ storeId, action } = {}) {
     : null;
 
   const valid = errors.length === 0;
-  const endpointMappingVerified = Boolean(mapping?.endpointMappingVerified && mapping?.endpointPath);
+  const frozenMutationContract = text(normalized.proposed?.amazonMutationContract);
+  const endpointMappingVerified = Boolean(
+    mapping?.verifiedContractVersion
+    && mapping?.endpointPath
+    && mapping?.method
+    && frozenMutationContract === mapping.verifiedContractVersion
+  );
   return freeze({
     schemaVersion: AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION,
     transition: 'apply',
@@ -77,8 +115,15 @@ export async function buildExecutionPlan({ storeId, action } = {}) {
     },
     mutation: mapping ? {
       capability: mapping.capability,
+      apiContract: mapping.apiContract || null,
+      frozenContract: frozenMutationContract || null,
+      method: mapping.method || null,
       endpointPath: mapping.endpointPath,
       endpointMappingVerified,
+      blockingReason: endpointMappingVerified
+        ? null
+        : (mapping.blockingReason || (frozenMutationContract ? 'amazon_mutation_contract_mismatch' : 'amazon_mutation_contract_not_frozen')),
+      responseContract: mapping.responseContract || null,
       target,
     } : null,
     requestFingerprint: normalized.requestFingerprint || null,
@@ -90,6 +135,55 @@ export async function buildExecutionPlan({ storeId, action } = {}) {
     retryPolicy: 'no_blind_retry_after_dispatch',
     finalizationPolicy: 'amazon_readback_confirmation_required',
     compensatingActionPolicy: COMPENSATING_ACTION_POLICY,
+  });
+}
+
+export function buildAmazonMutationRequest(plan) {
+  const errors = [];
+  if (!plan?.valid) errors.push('valid_execution_plan_required');
+  if (!plan?.mutation?.endpointMappingVerified) errors.push(plan?.mutation?.blockingReason || 'amazon_endpoint_mapping_unverified');
+  if (plan?.action?.actionType !== 'negative_keyword.create') errors.push('mutation_request_builder_not_verified_for_action_type');
+  if (!plan?.mutation?.target) errors.push('execution_target_required');
+
+  const target = plan?.mutation?.target || {};
+  if (target.scope !== 'ad_group' || !text(target.adGroupId)) errors.push('destination_scope_not_frozen');
+  if (!text(target.keywordText)) errors.push('keyword_text_required');
+  if (!['EXACT', 'PHRASE'].includes(text(target.matchType).toUpperCase())) errors.push('invalid_execution_match_type');
+
+  if (errors.length) {
+    return freeze({ ready: false, errors: unique(errors), networkDispatchAuthorized: false });
+  }
+
+  return freeze({
+    ready: true,
+    errors: [],
+    contractVersion: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+    source: AMAZON_UNIFIED_TARGET_CONTRACT_SOURCE,
+    method: 'POST',
+    endpointPath: '/adsApi/v1/create/targets',
+    requiredHeaderNames: UNIFIED_CREATE_TARGET_HEADERS,
+    contentType: 'application/json',
+    body: {
+      targets: [{
+        adGroupId: target.adGroupId,
+        adProduct: 'SPONSORED_PRODUCTS',
+        negative: true,
+        state: 'ENABLED',
+        targetDetails: {
+          keywordTarget: {
+            keyword: target.keywordText,
+            matchType: text(target.matchType).toUpperCase(),
+          },
+        },
+        targetType: 'KEYWORD',
+      }],
+    },
+    expectedResponse: {
+      httpStatus: 207,
+      shape: 'error_partialSuccess_success_arrays',
+      singleEntityIndex: 0,
+    },
+    networkDispatchAuthorized: false,
   });
 }
 
@@ -112,18 +206,23 @@ export function validatePermitBinding({ permit, plan, now = new Date() } = {}) {
   if (!Number.isFinite(expiry)) errors.push('permit_expiry_required');
   else if (!Number.isFinite(current) || current >= expiry) errors.push('permit_expired');
 
-  if (!plan?.mutation?.endpointMappingVerified) errors.push('amazon_endpoint_mapping_unverified');
+  if (!plan?.mutation?.endpointMappingVerified) {
+    errors.push('amazon_endpoint_mapping_unverified');
+    if (plan?.mutation?.blockingReason && plan.mutation.blockingReason !== 'amazon_endpoint_mapping_unverified') {
+      errors.push(plan.mutation.blockingReason);
+    }
+  }
   if (plan?.networkDispatchAuthorized !== false) errors.push('invalid_execution_authority_contract');
 
   return freeze({
     valid: errors.length === 0,
-    errors,
+    errors: unique(errors),
     singleUse: true,
     networkDispatchAuthorized: false,
   });
 }
 
-export function classifyMutationTransportOutcome({ dispatched, httpStatus = null, amazonRequestId = null, networkError = null } = {}) {
+export function classifyMutationTransportOutcome({ dispatched, httpStatus = null, amazonRequestId = null, networkError = null, responseBody = null } = {}) {
   if (!dispatched) {
     return freeze({
       transportOutcome: 'unknown',
@@ -134,6 +233,7 @@ export function classifyMutationTransportOutcome({ dispatched, httpStatus = null
   }
 
   const status = Number(httpStatus);
+  if (status === 207) return classifyUnifiedTargetMultiStatus({ responseBody, amazonRequestId });
   if (Number.isInteger(status) && status >= 200 && status < 300) {
     return freeze({
       transportOutcome: 'accepted',
@@ -180,6 +280,65 @@ export function canMarkActionApplied({ receipt, verification, plan } = {}) {
     fingerprintsMatch,
     networkDispatchAuthorized: false,
   });
+}
+
+function classifyUnifiedTargetMultiStatus({ responseBody, amazonRequestId }) {
+  const payload = parseJson(responseBody);
+  if (!payload || !Array.isArray(payload.error) || !Array.isArray(payload.partialSuccess) || !Array.isArray(payload.success)) {
+    return freeze({
+      transportOutcome: 'unknown',
+      retryDisposition: 'readback_required',
+      readbackRequired: true,
+      reason: 'unified_target_207_unparseable',
+      amazonRequestId: text(amazonRequestId) || null,
+    });
+  }
+
+  const error = indexedResult(payload.error, 0);
+  const partial = indexedResult(payload.partialSuccess, 0);
+  const success = indexedResult(payload.success, 0);
+  if (error) {
+    return freeze({
+      transportOutcome: 'rejected',
+      retryDisposition: 'not_retryable',
+      readbackRequired: false,
+      reason: 'unified_target_207_entity_error',
+      amazonRequestId: text(amazonRequestId) || null,
+      entityIndex: 0,
+    });
+  }
+  if (partial) {
+    return freeze({
+      transportOutcome: 'unknown',
+      retryDisposition: 'readback_required',
+      readbackRequired: true,
+      reason: 'unified_target_207_partial_success',
+      amazonRequestId: text(amazonRequestId) || null,
+      entityIndex: 0,
+    });
+  }
+  if (success) {
+    return freeze({
+      transportOutcome: 'accepted',
+      retryDisposition: 'readback_required',
+      readbackRequired: true,
+      reason: 'unified_target_207_entity_success_readback_required',
+      amazonRequestId: text(amazonRequestId) || null,
+      entityIndex: 0,
+    });
+  }
+  return freeze({
+    transportOutcome: 'unknown',
+    retryDisposition: 'readback_required',
+    readbackRequired: true,
+    reason: 'unified_target_207_missing_entity_result',
+    amazonRequestId: text(amazonRequestId) || null,
+    entityIndex: 0,
+  });
+}
+
+function indexedResult(items, index) {
+  return items.find((item) => Number(item?.index) === index) || null;
 }
 
 function normalizeAction(action) {
@@ -236,6 +395,7 @@ function parseJson(value) {
   if (typeof value === 'object') return value;
   try { return JSON.parse(String(value)); } catch { return null; }
 }
+function unique(values) { return [...new Set(values)]; }
 function hex64(value) { return /^[a-f0-9]{64}$/i.test(text(value)); }
 function text(value) { return String(value ?? '').trim(); }
 function freeze(value) {

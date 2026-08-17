@@ -1,5 +1,8 @@
 import { handleOptimizationActionsApiRoute as handleOptimizationActionsApiCoreRoute } from './optimization-actions-api-core.js';
-import { buildExecutionPlan } from './amazon-action-execution-safety.js';
+import {
+  AMAZON_UNIFIED_TARGET_CONTRACT_VERSION,
+  buildExecutionPlan,
+} from './amazon-action-execution-safety.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const EXECUTION_SCOPED_ACTION_TYPES = new Set(['negative_keyword.create', 'keyword.create']);
@@ -146,6 +149,10 @@ async function freezeProposalExecutionTarget({ request, env, actor, url }) {
       scope: 'ad_group',
       campaignId,
       adGroupId,
+      executionDestinationContract: 'search-term-ad-group-v1',
+      ...(body.actionType === 'negative_keyword.create'
+        ? { amazonMutationContract: AMAZON_UNIFIED_TARGET_CONTRACT_VERSION }
+        : {}),
     },
   };
   delete canonicalBody.fingerprint;
@@ -163,6 +170,7 @@ function suppliedDestinationMismatch(proposed, campaignId, adGroupId) {
   if (proposed.scope !== undefined && text(proposed.scope).toLowerCase() !== 'ad_group') return 'scope';
   if (proposed.campaignId !== undefined && text(proposed.campaignId) !== campaignId) return 'campaignId';
   if (proposed.adGroupId !== undefined && text(proposed.adGroupId) !== adGroupId) return 'adGroupId';
+  if (proposed.amazonMutationContract !== undefined && text(proposed.amazonMutationContract) !== AMAZON_UNIFIED_TARGET_CONTRACT_VERSION) return 'amazonMutationContract';
   return null;
 }
 
