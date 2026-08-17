@@ -27,14 +27,26 @@ for (const token of [
   'Aging >72h',
   'High risk',
   'Failed status',
+  'Durable Governance Signals · 7d',
+  'Duplicate suppressed',
+  'Already governed',
+  'Fingerprint conflicts',
+  'Governance errors',
+  'Recent Governance',
+  'Reviewer',
+  'Evidence',
+  'Risk',
+  'Freshness',
+  'Source',
   '/governance-health',
-  'Request-time only',
+  'durable audit-backed metrics',
   'Amazon execution disabled',
   'cloudflare-operator-store-change',
 ]) {
   assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
 
+assert.doesNotMatch(source, /Request-time only/);
 assert.match(source, /credentials:\s*'same-origin'/);
 assert.match(source, /method\s*===?\s*['"]GET['"]|requestJson/);
 assert.doesNotMatch(source, /method:\s*['"]POST['"]/);
@@ -53,8 +65,10 @@ assert.ok(distIndex.indexOf(decisionTag) < distIndex.indexOf(tag));
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'phase9-productization-ui-v1',
-  surface: 'Action Inbox governance health',
+  contract: 'phase9-productization-ui-v2',
+  surface: 'Action Inbox governance health and operator context',
+  durableGovernanceSignals: true,
+  reviewerAndEvidenceContext: true,
   requestMode: 'read-only',
   execution: 'disabled',
 }, null, 2));

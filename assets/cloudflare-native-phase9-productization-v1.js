@@ -1,7 +1,7 @@
 (function initPhase9Productization(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const HEALTH_SELECTOR = '[data-phase9-governance-health]';
   let mounted = false;
   let loadSequence = 0;
@@ -110,7 +110,9 @@
     const metrics = payload?.metrics || {};
     const aging = metrics.actionAging || {};
     const freshness = metrics.freshness || {};
+    const observability = metrics.observability7d || {};
     const coverage = payload?.coverage || {};
+    const recentActions = Array.isArray(payload?.recentActions) ? payload.recentActions : [];
     surface.innerHTML = `
       <div class="cfp9-health-head">
         <div><strong>Governance Queue Health</strong><span>治理队列健康 · read-only / non-executable</span></div>
@@ -126,10 +128,61 @@
         ${healthCard('High risk', metrics.highRiskCount, '高风险动作', Number(metrics.highRiskCount || 0) > 0 ? 'warn' : '')}
         ${healthCard('Failed status', metrics.failedStatusCount, '失败状态', Number(metrics.failedStatusCount || 0) > 0 ? 'danger' : '')}
       </div>
+      <div class="cfp9-observability">
+        <div class="cfp9-section-title"><strong>Durable Governance Signals · 7d</strong><span>持久化治理信号</span></div>
+        <div class="cfp9-observability-grid">
+          ${healthCard('Duplicate suppressed', observability.duplicateSuppressions, '重复建议拦截')}
+          ${healthCard('Already governed', observability.alreadyGovernedSuppressions, '已有治理动作')}
+          ${healthCard('Fingerprint conflicts', observability.fingerprintConflicts, '指纹冲突', Number(observability.fingerprintConflicts || 0) > 0 ? 'warn' : '')}
+          ${healthCard('Governance errors', observability.governanceErrors, '治理错误', Number(observability.governanceErrors || 0) > 0 ? 'danger' : '')}
+        </div>
+      </div>
+      ${recentActionsMarkup(recentActions)}
       <div class="cfp9-health-foot">
         <span>Fresh ${number(freshness.fresh)} · Aging ${number(freshness.aging)} · Stale ${number(freshness.stale)} · Unknown ${number(freshness.unknown)}</span>
         <span>${coverageNote(coverage)}</span>
       </div>`;
+  }
+
+  function recentActionsMarkup(actions) {
+    if (!actions.length) return '<div class="cfp9-recent"><div class="cfp9-section-title"><strong>Recent Governance</strong><span>暂无最近治理动作</span></div></div>';
+    return `
+      <div class="cfp9-recent">
+        <div class="cfp9-section-title"><strong>Recent Governance</strong><span>最近治理动作 · operator context</span></div>
+        <div class="cfp9-recent-list">
+          ${actions.map(actionRow).join('')}
+        </div>
+      </div>`;
+  }
+
+  function actionRow(action) {
+    const evidence = action?.evidenceCompleteness || {};
+    const source = action?.lineage?.sourceReportIdentity || {};
+    const sourceId = first(source.amazonReportIds) || first(source.sourceReportJobIds) || '—';
+    const rejection = action?.rejectionReason ? `<span class="cfp9-rejection">Rejected: ${escapeHtml(action.rejectionReason)}</span>` : '';
+    const risk = Number(action?.riskScore || 0);
+    const riskClass = risk >= 75 ? 'danger' : risk >= 50 ? 'warn' : '';
+    return `
+      <article class="cfp9-action-row">
+        <div class="cfp9-action-main">
+          <div class="cfp9-action-title"><strong>${escapeHtml(action?.actionType || 'Unknown action')}</strong><span class="cfp9-status ${escapeHtml(action?.status || '')}">${escapeHtml(action?.status || 'unknown')}</span></div>
+          <div class="cfp9-action-meta">
+            <span>Entity ${escapeHtml(action?.entityId || '—')}</span>
+            <span>Reviewer ${escapeHtml(action?.reviewer || '—')}</span>
+            <span>Queue ${queueAge(action?.queueAgeHours)}</span>
+            <span>Freshness ${escapeHtml(action?.freshness || 'unknown')}</span>
+          </div>
+          <div class="cfp9-action-rationale">${escapeHtml(summarizeRationale(action?.rationale))}</div>
+          ${rejection}
+        </div>
+        <div class="cfp9-action-side">
+          <span class="cfp9-signal ${riskClass}">Risk <strong>${escapeHtml(risk)}</strong></span>
+          <span class="cfp9-signal ${evidence.complete ? 'good' : 'warn'}">Evidence <strong>${escapeHtml(`${number(evidence.checksPassed)}/${number(evidence.checksTotal)}`)}</strong></span>
+          <span class="cfp9-source" title="${escapeHtml(sourceId)}">Source ${escapeHtml(compact(sourceId, 34))}</span>
+          <span>Proposed ${formatTime(action?.lifecycle?.proposedAt)}</span>
+          <span>${action?.lifecycle?.approvedAt ? `Approved ${formatTime(action.lifecycle.approvedAt)}` : action?.lifecycle?.rejectedAt ? `Rejected ${formatTime(action.lifecycle.rejectedAt)}` : `Updated ${formatTime(action?.lifecycle?.updatedAt)}`}</span>
+        </div>
+      </article>`;
   }
 
   function healthCard(label, value, zh, severity) {
@@ -137,13 +190,15 @@
   }
 
   function coverageNote(coverage) {
-    const nonDurable = [];
-    if (coverage.duplicateSuppressionCount?.durable === false) nonDurable.push('duplicate suppression');
-    if (coverage.fingerprintConflictCount?.durable === false) nonDurable.push('fingerprint conflicts');
-    if (coverage.governanceErrors?.durable === false) nonDurable.push('governance errors');
-    return nonDurable.length
-      ? `Request-time only: ${nonDurable.join(', ')}.`
-      : 'Lifecycle metrics are durable.';
+    const durable = [
+      coverage.duplicateSuppressionCount,
+      coverage.alreadyGovernedSuppressionCount,
+      coverage.fingerprintConflictCount,
+      coverage.governanceErrors,
+    ].filter(Boolean);
+    return durable.length && durable.every((item) => item.durable === true)
+      ? 'Suppression, conflicts and governance errors are durable audit-backed metrics.'
+      : 'Governance observability coverage is partial.';
   }
 
   function isActionInboxVisible() {
@@ -165,10 +220,33 @@
     return String(global.CloudflareOperatorContext?.getContext?.().storeId || global.CloudflareOperatorWorkspace?.currentStoreId?.() || '').trim();
   }
 
+  function summarizeRationale(value) {
+    if (value === null || value === undefined) return 'No rationale recorded.';
+    if (typeof value === 'string') return compact(value, 180);
+    if (typeof value === 'object') {
+      for (const key of ['reason', 'summary', 'message', 'code']) {
+        if (value[key]) return compact(String(value[key]), 180);
+      }
+      try { return compact(JSON.stringify(value), 180); } catch { return 'Structured rationale recorded.'; }
+    }
+    return compact(String(value), 180);
+  }
   function rate(value) {
     if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
     return `${(Number(value) * 100).toFixed(1)}%`;
   }
+  function queueAge(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—';
+    const hours = Number(value);
+    return hours >= 24 ? `${(hours / 24).toFixed(1)}d` : `${hours.toFixed(1)}h`;
+  }
+  function formatTime(value) {
+    if (!value) return '—';
+    const parsed = new Date(String(value).replace(' ', 'T') + (String(value).includes('Z') ? '' : 'Z'));
+    return Number.isNaN(parsed.getTime()) ? compact(String(value), 24) : parsed.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+  function first(value) { return Array.isArray(value) && value.length ? String(value[0]) : ''; }
+  function compact(value, max) { const text = String(value ?? '').trim(); return text.length > max ? `${text.slice(0, max - 1)}…` : text; }
   function number(value) { return new Intl.NumberFormat().format(Number(value || 0)); }
   function emptyState(message) { return `<div class="cfp9-health-state">${escapeHtml(message)}</div>`; }
   function loadingState() { return '<div class="cfp9-health-state">Loading governance health…</div>'; }
@@ -182,8 +260,11 @@
     style.textContent = `
       .cfp9-health{margin:0 0 14px;border:1px solid #eaecf0;border-radius:14px;padding:14px;background:#fcfcfd;color:#101828}
       .cfp9-health-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.cfp9-health-head>div{display:grid}.cfp9-health-head span{font-size:12px;color:#667085}.cfp9-execution{display:inline-flex!important;border-radius:999px;padding:4px 9px;background:#fef3f2;color:#b42318!important;font-weight:800}
-      .cfp9-health-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:9px}.cfp9-card{border:1px solid #eaecf0;border-radius:11px;padding:10px 11px;background:#fff}.cfp9-card>span,.cfp9-card>small{display:block;color:#667085;font-size:11px}.cfp9-card>strong{display:block;margin:2px 0;font-size:18px}.cfp9-card.warn{background:#fffaeb;border-color:#fedf89}.cfp9-card.danger{background:#fef3f2;border-color:#fecdca}.cfp9-health-foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:10px;color:#667085;font-size:11px}.cfp9-health-state{padding:12px;color:#667085}.cfp9-health-state.error{color:#b42318;background:#fef3f2;border-radius:10px}
-      @media(max-width:900px){.cfp9-health-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.cfp9-health-head{align-items:flex-start;flex-direction:column}}
+      .cfp9-health-grid,.cfp9-observability-grid{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:9px}.cfp9-card{border:1px solid #eaecf0;border-radius:11px;padding:10px 11px;background:#fff}.cfp9-card>span,.cfp9-card>small{display:block;color:#667085;font-size:11px}.cfp9-card>strong{display:block;margin:2px 0;font-size:18px}.cfp9-card.warn,.cfp9-signal.warn{background:#fffaeb;border-color:#fedf89}.cfp9-card.danger,.cfp9-signal.danger{background:#fef3f2;border-color:#fecdca}.cfp9-signal.good{background:#ecfdf3;border-color:#abefc6}
+      .cfp9-observability,.cfp9-recent{margin-top:14px;padding-top:12px;border-top:1px solid #eaecf0}.cfp9-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:9px}.cfp9-section-title span{font-size:11px;color:#667085}
+      .cfp9-recent-list{display:grid;gap:8px}.cfp9-action-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:11px;border:1px solid #eaecf0;border-radius:11px;background:#fff}.cfp9-action-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cfp9-status{font-size:10px;padding:2px 6px;border-radius:999px;background:#f2f4f7;color:#475467;text-transform:uppercase;font-weight:800}.cfp9-action-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;color:#667085;font-size:11px}.cfp9-action-rationale{margin-top:6px;font-size:12px;color:#344054;line-height:1.45}.cfp9-rejection{display:block;margin-top:5px;color:#b42318;font-size:11px}.cfp9-action-side{display:grid;grid-template-columns:repeat(2,minmax(92px,auto));gap:5px 7px;align-content:start;color:#667085;font-size:10px}.cfp9-signal{border:1px solid #eaecf0;border-radius:8px;padding:4px 6px;background:#f9fafb}.cfp9-source{grid-column:1/-1;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cfp9-health-foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:10px;color:#667085;font-size:11px}.cfp9-health-state{padding:12px;color:#667085}.cfp9-health-state.error{color:#b42318;background:#fef3f2;border-radius:10px}
+      @media(max-width:900px){.cfp9-health-grid,.cfp9-observability-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}.cfp9-health-head{align-items:flex-start;flex-direction:column}.cfp9-action-row{grid-template-columns:1fr}.cfp9-action-side{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:560px){.cfp9-action-meta{display:grid;grid-template-columns:1fr 1fr}.cfp9-section-title{align-items:flex-start;flex-direction:column}}
     `;
     document.head.appendChild(style);
   }

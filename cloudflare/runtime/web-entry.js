@@ -23,6 +23,7 @@ import { handleSearchTermIntelligenceApiRoute } from './search-term-intelligence
 import { handleOptimizationActionsApiRoute } from './optimization-actions-api.js';
 import { enrichRecommendationGovernanceResponse } from './recommendation-governance-layer.js';
 import { handleGovernanceHealthApiRoute } from './governance-health-api.js';
+import { observeOptimizationActionResponse } from './governance-observability.js';
 import { evaluateAccessIdentity } from '../../src/access.js';
 import { enforceStrictAccessActorBinding } from '../../src/access-actor.js';
 
@@ -104,11 +105,11 @@ export default {
       }
       if (SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleSearchTermIntelligenceApiRoute({ request, env, actor, url });
-        if (response) return enrichRecommendationGovernanceResponse({ request, response, env, url });
+        if (response) return enrichRecommendationGovernanceResponse({ request, response, env, actor, url, ctx });
       }
       if (OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleOptimizationActionsApiRoute({ request, env, actor, url });
-        if (response) return response;
+        if (response) return observeOptimizationActionResponse({ request, response, env, actor, url, ctx });
       }
       if (isControlRoute(url.pathname)) {
         const response = await handleControlApiRoute({ request, env, actor, url });
