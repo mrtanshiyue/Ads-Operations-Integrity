@@ -13,6 +13,85 @@ import {
   issueSingleUseExecutionPermit,
 } from '../cloudflare/runtime/optimization-execution-control-plane.js';
 
+class FakePermitDb {
+  constructor() {
+    this.rows = [];
+  }
+
+  prepare(sql) {
+    const db = this;
+    return {
+      bind(...args) {
+        return {
+          async first() {
+            if (sql.includes('WHERE permit_id=?1')) {
+              return clone(db.rows.find((row) => row.permit_id === args[0]) || null);
+            }
+            if (sql.includes("WHERE action_id=?1 AND transition='apply' AND state='issued'")) {
+              return clone(db.rows.find((row) => row.action_id === args[0] && row.transition === 'apply' && row.state === 'issued') || null);
+            }
+            throw new Error(`Unsupported fake first SQL: ${sql}`);
+          },
+          async run() {
+            if (sql.includes('INSERT INTO optimization_execution_permits')) {
+              const [permitId, actionId, profileId, entityType, entityId, actionType, requestFp, targetFp, executionFp, issuedBy, issuedAt, expiresAt] = args;
+              if (db.rows.some((row) => row.action_id === actionId && row.transition === 'apply' && row.state === 'issued')) {
+                throw new Error('UNIQUE constraint failed');
+              }
+              db.rows.push({
+                permit_id: permitId,
+                action_id: actionId,
+                transition: 'apply',
+                profile_id: profileId,
+                entity_type: entityType,
+                entity_id: entityId,
+                action_type: actionType,
+                request_fingerprint: requestFp,
+                target_fingerprint: targetFp,
+                execution_fingerprint: executionFp,
+                state: 'issued',
+                issued_by: issuedBy,
+                issued_at: issuedAt,
+                expires_at: expiresAt,
+                consumed_at: null,
+                consumed_by: null,
+                revoked_at: null,
+                revoked_by: null,
+                revoke_reason: null,
+                created_at: issuedAt,
+              });
+              return { meta: { changes: 1 } };
+            }
+            if (sql.includes("SET state='expired'")) {
+              let changes = 0;
+              for (const row of db.rows) {
+                if (row.action_id === args[0] && row.transition === 'apply' && row.state === 'issued' && row.expires_at <= args[1]) {
+                  row.state = 'expired';
+                  changes += 1;
+                }
+              }
+              return { meta: { changes } };
+            }
+            if (sql.includes("SET state='consumed'")) {
+              const row = db.rows.find((item) => item.permit_id === args[0] && item.state === 'issued' && item.expires_at > args[1]);
+              if (!row) return { meta: { changes: 0 } };
+              row.state = 'consumed';
+              row.consumed_at = args[1];
+              row.consumed_by = args[2];
+              return { meta: { changes: 1 } };
+            }
+            throw new Error(`Unsupported fake run SQL: ${sql}`);
+          },
+        };
+      },
+    };
+  }
+}
+
+function clone(value) {
+  return value ? JSON.parse(JSON.stringify(value)) : null;
+}
+
 const requestFingerprint = 'a'.repeat(64);
 const action = {
   action_id: 'act_phase11_test',
@@ -186,82 +265,3 @@ console.log(JSON.stringify({
   positiveKeywordExecutionBlocked: true,
   networkDispatchAuthorized: false,
 }, null, 2));
-
-class FakePermitDb {
-  constructor() {
-    this.rows = [];
-  }
-
-  prepare(sql) {
-    const db = this;
-    return {
-      bind(...args) {
-        return {
-          async first() {
-            if (sql.includes('WHERE permit_id=?1')) {
-              return clone(db.rows.find((row) => row.permit_id === args[0]) || null);
-            }
-            if (sql.includes("WHERE action_id=?1 AND transition='apply' AND state='issued'")) {
-              return clone(db.rows.find((row) => row.action_id === args[0] && row.transition === 'apply' && row.state === 'issued') || null);
-            }
-            throw new Error(`Unsupported fake first SQL: ${sql}`);
-          },
-          async run() {
-            if (sql.includes('INSERT INTO optimization_execution_permits')) {
-              const [permitId, actionId, profileId, entityType, entityId, actionType, requestFp, targetFp, executionFp, issuedBy, issuedAt, expiresAt] = args;
-              if (db.rows.some((row) => row.action_id === actionId && row.transition === 'apply' && row.state === 'issued')) {
-                throw new Error('UNIQUE constraint failed');
-              }
-              db.rows.push({
-                permit_id: permitId,
-                action_id: actionId,
-                transition: 'apply',
-                profile_id: profileId,
-                entity_type: entityType,
-                entity_id: entityId,
-                action_type: actionType,
-                request_fingerprint: requestFp,
-                target_fingerprint: targetFp,
-                execution_fingerprint: executionFp,
-                state: 'issued',
-                issued_by: issuedBy,
-                issued_at: issuedAt,
-                expires_at: expiresAt,
-                consumed_at: null,
-                consumed_by: null,
-                revoked_at: null,
-                revoked_by: null,
-                revoke_reason: null,
-                created_at: issuedAt,
-              });
-              return { meta: { changes: 1 } };
-            }
-            if (sql.includes("SET state='expired'")) {
-              let changes = 0;
-              for (const row of db.rows) {
-                if (row.action_id === args[0] && row.transition === 'apply' && row.state === 'issued' && row.expires_at <= args[1]) {
-                  row.state = 'expired';
-                  changes += 1;
-                }
-              }
-              return { meta: { changes } };
-            }
-            if (sql.includes("SET state='consumed'")) {
-              const row = db.rows.find((item) => item.permit_id === args[0] && item.state === 'issued' && item.expires_at > args[1]);
-              if (!row) return { meta: { changes: 0 } };
-              row.state = 'consumed';
-              row.consumed_at = args[1];
-              row.consumed_by = args[2];
-              return { meta: { changes: 1 } };
-            }
-            throw new Error(`Unsupported fake run SQL: ${sql}`);
-          },
-        };
-      },
-    };
-  }
-}
-
-function clone(value) {
-  return value ? JSON.parse(JSON.stringify(value)) : null;
-}
