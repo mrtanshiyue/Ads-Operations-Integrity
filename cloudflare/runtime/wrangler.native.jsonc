@@ -17,6 +17,8 @@
         "APP_ENV": "development",
         "ACCESS_MODE": "enforce",
         "SYNC_TRIGGER_ENABLED": "false",
+        "PHASE5_SINGLE_RUN_PERMIT_ID": "",
+        "PHASE5_SINGLE_RUN_REPORT_DATE": "",
         "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
         "ACCESS_AUD": "37435e34dd56c73c5c8d64a9bac3319f27389d8a953379cdab2ccaa4965cdaee"
       },
@@ -58,6 +60,8 @@
         "APP_ENV": "production",
         "ACCESS_MODE": "enforce",
         "SYNC_TRIGGER_ENABLED": "false",
+        "PHASE5_SINGLE_RUN_PERMIT_ID": "",
+        "PHASE5_SINGLE_RUN_REPORT_DATE": "",
         "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
         "ACCESS_AUD": "REPLACE_ME"
       },
