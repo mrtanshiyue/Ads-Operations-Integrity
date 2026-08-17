@@ -1,6 +1,6 @@
 # Ads Operations Integrity — Current Platform Status
 
-> Operational status summary. Canonical frozen Phase 2 evidence is `docs/architecture/PHASE2_MERGED_CLOSURE.md`. Active next-phase scope is `docs/architecture/PHASE3_OPERATOR_PRODUCT_SURFACE.md`. Immutable deployment receipts remain under `docs/architecture/` and must not be rewritten by later repository commits.
+> Operational truth for the Productization Roadmap V2 reset. Phase 0–3 documents and immutable deployment receipts remain historical implementation evidence. Future scope authority is `docs/architecture/PRODUCT_ROADMAP_V2.md`.
 
 ## Strategic status
 
@@ -8,42 +8,43 @@
 Architecture Convergence Phase 0 = COMPLETE + MERGED
 Security Integrity Phase 1 = COMPLETE + MERGED
 Deployment Integrity Phase 2 = COMPLETE + MERGED + POST-MERGE CORRELATED
-Phase 3 Operator Product Surface = ACTIVE
+Operator Product Surface Phase 3 = COMPLETE + MERGED + EXACT-SHA LIVE ACCEPTED
+Phase 4 Project Truth & Productization Reset = ACTIVE
 Production = NOT READY
-Amazon Ads API = DORMANT
+Amazon implementation = READY FOR CONTROLLED STORE 01 LIVE-READ PREFLIGHT
+Amazon live execution = DISABLED
 ```
 
-Phase 2 is frozen. Do not reopen Phase 0–2 implementation unless a real regression or evidence drift is observed.
+Do not reopen Phase 0–3 unless a real regression, source-of-truth conflict, or security/data-integrity drift is observed. The old Gate sequence is no longer the future delivery roadmap.
 
-The frozen Phase 2 post-merge correlation baseline entered `main` through PR #55 with merge commit:
+## Repository baseline at Phase 4 reset
+
+The reset started from canonical `main`:
 
 ```text
-ebcd662c5bc728606f85a750e489cbe2ea5db64c
+SHA: 7e77565ece9a1328e7348c8c534bac9895f410b2
+Tree: c884171a88c79027d26e2c147f12628e9d9866b1
+Required context: Static site and security invariants
+Branch protection: enabled
 ```
 
-That SHA is repository evidence. It is not the deployed Worker runtime SHA.
+That baseline merged PR #62 and preserves the Gate 3.5 immutable deployment receipt. Repository SHA and live Worker version remain separate identities.
 
 ## Canonical CI and deployment semantics
 
-Required GitHub context remains:
-
-```text
-Static site and security invariants
-```
-
-Canonical CI is validation-only. It performs no direct Cloudflare deployment, no historical branch promotion, no Production mutation and no Amazon activation.
+Canonical CI is validation-only. It does not directly deploy Cloudflare resources, promote historical branches, mutate Production, provision Amazon credentials, or activate Amazon execution.
 
 Canonical deployment provenance remains:
 
 ```text
 Canonical CI SUCCESS
 → exact Git SHA
-→ Workers Builds trigger called with exact commit_hash
+→ Workers Builds exact commit_hash
 → build UUID
 → immutable Worker version
 → deployment
-→ runtime version acceptance
-→ immutable receipt/evidence
+→ runtime acceptance
+→ immutable receipt
 ```
 
 Therefore:
@@ -52,126 +53,125 @@ Therefore:
 repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation
 ```
 
-Historical deployment branch remains frozen rollback/reference evidence only:
+The historical deployment branch and historical receipts remain evidence only; future product work must not rewrite immutable receipts.
 
-```text
-__manual_ci_gated_deploy__
-ce59e4cc43413338f35a34cb44622a7aa26f9875
-```
+## Accepted Web Dev runtime
 
-Workers Builds trigger remains preserved as the exact-SHA executor:
-
-```text
-33a47d45-4103-43d7-bca4-7d9096c4abfb
-```
-
-Do not delete, repurpose or use branch motion as canonical provenance.
-
-## Accepted Cloudflare Web Dev runtime
-
-Frozen Phase 2 correlated runtime evidence:
+The latest accepted Phase 3.5 Dev runtime is:
 
 ```text
 Worker: ads-operations-web-dev
-Worker immutable tag: ab2b4da6c8be41a5a72223384c32b71c
-Active deployment: 46993acd-cc8f-46fb-bd6c-c1a3b7f41bcb
-Active version: 1264fc03-c111-4037-9029-e21ba57a84b2
+Active deployment: 5fbad8a1-a9e1-47a6-9ab1-b94e53c576b9
+Active version: 761dc627-385d-44ee-a960-5237fea02703
 Traffic: 100%
-Active version count: 1
-workers.dev enabled: true
-previews_enabled: false
 ACCESS_MODE=enforce
 SYNC_TRIGGER_ENABLED=false
+Control D1: bound
+Store 01 D1: bound
+R2: ads-ops-data-dev
+Workflow: ads-amazon-sync-dev → ads-operations-sync-dev
 ```
 
-Immutable Phase 2 receipts:
+The immutable receipt is:
 
 ```text
-docs/architecture/PHASE2_GATE24_DEPLOYMENT_RECEIPT.json
-docs/architecture/PHASE2_PREVIEW_HARDENING_DEPLOYMENT_RECEIPT.json
+docs/architecture/PHASE3_GATE35_DEPLOYMENT_RECEIPT.json
 ```
 
-Later Phase 3 repository commits must not rewrite those receipts or treat their Git SHAs as current repository `main`.
+## Current Sync Dev runtime
 
-## Canonical runtime
+Current Cloudflare account inventory contains `ads-operations-sync-dev`; no Production sync Worker is treated as deployed runtime truth for this phase.
 
-Web runtime:
+The Dev Sync Worker currently has:
 
 ```text
-cloudflare/runtime/wrangler.native.jsonc
-→ cloudflare/runtime/web-entry.js
-→ cloudflare/runtime/web-worker.js + modular APIs
+APP_ENV=development
+AMAZON_ADS_ENABLED=false
+CONTROL_DB=bound
+STORE_01_DB=bound
+DATA_BUCKET=ads-ops-data-dev
+AMAZON_SYNC_WORKFLOW=ads-amazon-sync-dev
 ```
 
-Browser product/runtime clients use same-origin Cloudflare Native APIs under `/api/*` and Cloudflare Access browser sessions.
-
-Active Native browser product assets include:
-
-```text
-assets/cloudflare-native-api-v1.js
-assets/cloudflare-native-data-panel-v1.js
-assets/cloudflare-native-negative-governance-v1.js
-assets/cloudflare-native-audit-console-v1.js
-assets/cloudflare-native-access-console-v1.js
-```
-
-Phase 3 adds operator-facing product surfaces on top of those existing APIs rather than creating another backend architecture.
-
-Retired Warehouse/browser loader implementations remain recoverable only under `docs/archive/legacy-browser-loaders/`; they are archive/reference material and must not re-enter the active Native artifact.
-
-Cloud Raw import remains explicitly fail-closed:
-
-```text
-cloudflare_native_raw_import_not_migrated
-```
+This is sufficient topology for **Store 01 controlled read-only activation preflight**. It is not sufficient evidence for multi-store production isolation.
 
 ## Amazon state
 
-Amazon Ads API remains DORMANT by repository and runtime contract:
+Amazon integration is no longer classified as “future implementation.” The repository already contains:
+
+- credential provider and LWA token refresh smoke;
+- canonical profile bootstrap;
+- campaign/ad group/keyword/target/product-ad entity mirror;
+- Create Report / Poll Report / Download Report transport;
+- report-cycle orchestration and durable sync receipts;
+- R2 raw object materialization;
+- Store D1 ingestion and Search Term fact publication.
+
+Live execution is still fail-closed:
 
 ```text
 SYNC_TRIGGER_ENABLED=false
 AMAZON_ADS_ENABLED=false
 ```
 
-Historical Sync Dev runtime remains outside Phase 3 implementation scope. No Phase 3 work authorizes:
+The credential smoke endpoint is specifically designed to run with `AMAZON_ADS_ENABLED=false` and to perform no Create/Poll/Download Report, Store D1 write, or R2 write. That is the first live credential preflight for Phase 5.
 
-- Amazon credential provisioning;
-- LWA live smoke;
-- profile bootstrap;
-- Create/Poll/Download Report;
-- real Amazon sync;
-- `AMAZON_ADS_ENABLED=true`;
-- `SYNC_TRIGGER_ENABLED=true`;
-- redeployment of `ads-operations-sync-dev`.
+## Action control state
+
+Store D1 already owns:
+
+```text
+optimization_actions
+optimization_action_events
+```
+
+with statuses:
+
+```text
+proposed / approved / rejected / applying / applied / failed / reverted
+```
+
+Phase 4 does not replace this schema. Phase 6 creates recommendations; Phase 8 exposes governed action APIs and approval UX; Phase 11 adds the Amazon mutation adapter.
+
+## Multi-store isolation gap
+
+`cloudflare/runtime/wrangler.sync.jsonc` still contains a transitional `production` template where one `ads-operations-sync-prod` would bind STORE_01_DB–STORE_04_DB and one shared Production R2 bucket. This is **not** the approved future execution topology.
+
+Before Store 02 receives Amazon credentials, the architecture must converge to:
+
+```text
+Central Web / Control D1
+→ per-store Store D1
+→ per-store Sync Worker
+→ per-store Workflow
+→ per-store credential set
+→ per-store R2 boundary
+```
+
+Store 01 read-only work may proceed before Phase 9 because the current Dev Sync Worker is already Store-01-only at the D1 binding layer.
 
 ## Production state
 
 Production remains **NOT READY**. The final Cloudflare Native Production deployment contract is **not established yet**.
 
-`cloudflare/runtime/wrangler.native.jsonc` still contains unresolved Production placeholders including:
+Production placeholders remain in Native configuration, and the current multi-store Sync production template is explicitly non-authoritative. No Phase 4 or Phase 5 task authorizes Production DNS, Access, Worker, D1, R2, Workflow, or Amazon mutation changes.
+
+Retired Warehouse/browser loaders remain archive-only under `docs/archive/legacy-browser-loaders/`; active Native UI continues to use `assets/cloudflare-native-data-panel-v1.js`. Cloud Raw import remains fail-closed as `cloudflare_native_raw_import_not_migrated` until a dedicated product requirement justifies migration.
+
+## Active direction
+
+Current execution order is:
 
 ```text
-REPLACE_PROD_CONTROL_D1_ID
-REPLACE_PROD_STORE_01_D1_ID
-REPLACE_PROD_STORE_02_D1_ID
-REPLACE_PROD_STORE_03_D1_ID
-REPLACE_PROD_STORE_04_D1_ID
-https://REPLACE_ME.cloudflareaccess.com
-ACCESS_AUD=REPLACE_ME
+Phase 4 truth reset
+→ Phase 5 Store 01 real Amazon read-only
+→ Phase 6 Search Term / recommendation intelligence
+→ Phase 7 Native UI modernization
+→ Phase 8 approval/action control plane
+→ Phase 9 multi-store execution isolation
+→ Phase 10 production read-only
+→ Phase 11 controlled Amazon writes
+→ Phase 12 closed-loop learning
 ```
 
-Existing historical Production-named Access resources do not constitute a current Production deployment contract. No Phase 3 operator-surface work authorizes Production DNS, Access, Worker, D1, R2, Workflow or break-glass mutation.
-
-## Active Phase 3 direction
-
-Phase 3 is the product/operator layer:
-
-1. positive keyword governance console;
-2. product registry and store mapping console;
-3. audit/data-health operator convergence;
-4. navigation and visual modernization;
-5. Cloud Raw import decision;
-6. Dev exact-SHA live acceptance before Phase 3 freeze.
-
-Production readiness and Amazon activation remain separate future phases.
+The first business milestone is not Production. It is a trustworthy Store 01 dataset that can support Search Term Intelligence and explainable recommendations.
