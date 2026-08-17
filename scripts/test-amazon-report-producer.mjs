@@ -5,6 +5,10 @@ import {
   createAmazonReportOnce,
 } from '../cloudflare/runtime/amazon-report-producer.js';
 import { resolveReportContract } from '../cloudflare/runtime/amazon-report-contract.js';
+import {
+  buildPhase5Store01FirstRunPlan,
+  Phase5FirstRunPlanError,
+} from './plan-phase5-store01-first-run.mjs';
 
 function expectCodeAsync(fn, code) {
   return fn().then(
@@ -21,6 +25,44 @@ assert.equal(sellerContract.retentionDays, 65);
 assert.equal(sellerContract.attribution.windowDays, 7);
 assert.equal(vendorContract.retentionDays, 65);
 assert.equal(vendorContract.attribution.windowDays, 14);
+
+const sellerFirstRun = buildPhase5Store01FirstRunPlan({
+  accountType:'seller',
+  asOfDate:'2026-08-16',
+});
+assert.equal(sellerFirstRun.storeId, 'store-dev-01');
+assert.equal(sellerFirstRun.accountType, 'seller');
+assert.equal(sellerFirstRun.reportDate, '2026-08-09');
+assert.equal(sellerFirstRun.attributionWindowDays, 7);
+assert.equal(sellerFirstRun.reportLookbackDays, 65);
+assert.deepEqual(sellerFirstRun.requestBody, {
+  startDate:'2026-08-09',
+  endDate:'2026-08-09',
+  datasets:['search_term_daily'],
+});
+assert.equal(sellerFirstRun.idempotencyKey, 'phase5.store01.search-term.2026-08-09.seller.v1');
+assert.equal(sellerFirstRun.preconditions.activationState, 'single_run_open');
+assert.equal(Object.prototype.hasOwnProperty.call(sellerFirstRun.requestBody, 'profileId'), false);
+assert.equal(Object.prototype.hasOwnProperty.call(sellerFirstRun.requestBody, 'reportConfigVersion'), false);
+
+const vendorFirstRun = buildPhase5Store01FirstRunPlan({
+  accountType:'vendor',
+  asOfDate:'2026-08-16',
+});
+assert.equal(vendorFirstRun.reportDate, '2026-08-02');
+assert.equal(vendorFirstRun.attributionWindowDays, 14);
+assert.equal(vendorFirstRun.idempotencyKey, 'phase5.store01.search-term.2026-08-02.vendor.v1');
+
+assert.throws(
+  () => buildPhase5Store01FirstRunPlan({ accountType:'agency', asOfDate:'2026-08-16' }),
+  (error) => error instanceof Phase5FirstRunPlanError
+    && error.code === 'PHASE5_FIRST_RUN_ACCOUNT_TYPE_INVALID:agency',
+);
+assert.throws(
+  () => buildPhase5Store01FirstRunPlan({ accountType:'seller', asOfDate:'2026-02-30' }),
+  (error) => error instanceof Phase5FirstRunPlanError
+    && error.code === 'PHASE5_FIRST_RUN_AS_OF_DATE_INVALID',
+);
 
 const intent = {
   storeId: 'store-dev-01',
@@ -219,6 +261,9 @@ console.log(JSON.stringify({
   searchTermLookbackDays: 65,
   sellerAttributionDays: 7,
   vendorAttributionDays: 14,
+  phase5FirstRunPlanner: true,
+  sellerFirstRunReportDate: sellerFirstRun.reportDate,
+  vendorFirstRunReportDate: vendorFirstRun.reportDate,
   deterministicPlanning: true,
   reservationReplay: true,
   createReportExactlyOnce: true,
