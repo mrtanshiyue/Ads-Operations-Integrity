@@ -536,10 +536,10 @@
 
   function normalizeStores(items) {
     return (Array.isArray(items) ? items : []).map((store) => ({
-      storeId: String(store.storeId || ''),
-      storeCode: String(store.storeCode || ''),
-      displayName: String(store.displayName || ''),
-      marketplaceCode: String(store.marketplaceCode || ''),
+      storeId: String(store.storeId || store.store_id || ''),
+      storeCode: String(store.storeCode || store.store_code || ''),
+      displayName: String(store.displayName || store.display_name || ''),
+      marketplaceCode: String(store.marketplaceCode || store.marketplace_code || ''),
     })).filter((store) => store.storeId);
   }
 
