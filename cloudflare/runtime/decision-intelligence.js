@@ -68,12 +68,13 @@ export function buildRecommendationAuthority({ env = {}, profileId = '', lineage
   });
 }
 
-export function evaluateSearchTermDecision({ metrics, evidence, rules = DEFAULT_SEARCH_TERM_RULES } = {}) {
+export function evaluateSearchTermDecision({ metrics, evidence, freshness, rules = DEFAULT_SEARCH_TERM_RULES } = {}) {
   const normalizedMetrics = deriveSearchTermMetrics(metrics);
   const normalizedEvidence = normalizeEvidence(evidence);
+  const normalizedFreshness = normalizeFreshness(freshness);
   const waste = scoreWaste(normalizedMetrics, rules.waste || DEFAULT_SEARCH_TERM_RULES.waste);
   const harvest = scoreHarvest(normalizedMetrics, rules.harvest || DEFAULT_SEARCH_TERM_RULES.harvest);
-  const confidence = scoreConfidence(normalizedMetrics, normalizedEvidence);
+  const confidence = scoreConfidence(normalizedMetrics, normalizedEvidence, normalizedFreshness);
 
   const recommendation = waste.eligible
     ? Object.freeze({
@@ -94,6 +95,7 @@ export function evaluateSearchTermDecision({ metrics, evidence, rules = DEFAULT_
   return Object.freeze({
     metrics: normalizedMetrics,
     evidence: normalizedEvidence,
+    freshness: normalizedFreshness,
     confidence,
     scores: Object.freeze({ waste, harvest }),
     recommendation,
@@ -107,10 +109,12 @@ export async function buildRecommendationPreview({
   entity,
   metrics,
   evidence,
+  freshness,
+  trend = null,
   env = {},
   rules = DEFAULT_SEARCH_TERM_RULES,
 } = {}) {
-  const decision = evaluateSearchTermDecision({ metrics, evidence, rules });
+  const decision = evaluateSearchTermDecision({ metrics, evidence, freshness, rules });
   const authority = buildRecommendationAuthority({
     env,
     profileId,
@@ -124,6 +128,7 @@ export async function buildRecommendationPreview({
       ruleVersion: SEARCH_TERM_RULE_VERSION,
       authority,
       decision,
+      trend: freezeObject(trend),
       recommendation: null,
       fingerprint: null,
     });
@@ -152,6 +157,7 @@ export async function buildRecommendationPreview({
     ruleVersion: SEARCH_TERM_RULE_VERSION,
     authority,
     decision,
+    trend: freezeObject(trend),
     fingerprint,
     recommendation: Object.freeze({
       ...decision.recommendation,
@@ -159,8 +165,9 @@ export async function buildRecommendationPreview({
       entityId: fingerprintInput.entityId,
       before: target.before,
       proposed: target.proposed,
-      explanation: buildExplanation(decision),
+      explanation: buildExplanation(decision, trend),
       persistenceAuthorized: authority.authoritative,
+      governancePersistenceAllowed: true,
       executionAuthorized: false,
     }),
   });
@@ -211,17 +218,19 @@ function scoreHarvest(metrics, rule) {
   });
 }
 
-function scoreConfidence(metrics, evidence) {
+function scoreConfidence(metrics, evidence, freshness) {
   const sample = 0.45 * Math.min(1, metrics.clicks / 20)
     + 0.30 * Math.min(1, metrics.purchases / 5)
     + 0.25 * Math.min(1, metrics.impressions / 500);
   const lineageFactor = evidence.lineageValid ? 1 : 0.35;
-  const score = round4(sample * lineageFactor);
+  const freshnessFactor = freshness.confidenceFactor;
+  const score = round4(sample * lineageFactor * freshnessFactor);
   return Object.freeze({
     score,
     band: score >= 0.75 ? 'high' : (score >= 0.45 ? 'medium' : 'low'),
     sampleScore: round4(sample),
     lineageFactor,
+    freshnessFactor,
   });
 }
 
@@ -250,12 +259,38 @@ function normalizeEvidence(evidence = {}) {
     amazonReportIds: Object.freeze(amazonReportIds),
     r2ObjectKeys: Object.freeze(r2ObjectKeys),
     contentSha256s: Object.freeze(contentSha256s),
+    latestReportDate: isoDate(evidence.latestReportDate),
+    factUpdatedAt: nullableText(evidence.factUpdatedAt),
     sourceFactIdentity: Object.freeze({
       sourceReportJobIds: Object.freeze(sourceReportJobIds),
       amazonReportIds: Object.freeze(amazonReportIds),
       r2ObjectKeys: Object.freeze(r2ObjectKeys),
       contentSha256s: Object.freeze(contentSha256s),
     }),
+  });
+}
+
+function normalizeFreshness(value = {}) {
+  const allowed = new Set(['fresh', 'aging', 'stale', 'unknown']);
+  const stateCandidate = text(value.state).toLowerCase();
+  const state = allowed.has(stateCandidate) ? stateCandidate : 'unknown';
+  const defaultFactor = {
+    fresh: 1,
+    aging: 0.8,
+    stale: 0.5,
+    unknown: 0.65,
+  }[state];
+  const suppliedFactor = Number(value.confidenceFactor);
+  const confidenceFactor = Number.isFinite(suppliedFactor)
+    ? Math.max(0.25, Math.min(1, suppliedFactor))
+    : defaultFactor;
+  return Object.freeze({
+    state,
+    latestReportDate: isoDate(value.latestReportDate),
+    factUpdatedAt: nullableText(value.factUpdatedAt),
+    profileSyncedAt: nullableText(value.profileSyncedAt),
+    ageDays: finiteNonNegativeOrNull(value.ageDays),
+    confidenceFactor: round4(confidenceFactor),
   });
 }
 
@@ -273,7 +308,7 @@ function buildActionTarget(recommendation, entity = {}) {
   };
 }
 
-function buildExplanation(decision) {
+function buildExplanation(decision, trend) {
   const metrics = decision.metrics;
   const recommendation = decision.recommendation;
   if (!recommendation) return null;
@@ -294,6 +329,8 @@ function buildExplanation(decision) {
       cpcMicros: metrics.cpcMicros,
     }),
     confidence: decision.confidence,
+    freshness: decision.freshness,
+    trend: freezeObject(trend),
   });
 }
 
@@ -321,6 +358,7 @@ function uniqueTexts(values) {
   return [...new Set(source.map(text).filter(Boolean))].sort();
 }
 function text(value) { return String(value ?? '').trim(); }
+function nullableText(value) { const out = text(value); return out || null; }
 function nonNegative(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) && number > 0 ? number : 0;
@@ -332,6 +370,18 @@ function positiveInt(value, fallback) {
 function positiveNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+function finiteNonNegativeOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+function isoDate(value) {
+  const out = text(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null;
+}
+function freezeObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value || null;
+  return Object.freeze({ ...value });
 }
 function round2(value) { return Math.round(value * 100) / 100; }
 function round4(value) { return Math.round(value * 10000) / 10000; }
