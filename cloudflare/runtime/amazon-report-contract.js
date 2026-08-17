@@ -33,7 +33,7 @@ export function resolveReportContract(datasetKey, accountType) {
     timeUnit: 'DAILY',
     format: 'GZIP_JSON',
     maxPeriodDays: 31,
-    retentionDays: 95,
+    retentionDays: 65,
     keywordTypeFilters: KEYWORD_TYPES,
     columns: SEARCH_TERM_COLUMNS,
     attribution: Object.freeze({
