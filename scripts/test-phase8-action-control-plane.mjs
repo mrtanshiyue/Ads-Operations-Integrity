@@ -6,13 +6,23 @@ import {
   buildRecommendationPreview,
   evaluateSearchTermDecision,
 } from '../cloudflare/runtime/decision-intelligence.js';
+import {
+  AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION,
+  COMPENSATING_ACTION_POLICY,
+  LOGICAL_MUTATION_ALLOWLIST,
+  buildExecutionPlan,
+  canMarkActionApplied,
+  classifyMutationTransportOutcome,
+  validatePermitBinding,
+} from '../cloudflare/runtime/amazon-action-execution-safety.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const [actionsSource, intelligenceApiSource, webEntrySource, uiSource] = await Promise.all([
+const [actionsSource, intelligenceApiSource, webEntrySource, uiSource, executionSafetySource] = await Promise.all([
   readFile(path.join(repoRoot, 'cloudflare/runtime/optimization-actions-api.js'), 'utf8'),
   readFile(path.join(repoRoot, 'cloudflare/runtime/search-term-intelligence-api.js'), 'utf8'),
   readFile(path.join(repoRoot, 'cloudflare/runtime/web-entry.js'), 'utf8'),
   readFile(path.join(repoRoot, 'assets/cloudflare-native-decision-intelligence-v1.js'), 'utf8'),
+  readFile(path.join(repoRoot, 'cloudflare/runtime/amazon-action-execution-safety.js'), 'utf8'),
 ]);
 
 const evidence = {
@@ -137,11 +147,127 @@ const storeMigrationSources = await Promise.all(storeMigrationNames.map((name) =
 const combinedMigrations = storeMigrationSources.join('\n');
 assert.match(combinedMigrations, /CREATE TABLE optimization_actions/);
 assert.match(combinedMigrations, /CREATE TABLE optimization_action_events/);
+assert.match(combinedMigrations, /CREATE TABLE optimization_execution_permits/);
+assert.match(combinedMigrations, /CREATE TABLE optimization_execution_receipts/);
+assert.match(combinedMigrations, /CREATE TABLE optimization_execution_verifications/);
+assert.match(combinedMigrations, /idx_execution_permits_one_issued_per_action_transition/);
+assert.match(combinedMigrations, /execution_permit_binding_immutable/);
+assert.match(combinedMigrations, /execution_receipt_immutable/);
+assert.match(combinedMigrations, /execution_verification_immutable/);
 assert.doesNotMatch(combinedMigrations, /CREATE TABLE\s+(?:recommendations|recommendation_actions)\b/i);
+
+assert.equal(AMAZON_ACTION_EXECUTION_SAFETY_SCHEMA_VERSION, 'amazon-action-execution-safety-v1');
+assert.deepEqual(Object.keys(LOGICAL_MUTATION_ALLOWLIST).sort(), ['keyword.create', 'negative_keyword.create']);
+assert.equal(LOGICAL_MUTATION_ALLOWLIST['negative_keyword.create'].endpointMappingVerified, false);
+assert.equal(LOGICAL_MUTATION_ALLOWLIST['keyword.create'].endpointMappingVerified, false);
+assert.equal(COMPENSATING_ACTION_POLICY.automaticRollbackAuthorized, false);
+
+const requestFingerprint = '1'.repeat(64);
+const targetReadyAction = {
+  action_id: 'act_execution_ready_shape',
+  profile_id: 'profile-real-01',
+  entity_type: 'search_term',
+  entity_id: 'row-real-01',
+  action_type: 'negative_keyword.create',
+  status: 'approved',
+  proposed_json: JSON.stringify({
+    scope: 'ad_group',
+    campaignId: 'campaign-01',
+    adGroupId: 'adgroup-01',
+    keywordText: 'free reading glasses',
+    matchType: 'EXACT',
+  }),
+  rationale_json: JSON.stringify({ governance: { requestFingerprint } }),
+  external_request_id: null,
+  applied_at: null,
+};
+const targetReadyPlan = await buildExecutionPlan({ storeId: 'store-01', action: targetReadyAction });
+assert.equal(targetReadyPlan.valid, true);
+assert.equal(targetReadyPlan.dryRunReady, true);
+assert.equal(targetReadyPlan.permitIssuanceReady, false);
+assert.equal(targetReadyPlan.networkDispatchAuthorized, false);
+assert.equal(targetReadyPlan.mutation.endpointMappingVerified, false);
+assert.match(targetReadyPlan.targetFingerprint, /^[a-f0-9]{64}$/);
+assert.match(targetReadyPlan.executionFingerprint, /^[a-f0-9]{64}$/);
+
+const legacyMissingScopePlan = await buildExecutionPlan({
+  storeId: 'store-01',
+  action: {
+    ...targetReadyAction,
+    action_id: 'act_legacy_missing_scope',
+    proposed_json: JSON.stringify({ keywordText: 'free reading glasses', matchType: 'EXACT' }),
+  },
+});
+assert.equal(legacyMissingScopePlan.valid, false);
+assert.ok(legacyMissingScopePlan.errors.includes('destination_scope_not_frozen'));
+
+const unapprovedPlan = await buildExecutionPlan({ storeId: 'store-01', action: { ...targetReadyAction, status: 'proposed' } });
+assert.equal(unapprovedPlan.valid, false);
+assert.ok(unapprovedPlan.errors.includes('approved_action_required'));
+
+const permitCheck = validatePermitBinding({
+  permit: {
+    state: 'issued',
+    transition: 'apply',
+    actionId: targetReadyPlan.action.actionId,
+    profileId: targetReadyPlan.action.profileId,
+    entityId: targetReadyPlan.action.entityId,
+    actionType: targetReadyPlan.action.actionType,
+    requestFingerprint: targetReadyPlan.requestFingerprint,
+    targetFingerprint: targetReadyPlan.targetFingerprint,
+    executionFingerprint: targetReadyPlan.executionFingerprint,
+    expiresAt: '2026-08-17T17:00:00Z',
+  },
+  plan: targetReadyPlan,
+  now: new Date('2026-08-17T16:00:00Z'),
+});
+assert.equal(permitCheck.valid, false);
+assert.ok(permitCheck.errors.includes('amazon_endpoint_mapping_unverified'));
+assert.equal(permitCheck.networkDispatchAuthorized, false);
+
+assert.deepEqual(classifyMutationTransportOutcome({ dispatched: false }), {
+  transportOutcome: 'unknown',
+  retryDisposition: 'retry_before_dispatch',
+  readbackRequired: false,
+  reason: 'request_not_dispatched',
+});
+const acceptedTransport = classifyMutationTransportOutcome({ dispatched: true, httpStatus: 202, amazonRequestId: 'req-01' });
+assert.equal(acceptedTransport.retryDisposition, 'readback_required');
+assert.equal(acceptedTransport.readbackRequired, true);
+const unknownTransport = classifyMutationTransportOutcome({ dispatched: true, networkError: new Error('socket closed') });
+assert.equal(unknownTransport.retryDisposition, 'readback_required');
+assert.equal(unknownTransport.reason, 'dispatched_outcome_unknown');
+
+const finalization = canMarkActionApplied({
+  plan: targetReadyPlan,
+  receipt: { transportOutcome: 'accepted', executionFingerprint: targetReadyPlan.executionFingerprint },
+  verification: {
+    result: 'confirmed',
+    expectedFingerprint: targetReadyPlan.executionFingerprint,
+    observedFingerprint: targetReadyPlan.executionFingerprint,
+  },
+});
+assert.equal(finalization.allowed, true);
+assert.equal(finalization.readbackConfirmed, true);
+assert.equal(finalization.fingerprintsMatch, true);
+assert.equal(finalization.networkDispatchAuthorized, false);
+
+for (const token of [
+  'networkDispatchAuthorized: false',
+  'no_blind_retry_after_dispatch',
+  'amazon_readback_confirmation_required',
+  'destination_scope_not_frozen',
+  'amazon_endpoint_mapping_unverified',
+  'create_separately_governed_compensating_action',
+]) {
+  assert.match(executionSafetySource, new RegExp(escapeRegex(token)), `missing execution safety token: ${token}`);
+}
+assert.doesNotMatch(executionSafetySource, /fetch\s*\(/);
+assert.doesNotMatch(executionSafetySource, /advertising-api\.amazon\.com/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'phase8-operational-recommendation-control-plane-v1',
+  contract: 'operational-recommendation-and-execution-safety-v2',
   proposedPersistence: true,
   deterministicIdempotency: true,
   rejectLifecycle: true,
@@ -150,6 +276,13 @@ console.log(JSON.stringify({
   evidenceDrilldown: true,
   comparableTrend: true,
   freshnessAwareConfidence: true,
+  executionPermitSchema: true,
+  immutableExecutionReceiptSchema: true,
+  readbackVerificationSchema: true,
+  singleUsePermitContract: true,
+  legacyMissingTargetFailsClosed: true,
+  endpointMapping: 'unverified-and-blocking',
+  unknownOutcomeRetry: 'readback-required-no-blind-retry',
   amazonExecution: 'disabled',
   productionMutation: false,
 }, null, 2));
