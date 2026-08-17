@@ -1,3 +1,5 @@
+import { bestEffortGovernanceObservability } from './governance-observability.js';
+
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const OPEN_GOVERNANCE_STATUSES = new Set(['proposed', 'approved', 'applying', 'applied']);
 const QUALITY_SUPPRESSION_CODES = new Set([
@@ -8,7 +10,7 @@ const QUALITY_SUPPRESSION_CODES = new Set([
   'trend_deterioration',
 ]);
 
-export async function enrichRecommendationGovernanceResponse({ request, response, env, url }) {
+export async function enrichRecommendationGovernanceResponse({ request, response, env, actor, url, ctx }) {
   if (!response || request.method !== 'GET' || !response.ok) return response;
   if (!url.pathname.includes('/search-term-intelligence')) return response;
 
@@ -93,13 +95,53 @@ export async function enrichRecommendationGovernanceResponse({ request, response
       observationCount,
     };
     payload.governanceSuppressionContract = {
-      schemaVersion: 'recommendation-governance-suppression-v1',
+      schemaVersion: 'recommendation-governance-suppression-v2',
       exactFingerprintDuplicate: true,
       openEntityActionSuppression: true,
+      durableObservability: true,
       failureMode: 'fail_open_to_core_intelligence',
       openStatuses: [...OPEN_GOVERNANCE_STATUSES],
       amazonMutationAuthorized: false,
     };
+
+    const writes = [];
+    if (duplicateSuppressionCount > 0) {
+      writes.push(bestEffortGovernanceObservability({
+        env,
+        request,
+        actorUserId: actor?.user_id || null,
+        storeId,
+        eventType: 'duplicate_suppression',
+        count: duplicateSuppressionCount,
+        entityId: payload.profile.profileId,
+        details: {
+          profileId: payload.profile.profileId,
+          suppressionCode: 'duplicate_recommendation',
+          requestPath: url.pathname,
+        },
+      }));
+    }
+    if (alreadyGovernedSuppressionCount > 0) {
+      writes.push(bestEffortGovernanceObservability({
+        env,
+        request,
+        actorUserId: actor?.user_id || null,
+        storeId,
+        eventType: 'already_governed_suppression',
+        count: alreadyGovernedSuppressionCount,
+        entityId: payload.profile.profileId,
+        details: {
+          profileId: payload.profile.profileId,
+          suppressionCode: 'already_governed_action',
+          requestPath: url.pathname,
+        },
+      }));
+    }
+    if (writes.length) {
+      const task = Promise.all(writes);
+      if (ctx?.waitUntil) ctx.waitUntil(task);
+      else await task;
+    }
 
     return replaceJsonResponse(response, payload);
   } catch (error) {
@@ -108,6 +150,22 @@ export async function enrichRecommendationGovernanceResponse({ request, response
       profileId: payload.profile?.profileId || null,
       message: error?.message || String(error),
     });
+    const write = bestEffortGovernanceObservability({
+      env,
+      request,
+      actorUserId: actor?.user_id || null,
+      storeId,
+      eventType: 'governance_error',
+      entityId: payload.profile?.profileId || null,
+      details: {
+        profileId: payload.profile?.profileId || null,
+        errorClass: 'recommendation_governance_enrichment_error',
+        message: String(error?.message || error || '').slice(0, 500),
+        requestPath: url.pathname,
+      },
+    });
+    if (ctx?.waitUntil) ctx.waitUntil(write);
+    else await write;
     return response;
   }
 }
@@ -144,7 +202,7 @@ function replaceJsonResponse(response, payload) {
   const headers = new Headers(response.headers);
   headers.set('content-type', 'application/json; charset=utf-8');
   headers.set('cache-control', 'no-store');
-  headers.set('x-aoi-recommendation-governance-layer', 'v1');
+  headers.set('x-aoi-recommendation-governance-layer', 'v2');
   headers.delete('content-length');
   return new Response(JSON.stringify(payload), { status: response.status, headers });
 }
