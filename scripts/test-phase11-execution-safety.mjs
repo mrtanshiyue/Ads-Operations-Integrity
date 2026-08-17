@@ -4,9 +4,11 @@ import {
   buildExecutionPlan,
 } from '../cloudflare/runtime/amazon-action-execution-safety.js';
 import {
+  AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT,
   buildDormantNegativeKeywordMutationEnvelope,
   buildDormantTransportReceiptEvidence,
   evaluateDormantDispatchGuard,
+  normalizeAmazonRequestId,
 } from '../cloudflare/runtime/amazon-negative-keyword-mutation-adapter.js';
 import {
   consumeSingleUseExecutionPermit,
@@ -92,6 +94,17 @@ function clone(value) {
   return value ? JSON.parse(JSON.stringify(value)) : null;
 }
 
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.authoritativeExtractionAvailable, false);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.authoritativeHeaderName, null);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.authoritativeBodyField, null);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.extractionPolicy, 'explicit_transport_evidence_only');
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.receiptFieldRequired, false);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.receiptFieldNullable, true);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.legacyHeaderInferenceAllowed, false);
+assert.equal(AMAZON_UNIFIED_REQUEST_ID_OBSERVABILITY_CONTRACT.safetyGate, false);
+assert.equal(normalizeAmazonRequestId(null), null);
+assert.equal(normalizeAmazonRequestId('  request-authoritative-01  '), 'request-authoritative-01');
+
 const requestFingerprint = 'a'.repeat(64);
 const action = {
   action_id: 'act_phase11_test',
@@ -157,7 +170,18 @@ const successEvidence = await buildDormantTransportReceiptEvidence({
 assert.equal(successEvidence.transportOutcome, 'accepted');
 assert.equal(successEvidence.retryDisposition, 'readback_required');
 assert.equal(successEvidence.readbackRequired, true);
+assert.equal(successEvidence.amazonRequestId, 'request-01');
 assert.equal(successEvidence.responseBodySha256.length, 64);
+
+const successWithoutAuthoritativeRequestId = await buildDormantTransportReceiptEvidence({
+  dispatched: true,
+  httpStatus: 207,
+  responseBody: JSON.stringify({ error: [], partialSuccess: [], success: [{ index: 0, targetId: 'target-01' }] }),
+});
+assert.equal(successWithoutAuthoritativeRequestId.amazonRequestId, null);
+assert.equal(successWithoutAuthoritativeRequestId.transportOutcome, 'accepted');
+assert.equal(successWithoutAuthoritativeRequestId.retryDisposition, 'readback_required');
+assert.equal(successWithoutAuthoritativeRequestId.readbackRequired, true);
 
 const partialEvidence = await buildDormantTransportReceiptEvidence({
   dispatched: true,
@@ -259,6 +283,8 @@ console.log(JSON.stringify({
   negativeKeywordUnifiedRequest: true,
   requestBodySha256: true,
   http207Classification: true,
+  requestIdObservabilityContract: 'authoritative_extraction_unavailable_no_guessing',
+  requestIdReceiptFieldNullable: true,
   singleUsePermitIssuance: true,
   singleUsePermitConsumption: true,
   fingerprintDriftFailsClosed: true,
