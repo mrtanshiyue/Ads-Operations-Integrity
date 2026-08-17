@@ -1,6 +1,7 @@
 import {
   buildManualSyncRegistration,
   ContractError,
+  normalizeClientIdempotencyKey,
 } from './sync-intent-contract.js';
 import {
   assertProducerIntentSupported,
@@ -39,9 +40,12 @@ async function startStoreSync({ request, env, actor, storeId }) {
   const allowed = await actorHasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'sync.run');
   if (!allowed) return json(request, { error: 'forbidden', permission: 'sync.run' }, 403);
 
-  // This remains the first producer-side guard. Disabled means no Store D1 registration and no Workflow call.
+  // Disabled means no Store D1 registration and no Workflow call.
   if (env.SYNC_TRIGGER_ENABLED !== 'true') return json(request, { error: 'sync_trigger_disabled' }, 503);
   if (!env.AMAZON_SYNC_WORKFLOW) return json(request, { error: 'sync_workflow_not_bound' }, 503);
+
+  const permit = resolvePhase5SingleRunPermit(env);
+  if (permit?.error) return json(request, { error: permit.error }, 503);
 
   const route = await authorizedStoreRoute(env, storeId);
   if (route.error) return json(request, { error: route.error }, route.status);
@@ -52,6 +56,9 @@ async function startStoreSync({ request, env, actor, storeId }) {
 
   const idempotencyKey = String(request.headers.get('idempotency-key') || '').trim();
   if (!idempotencyKey) return json(request, { error: 'idempotency_key_required' }, 400);
+  if (permit && idempotencyKey !== permit.permitId) {
+    return json(request, { error: 'phase5_single_run_permit_mismatch' }, 409);
+  }
 
   let registration;
   try {
@@ -68,8 +75,7 @@ async function startStoreSync({ request, env, actor, storeId }) {
 
   // The sync-intent allowlist describes protocol vocabulary, not currently executable producer
   // capability. Reject an intent before Store D1 registration or Workflow creation when the live
-  // producer does not implement every requested dataset. Phase 5 therefore cannot accidentally
-  // queue a durable run for a future-only dataset merely because the generic parser recognizes it.
+  // producer does not implement every requested dataset.
   try {
     assertProducerIntentSupported(registration.intent);
   } catch (error) {
@@ -77,6 +83,10 @@ async function startStoreSync({ request, env, actor, storeId }) {
       return json(request, { error: error.code }, 400);
     }
     throw error;
+  }
+
+  if (permit && !matchesPhase5SingleRunIntent(registration.intent, permit.reportDate)) {
+    return json(request, { error: 'phase5_single_run_intent_mismatch' }, 409);
   }
 
   const repository = syncRunRepository(route.storeDb);
@@ -144,6 +154,29 @@ async function storeSyncStatus({ request, env, actor, storeId, instanceId }) {
     : { status: 'unknown', hasError: false, rollbackOutcome: null };
 
   return json(request, { instanceId, run: publicSyncRun(run), workflow }, 200);
+}
+
+function resolvePhase5SingleRunPermit(env) {
+  if (String(env.APP_ENV || '') !== 'development' || env.SYNC_TRIGGER_ENABLED !== 'true') return null;
+  const permitId = String(env.PHASE5_SINGLE_RUN_PERMIT_ID || '').trim();
+  const reportDate = String(env.PHASE5_SINGLE_RUN_REPORT_DATE || '').trim();
+  if (!permitId || !reportDate) return { error:'phase5_single_run_permit_missing' };
+  try {
+    normalizeClientIdempotencyKey(permitId);
+  } catch {
+    return { error:'phase5_single_run_permit_invalid' };
+  }
+  if (!validIsoDate(reportDate)) return { error:'phase5_single_run_permit_invalid' };
+  return Object.freeze({ permitId, reportDate });
+}
+
+function matchesPhase5SingleRunIntent(intent, reportDate) {
+  return intent?.startDate === reportDate
+    && intent?.endDate === reportDate
+    && Array.isArray(intent?.datasets)
+    && intent.datasets.length === 1
+    && intent.datasets[0] === 'search_term_daily'
+    && intent?.triggerType === 'manual';
 }
 
 function syncRunRepository(db) {
@@ -238,6 +271,12 @@ function contractErrorResponse(request, error) {
 
 function validWorkflowId(value) {
   return typeof value === 'string' && value.length >= 1 && value.length <= 100 && /^[A-Za-z0-9._:-]+$/.test(value);
+}
+
+function validIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 async function getWorkflowStatusSafe(binding, instanceId) {
