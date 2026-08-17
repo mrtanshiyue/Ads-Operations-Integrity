@@ -18,7 +18,8 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/search-term-intelligence(?:\/(recommendation-preview))?$/);
   if (!match) return null;
 
-  const storeId = decodeURIComponent(match[1]);
+  const storeId = safeDecode(match[1]);
+  if (!storeId) return json(request, { error: 'invalid_store_id' }, 400);
   const mode = match[2] || 'intelligence';
   const route = await authorizedStoreRoute(env, actor.user_id, storeId, 'analytics.read');
   if (route.error) return json(request, { error: route.error, permission: route.permission }, route.status);
@@ -35,6 +36,7 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
 
   const range = parseDateRange(url);
   if (range.error) return json(request, { error: range.error }, 400);
+  const comparisonRange = previousComparableRange(range);
   const limit = parseLimit(url.searchParams.get('limit'));
   if (limit.error) return json(request, { error: limit.error }, 400);
   const sort = parseSort(url.searchParams.get('sort'));
@@ -47,6 +49,8 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
     profileId,
     startDate: range.startDate,
     endDate: range.endDate,
+    previousStartDate: comparisonRange.startDate,
+    previousEndDate: comparisonRange.endDate,
     q,
     campaignId,
     adGroupId,
@@ -56,15 +60,15 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
 
   const items = [];
   for (const row of rows) {
-    const metrics = deriveSearchTermMetrics({
-      impressions: row.impressions,
-      clicks: row.clicks,
-      purchases: row.purchases,
-      unitsSold: row.units_sold,
-      costMicros: row.cost_micros,
-      salesMicros: row.sales_micros,
-    });
+    const metrics = currentMetricsFromRow(row);
+    const previousMetrics = previousMetricsFromRow(row);
     const evidence = evidenceFromRow(row);
+    const freshness = deriveFreshness({
+      latestReportDate: row.latest_report_date,
+      factUpdatedAt: row.fact_updated_at,
+      profileSyncedAt: profile.synced_at,
+    });
+    const trend = buildTrendContext(metrics, previousMetrics, range, comparisonRange);
     const entity = {
       entityId: row.group_key,
       searchTerm: row.search_term,
@@ -87,6 +91,8 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
       entity,
       metrics,
       evidence,
+      freshness,
+      trend,
       env,
       rules: DEFAULT_SEARCH_TERM_RULES,
     });
@@ -95,6 +101,9 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
     items.push({
       entity,
       metrics,
+      previousMetrics,
+      trend: preview.trend,
+      freshness: preview.decision.freshness,
       evidence: preview.decision.evidence,
       confidence: preview.decision.confidence,
       scores: preview.decision.scores,
@@ -107,7 +116,12 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
 
   const candidateCount = items.filter((item) => item.recommendation).length;
   const lineageValidCount = items.filter((item) => item.evidence.lineageValid).length;
-  const responseAuthority = buildRecommendationAuthority({ env, profileId, lineageValid: items.length > 0 && lineageValidCount === items.length });
+  const responseAuthority = buildRecommendationAuthority({
+    env,
+    profileId,
+    lineageValid: items.length > 0 && lineageValidCount === items.length,
+  });
+  const freshnessSummary = summarizeFreshness(items);
 
   return json(request, {
     schemaVersion: SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION,
@@ -127,14 +141,17 @@ export async function handleSearchTermIntelligenceApiRoute({ request, env, actor
       syncedAt: profile.synced_at || null,
     },
     range,
+    comparisonRange,
     filters: { q, campaignId, adGroupId, sort: sort.value, limit: limit.value },
     metricsContract: metricsContract(),
+    freshnessContract: freshnessContract(),
     rules: DEFAULT_SEARCH_TERM_RULES,
     summary: {
       itemCount: items.length,
       recommendationCandidateCount: candidateCount,
       lineageValidItemCount: lineageValidCount,
       authoritativeRecommendationCount: items.filter((item) => item.recommendation && item.authority.authoritative).length,
+      freshness: freshnessSummary,
       amazonMutationAuthorized: false,
     },
     items: mode === 'recommendation-preview' ? items.filter((item) => item.recommendation) : items,
@@ -153,7 +170,7 @@ async function querySearchTermIntelligence(db, input) {
   const result = await db.prepare(`
     WITH aggregated AS (
       SELECT
-        MIN(st.row_key) AS group_key,
+        MIN(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.row_key END) AS group_key,
         st.profile_id,
         st.campaign_id,
         c.name AS campaign_name,
@@ -162,26 +179,35 @@ async function querySearchTermIntelligence(db, input) {
         st.keyword_id,
         k.keyword_text,
         st.target_id,
-        MIN(st.search_term) AS search_term,
+        MIN(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.search_term END) AS search_term,
         st.normalized_search_term,
-        SUM(st.impressions) AS impressions,
-        SUM(st.clicks) AS clicks,
-        SUM(st.cost_micros) AS cost_micros,
-        SUM(st.purchases) AS purchases,
-        SUM(st.units_sold) AS units_sold,
-        SUM(st.sales_micros) AS sales_micros,
-        COUNT(*) AS fact_row_count,
-        SUM(CASE WHEN st.source_report_job_id IS NULL
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.impressions ELSE 0 END) AS impressions,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.clicks ELSE 0 END) AS clicks,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.cost_micros ELSE 0 END) AS cost_micros,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.purchases ELSE 0 END) AS purchases,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.units_sold ELSE 0 END) AS units_sold,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.sales_micros ELSE 0 END) AS sales_micros,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.impressions ELSE 0 END) AS previous_impressions,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.clicks ELSE 0 END) AS previous_clicks,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.cost_micros ELSE 0 END) AS previous_cost_micros,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.purchases ELSE 0 END) AS previous_purchases,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.units_sold ELSE 0 END) AS previous_units_sold,
+        SUM(CASE WHEN st.report_date BETWEEN ?1 AND ?2 THEN st.sales_micros ELSE 0 END) AS previous_sales_micros,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN 1 ELSE 0 END) AS fact_row_count,
+        SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 AND (
+                   st.source_report_job_id IS NULL
                    OR rj.job_id IS NULL
                    OR rj.amazon_report_id IS NULL OR TRIM(rj.amazon_report_id)=''
                    OR rj.r2_object_key IS NULL OR TRIM(rj.r2_object_key)=''
                    OR rj.content_sha256 IS NULL OR LENGTH(TRIM(rj.content_sha256)) <> 64
                    OR rj.status <> 'ingested'
-                 THEN 1 ELSE 0 END) AS invalid_lineage_count,
-        GROUP_CONCAT(DISTINCT st.source_report_job_id) AS source_report_job_ids,
-        GROUP_CONCAT(DISTINCT rj.amazon_report_id) AS amazon_report_ids,
-        GROUP_CONCAT(DISTINCT rj.r2_object_key) AS r2_object_keys,
-        GROUP_CONCAT(DISTINCT rj.content_sha256) AS content_sha256s,
+                 ) THEN 1 ELSE 0 END) AS invalid_lineage_count,
+        GROUP_CONCAT(DISTINCT CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.source_report_job_id END) AS source_report_job_ids,
+        GROUP_CONCAT(DISTINCT CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN rj.amazon_report_id END) AS amazon_report_ids,
+        GROUP_CONCAT(DISTINCT CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN rj.r2_object_key END) AS r2_object_keys,
+        GROUP_CONCAT(DISTINCT CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN rj.content_sha256 END) AS content_sha256s,
+        MAX(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.report_date END) AS latest_report_date,
+        MAX(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN st.updated_at END) AS fact_updated_at,
         MAX(CASE WHEN EXISTS (
           SELECT 1 FROM negative_keywords nk
           WHERE nk.profile_id=st.profile_id
@@ -201,18 +227,21 @@ async function querySearchTermIntelligence(db, input) {
       LEFT JOIN ad_groups ag ON ag.ad_group_id=st.ad_group_id
       LEFT JOIN keywords k ON k.keyword_id=st.keyword_id
       LEFT JOIN report_jobs rj ON rj.job_id=st.source_report_job_id
-      WHERE st.report_date BETWEEN ?1 AND ?2
-        AND st.profile_id=?3
-        AND (?4 IS NULL OR st.campaign_id=?4)
-        AND (?5 IS NULL OR st.ad_group_id=?5)
-        AND (?6 IS NULL OR st.search_term LIKE ?6 ESCAPE '\\' OR st.normalized_search_term LIKE ?6 ESCAPE '\\')
+      WHERE st.report_date BETWEEN ?1 AND ?4
+        AND st.profile_id=?5
+        AND (?6 IS NULL OR st.campaign_id=?6)
+        AND (?7 IS NULL OR st.ad_group_id=?7)
+        AND (?8 IS NULL OR st.search_term LIKE ?8 ESCAPE '\\' OR st.normalized_search_term LIKE ?8 ESCAPE '\\')
       GROUP BY st.profile_id, st.campaign_id, c.name, st.ad_group_id, ag.name,
                st.keyword_id, k.keyword_text, st.target_id, st.normalized_search_term
+      HAVING SUM(CASE WHEN st.report_date BETWEEN ?3 AND ?4 THEN 1 ELSE 0 END) > 0
     )
     SELECT * FROM aggregated
     ORDER BY ${sortColumn} DESC, group_key DESC
-    LIMIT ?7
+    LIMIT ?9
   `).bind(
+    input.previousStartDate,
+    input.previousEndDate,
     input.startDate,
     input.endDate,
     input.profileId,
@@ -240,6 +269,75 @@ function suppressCollision(preview, entity) {
   });
 }
 
+function currentMetricsFromRow(row) {
+  return deriveSearchTermMetrics({
+    impressions: row.impressions,
+    clicks: row.clicks,
+    purchases: row.purchases,
+    unitsSold: row.units_sold,
+    costMicros: row.cost_micros,
+    salesMicros: row.sales_micros,
+  });
+}
+
+function previousMetricsFromRow(row) {
+  return deriveSearchTermMetrics({
+    impressions: row.previous_impressions,
+    clicks: row.previous_clicks,
+    purchases: row.previous_purchases,
+    unitsSold: row.previous_units_sold,
+    costMicros: row.previous_cost_micros,
+    salesMicros: row.previous_sales_micros,
+  });
+}
+
+function buildTrendContext(current, previous, range, comparisonRange) {
+  return Object.freeze({
+    currentWindow: range,
+    previousWindow: comparisonRange,
+    current,
+    previous,
+    delta: Object.freeze({
+      spendPct: relativeDelta(current.spendMicros, previous.spendMicros),
+      salesPct: relativeDelta(current.salesMicros, previous.salesMicros),
+      ordersPct: relativeDelta(current.orders, previous.orders),
+      clicksPct: relativeDelta(current.clicks, previous.clicks),
+      impressionsPct: relativeDelta(current.impressions, previous.impressions),
+      acosPp: percentagePointDelta(current.acos, previous.acos),
+      roas: absoluteDelta(current.roas, previous.roas),
+      cvrPp: percentagePointDelta(current.cvr, previous.cvr),
+      cpcPct: relativeDelta(current.cpcMicros, previous.cpcMicros),
+      ctrPp: percentagePointDelta(current.ctr, previous.ctr),
+    }),
+  });
+}
+
+function deriveFreshness({ latestReportDate, factUpdatedAt, profileSyncedAt }) {
+  const latest = isoDate(latestReportDate);
+  if (!latest) {
+    return Object.freeze({
+      state: 'unknown',
+      latestReportDate: null,
+      factUpdatedAt: factUpdatedAt || null,
+      profileSyncedAt: profileSyncedAt || null,
+      ageDays: null,
+      confidenceFactor: 0.65,
+    });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const ageDays = Math.max(0, dateDiffDays(latest, today));
+  const state = ageDays <= 2 ? 'fresh' : (ageDays <= 7 ? 'aging' : 'stale');
+  const confidenceFactor = state === 'fresh' ? 1 : (state === 'aging' ? 0.8 : 0.5);
+  return Object.freeze({
+    state,
+    latestReportDate: latest,
+    factUpdatedAt: factUpdatedAt || null,
+    profileSyncedAt: profileSyncedAt || null,
+    ageDays,
+    confidenceFactor,
+  });
+}
+
 function evidenceFromRow(row) {
   return {
     lineageValid: Number(row.invalid_lineage_count || 0) === 0,
@@ -249,7 +347,19 @@ function evidenceFromRow(row) {
     amazonReportIds: splitCsv(row.amazon_report_ids),
     r2ObjectKeys: splitCsv(row.r2_object_keys),
     contentSha256s: splitCsv(row.content_sha256s),
+    latestReportDate: row.latest_report_date || null,
+    factUpdatedAt: row.fact_updated_at || null,
   };
+}
+
+function summarizeFreshness(items) {
+  const summary = { fresh: 0, aging: 0, stale: 0, unknown: 0 };
+  for (const item of items) {
+    const state = item.freshness?.state || 'unknown';
+    if (Object.prototype.hasOwnProperty.call(summary, state)) summary[state] += 1;
+    else summary.unknown += 1;
+  }
+  return summary;
 }
 
 async function authorizedStoreRoute(env, userId, storeId, permission) {
@@ -285,10 +395,17 @@ function parseDateRange(url) {
   const endDate = isoDate(url.searchParams.get('endDate'));
   if (!startDate || !endDate) return { error: 'date_range_required' };
   if (endDate < startDate) return { error: 'date_range_invalid' };
-  const days = Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
+  const days = dateDiffDays(startDate, endDate) + 1;
   if (days > MAX_RANGE_DAYS) return { error: 'date_range_too_large' };
   return { startDate, endDate, days };
 }
+
+function previousComparableRange(range) {
+  const previousEnd = addDays(range.startDate, -1);
+  const previousStart = addDays(previousEnd, -(range.days - 1));
+  return { startDate: previousStart, endDate: previousEnd, days: range.days };
+}
+
 function parseLimit(value) {
   const number = Number(value || DEFAULT_LIMIT);
   return Number.isInteger(number) && number >= 1 && number <= MAX_LIMIT ? { value: number } : { error: 'invalid_limit' };
@@ -305,7 +422,36 @@ function metricsContract() {
     cvr: 'orders / clicks; null when clicks is zero',
     cpcMicros: 'costMicros / clicks; null when clicks is zero',
     ctr: 'clicks / impressions; null when impressions is zero',
+    trend: 'current analysis window compared with the immediately preceding equal-length window',
   });
+}
+function freshnessContract() {
+  return Object.freeze({
+    states: ['fresh', 'aging', 'stale', 'unknown'],
+    fresh: 'latest report date age <= 2 days',
+    aging: 'latest report date age 3-7 days',
+    stale: 'latest report date age > 7 days',
+    unknown: 'latest report date unavailable',
+    confidence: 'freshness factor multiplies the existing sample and lineage confidence factors',
+  });
+}
+function relativeDelta(current, previous) {
+  const c = Number(current);
+  const p = Number(previous);
+  if (!Number.isFinite(c) || !Number.isFinite(p) || p === 0) return null;
+  return round4((c - p) / p);
+}
+function percentagePointDelta(current, previous) {
+  const c = Number(current);
+  const p = Number(previous);
+  if (!Number.isFinite(c) || !Number.isFinite(p)) return null;
+  return round2((c - p) * 100);
+}
+function absoluteDelta(current, previous) {
+  const c = Number(current);
+  const p = Number(previous);
+  if (!Number.isFinite(c) || !Number.isFinite(p)) return null;
+  return round4(c - p);
 }
 function splitCsv(value) { return String(value || '').split(',').map((item) => item.trim()).filter(Boolean); }
 function isoDate(value) {
@@ -314,10 +460,21 @@ function isoDate(value) {
   const parsed = new Date(`${text}T00:00:00Z`);
   return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text ? null : text;
 }
+function dateDiffDays(startDate, endDate) {
+  return Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000);
+}
+function addDays(date, days) {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
 function normalizeSearch(value) { const valueText = String(value || '').trim(); return valueText ? valueText.slice(0, 200) : null; }
 function requiredText(value, max) { const valueText = String(value || '').trim(); return valueText ? valueText.slice(0, max) : null; }
 function optionalText(value, max) { const valueText = String(value || '').trim(); return valueText ? valueText.slice(0, max) : null; }
 function escapeLike(value) { return String(value).replace(/[\\%_]/g, (match) => `\\${match}`); }
+function safeDecode(value) { try { return decodeURIComponent(value); } catch { return null; } }
+function round2(value) { return Math.round(value * 100) / 100; }
+function round4(value) { return Math.round(value * 10000) / 10000; }
 function json(request, payload, status) {
   const headers = new Headers({
     'content-type': 'application/json; charset=utf-8',
