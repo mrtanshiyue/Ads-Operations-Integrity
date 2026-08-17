@@ -6,7 +6,7 @@ export const PHASE5_ACTIVATION_STATES = Object.freeze({
   safe_disabled:Object.freeze({
     amazonAdsEnabled:false,
     syncTriggerEnabled:false,
-    allowedFrom:Object.freeze(['safe_disabled', 'amazon_read_ready']),
+    allowedFrom:Object.freeze(['safe_disabled', 'amazon_read_ready', 'single_run_open']),
   }),
   amazon_read_ready:Object.freeze({
     amazonAdsEnabled:true,
