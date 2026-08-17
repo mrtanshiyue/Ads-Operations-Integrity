@@ -264,6 +264,7 @@ const mockControlDbForHealth = {
         { action: 'optimization_action.approved', event_count: 2, observed_count: 2 },
         { action: 'optimization_action.observability.duplicate_suppression', event_count: 2, observed_count: 5 },
         { action: 'optimization_action.observability.already_governed_suppression', event_count: 1, observed_count: 3 },
+        { action: 'optimization_action.observability.recommendation_quality_suppression', event_count: 1, observed_count: 4 },
         { action: 'optimization_action.observability.fingerprint_conflict', event_count: 2, observed_count: 2 },
         { action: 'optimization_action.observability.governance_error', event_count: 1, observed_count: 1 },
       ] }; } }; } };
@@ -343,14 +344,21 @@ const healthResponse = await handleGovernanceHealthApiRoute({
 });
 assert.equal(healthResponse.status, 200);
 const health = await healthResponse.json();
-assert.equal(health.schemaVersion, 'governance-health-v2');
+assert.equal(health.schemaVersion, 'governance-health-v3');
 assert.equal(health.metrics.actionsAwaitingReview, 4);
+assert.equal(health.metrics.approvedCount, 3);
+assert.equal(health.metrics.rejectedCount, 3);
 assert.equal(health.metrics.approvalRate, 0.5);
 assert.equal(health.metrics.rejectionRate, 0.5);
 assert.equal(health.metrics.staleRecommendationRate, 0.1);
+assert.equal(health.metrics.confidence.high, 4);
+assert.equal(health.metrics.confidence.medium, 5);
+assert.equal(health.metrics.confidence.low, 1);
 assert.equal(health.metrics.actionAging.proposedOlder72h, 1);
+assert.equal(health.metrics.actionAging.oldestProposedAt, '2026-08-14 00:00:00');
 assert.equal(health.metrics.observability7d.duplicateSuppressions, 5);
 assert.equal(health.metrics.observability7d.alreadyGovernedSuppressions, 3);
+assert.equal(health.metrics.observability7d.recommendationQualitySuppressions, 4);
 assert.equal(health.metrics.observability7d.fingerprintConflicts, 2);
 assert.equal(health.metrics.observability7d.governanceErrors, 1);
 assert.equal(health.recentActions[0].reviewer, 'user-reviewer');
@@ -363,6 +371,8 @@ assert.deepEqual(health.recentActions[0].lineage.sourceReportIdentity.amazonRepo
 assert.equal(health.recentActions[0].lifecycle.rejectedAt, '2026-08-17 01:00:00');
 assert.equal(health.execution.amazonMutationAuthorized, false);
 assert.equal(health.coverage.duplicateSuppressionCount.durable, true);
+assert.equal(health.coverage.recommendationQualitySuppressionCount.durable, true);
+assert.equal(health.coverage.recommendationQualitySuppressionCount.cooldownBasis, 'current_recommendation_analysis_window');
 assert.equal(health.coverage.fingerprintConflictCount.durable, true);
 assert.equal(health.coverage.governanceErrors.durable, true);
 
@@ -376,10 +386,10 @@ const [webEntrySource, layerSource, healthSource, observabilitySource, actionsSo
 for (const token of ['GOVERNANCE_HEALTH_ROUTE_PATTERN', 'enrichRecommendationGovernanceResponse', 'observeOptimizationActionResponse', 'handleGovernanceHealthApiRoute']) {
   assert.match(webEntrySource, new RegExp(token));
 }
-for (const token of ['duplicate_recommendation', 'already_governed_action', 'durableObservability', 'fail_open_to_core_intelligence', 'amazonMutationAuthorized: false']) {
+for (const token of ['duplicate_recommendation', 'already_governed_action', 'recommendation_quality_suppression', 'durableObservability', 'fail_open_to_core_intelligence', 'amazonMutationAuthorized: false']) {
   assert.match(layerSource, new RegExp(token));
 }
-for (const token of ['governance-health-v2', 'observability7d', 'evidenceCompleteness', 'rejectionReason', 'sourceReportIdentity', 'durable: true']) {
+for (const token of ['governance-health-v3', 'observability7d', 'recommendationQualitySuppressions', 'evidenceCompleteness', 'rejectionReason', 'sourceReportIdentity', 'current_recommendation_analysis_window', 'durable: true']) {
   assert.match(healthSource, new RegExp(token));
 }
 for (const token of ['governance-observability-event-v1', 'fingerprint_conflict', 'governance_error', 'INSERT INTO audit_log', 'amazonMutationAuthorized: false']) {
@@ -393,7 +403,7 @@ for (const source of [layerSource, healthSource, observabilitySource]) {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'phase9-operational-productization-v2',
+  contract: 'phase9-operational-productization-v3',
   recommendationQualityGate: true,
   staleSuppression: true,
   lowConfidenceSuppression: true,
@@ -403,9 +413,12 @@ console.log(JSON.stringify({
   duplicateGovernanceSuppression: true,
   governanceEnrichmentFailureMode: 'fail-open',
   durableSuppressionTelemetry: true,
+  durableRecommendationQualitySuppressionTelemetry: true,
   durableFingerprintConflictTelemetry: true,
   durableGovernanceErrorTelemetry: true,
   operatorContext: true,
   governanceHealthReadPath: true,
+  governanceStatusCounts: true,
+  confidenceDistribution: true,
   amazonExecution: 'disabled',
 }, null, 2));
