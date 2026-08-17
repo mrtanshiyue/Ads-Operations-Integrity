@@ -3,6 +3,10 @@ import {
   ContractError,
 } from './sync-intent-contract.js';
 import {
+  assertProducerIntentSupported,
+  ProducerCapabilityError,
+} from './sync-producer-capability.js';
+import {
   registerAndTriggerSync,
   WebSyncOrchestrationError,
 } from './web-sync-orchestration.js';
@@ -59,6 +63,19 @@ async function startStoreSync({ request, env, actor, storeId }) {
     });
   } catch (error) {
     if (error instanceof ContractError) return contractErrorResponse(request, error);
+    throw error;
+  }
+
+  // The sync-intent allowlist describes protocol vocabulary, not currently executable producer
+  // capability. Reject an intent before Store D1 registration or Workflow creation when the live
+  // producer does not implement every requested dataset. Phase 5 therefore cannot accidentally
+  // queue a durable run for a future-only dataset merely because the generic parser recognizes it.
+  try {
+    assertProducerIntentSupported(registration.intent);
+  } catch (error) {
+    if (error instanceof ProducerCapabilityError) {
+      return json(request, { error: error.code }, 400);
+    }
     throw error;
   }
 
