@@ -1,125 +1,131 @@
 # Phase 11 — Amazon Execution Safety Plane
 
-Status: **IN PROGRESS / DORMANT**
+Status: **COMPLETE / DORMANT**
 
-This phase converts an approved governance action into a mutation that can eventually be executed exactly once and verified. It does **not** authorize Amazon Ads mutation by itself.
+Verified: **2026-08-17**
 
-## Existing control-plane truth
+Phase 11 converts an approved governance action into a deterministic, single-use, externally receipted and read-back-verified execution path. Completion of this phase does **not** authorize Amazon Ads mutation. Real execution remains a separate Phase 12 controlled activation decision.
+
+## Canonical safety invariant
+
+`Governance Approved != Amazon Executed`
 
 The existing action ledger remains canonical:
 
 `proposed → approved/rejected → applying → applied/failed/reverted`
 
-Phase 11 does not create a parallel recommendation/action lifecycle. `optimization_actions` and `optimization_action_events` remain the governance and lifecycle source of truth.
+There is no parallel recommendation lifecycle. `optimization_actions` and `optimization_action_events` remain the governance and lifecycle source of truth.
 
-`Governance Approved != Amazon Executed` remains mandatory.
+## Completed dormant execution chain
+
+Phase 11 now freezes the following chain:
+
+`approved recommendation`
+→ `operator execution readiness`
+→ `dry-run execution plan`
+→ `frozen destination`
+→ `request fingerprint`
+→ `target fingerprint`
+→ `execution fingerprint`
+→ `single-use execution permit`
+→ `TTL / fingerprint binding`
+→ `one-time permit consumption`
+→ `deterministic Amazon Unified mutation envelope`
+→ `canonical request SHA-256`
+→ `dormant dispatch guard`
+→ `HTTP / 207 outcome classification`
+→ `immutable execution receipt`
+→ `response SHA-256`
+→ `Amazon Unified target read-back`
+→ `exact logical entity correlation`
+→ `target fingerprint verification`
+→ `immutable verification`
+→ `confirmed-only applied finalization`
+
+Post-dispatch ambiguity is never blindly retried. Read-back confirmation is mandatory before `applied`.
 
 ## Durable execution evidence
 
-Store D1 migration `0016_store_execution_safety_plane.sql` adds:
+Store D1 migration `0016_store_execution_safety_plane.sql` provides:
 
 1. `optimization_execution_permits` — single-use action/profile/entity/fingerprint-bound permits.
 2. `optimization_execution_receipts` — immutable external transport receipts.
 3. `optimization_execution_verifications` — immutable Amazon read-back verification evidence.
 
-A transport receipt is never sufficient to mark an action `applied`; confirmed read-back is required.
-
-## Deterministic execution contract
-
-`cloudflare/runtime/amazon-action-execution-safety.js` enforces:
-
-- only `approved` actions can form a valid execution plan;
-- exact destination scope is frozen before governance approval;
-- request, target and execution fingerprints remain stable;
-- consumed/expired/revoked/mismatched permits cannot be reused;
-- possible post-dispatch ambiguity is never blindly retried;
-- Amazon read-back is mandatory before `applied`;
-- rollback is not automatic; compensation requires a separately governed action;
-- `networkDispatchAuthorized=false` remains hard-coded in the dormant safety plane.
+Receipts and verifications are immutable. A transport receipt by itself is never sufficient to mark an action `applied`.
 
 ## Official Amazon Unified target contract
 
-The authoritative mapping source is Amazon's own repository:
+The authoritative mapping source is Amazon's repository:
 
 - repository: `amzn/ads-advanced-tools-docs`
 - collection: `postman/Amazon_Ads_Unified_API.postman_collection.json`
 - API family: Amazon Ads Unified API
+- operation: `POST /adsApi/v1/create/targets`
 - verified: `2026-08-17`
 
-The official collection defines Create Target as:
-
-`POST /adsApi/v1/create/targets`
-
-with Amazon Ads authentication/account/scope headers and a JSON `targets` array. The same official collection's Sponsored Products target model identifies keyword targets as:
+For the currently allowed mutation, the frozen target shape is:
 
 - `adProduct = SPONSORED_PRODUCTS`
 - `targetType = KEYWORD`
 - `targetLevel = AD_GROUP`
-- `targetDetails.keywordTarget.keyword`
-- `targetDetails.keywordTarget.matchType`
-- `negative = true|false`
+- `negative = true`
+- `state = ENABLED`
+- keyword text from the frozen action destination
+- match type `EXACT` or `PHRASE`
 
-The create operation returns HTTP `207` multi-status with `error`, `partialSuccess`, and `success` arrays. Phase 11 therefore parses the single entity result at index `0`; it does not treat a bare HTTP 207 as business success.
+The operation returns HTTP `207` multi-status with `error`, `partialSuccess`, and `success` arrays. Phase 11 classifies the single entity result at index `0`; a bare HTTP 207 is not treated as business success.
 
-## Negative keyword create — mapping verified for newly frozen actions
+## Unified request-ID observability contract
 
-For `negative_keyword.create`, newly proposed actions freeze:
+The final Phase 11 blocker was `amazon_unified_request_id_header_unverified`.
 
-- `scope = ad_group`
-- `campaignId`
-- `adGroupId`
-- `executionDestinationContract = search-term-ad-group-v1`
-- `amazonMutationContract = amazon-ads-unified-target-v1-2026-08-17`
+Authoritative review of Amazon's Unified `POST /adsApi/v1/create/targets` example establishes the safe contract boundary:
 
-The deterministic mutation body is:
+- the official 207 example does not define a request-ID response header;
+- the official 207 body does not define a request-ID field;
+- therefore there is no authoritative Unified request-ID extractor that can be frozen from the verified material;
+- legacy Amazon Ads header names are not transferable evidence for the Unified endpoint and must not be guessed.
 
-```json
-{
-  "targets": [
-    {
-      "adGroupId": "<frozen-ad-group-id>",
-      "adProduct": "SPONSORED_PRODUCTS",
-      "negative": true,
-      "state": "ENABLED",
-      "targetDetails": {
-        "keywordTarget": {
-          "keyword": "<frozen-keyword-text>",
-          "matchType": "EXACT|PHRASE"
-        }
-      },
-      "targetType": "KEYWORD"
-    }
-  ]
-}
-```
+The runtime contract is therefore:
 
-A valid approved negative-keyword action that carries this exact frozen mutation-contract version may report `permitIssuanceReady=true`. This means the deterministic permit binding is ready; it does **not** issue a permit or authorize network dispatch.
+- `authoritativeExtractionAvailable=false`
+- `authoritativeHeaderName=null`
+- `authoritativeBodyField=null`
+- `extractionPolicy=explicit_transport_evidence_only`
+- `receiptFieldRequired=false`
+- `receiptFieldNullable=true`
+- `legacyHeaderInferenceAllowed=false`
+- `safetyGate=false`
 
-## Historical actions are not auto-upgraded
+`amazonRequestId` may be persisted only when an upstream transport layer can provide it as explicit authoritative evidence. Otherwise the immutable receipt records `amazon_request_id = NULL`.
 
-Finding the official endpoint does not expand the authority of actions approved before this contract was frozen.
+This is an observability limitation, not a mutation-integrity gap. Execution identity and reconciliation remain bound by the single-use permit, request/target/execution fingerprints, canonical request SHA-256, immutable response SHA-256, exact Amazon target read-back, and confirmed-only finalization.
 
-An older action without `amazonMutationContract=amazon-ads-unified-target-v1-2026-08-17` remains:
+If Amazon later publishes an authoritative Unified request-ID contract, it may be added as an observability enhancement without weakening or bypassing the existing safety chain.
 
-- `endpointMappingVerified=false`
+## Negative keyword create — frozen execution scope
+
+Current allowed mutation mapping:
+
+- action type: `negative_keyword.create`
+- scope: `ad_group`
+- endpoint: `POST /adsApi/v1/create/targets`
+- contract: `amazon-ads-unified-target-v1-2026-08-17`
+- match types: `EXACT`, `PHRASE`
+
+A valid approved action under this exact frozen contract may become permit-issuance-ready. That does not issue a permit and does not authorize network dispatch.
+
+Historical actions are not auto-upgraded. An older approved action that lacks the frozen Amazon mutation contract remains non-executable and requires a fresh proposal and fresh approval.
+
+## Positive keyword remains excluded
+
+`keyword.create` remains execution-blocked:
+
+- blocking reason: `positive_keyword_bid_mapping_unverified`
 - `permitIssuanceReady=false`
-- `networkDispatchAuthorized=false`
 
-Do not backfill historical approved actions with current mutable state or a newly discovered API contract. A fresh proposal and fresh operator approval are required.
-
-## Positive keyword create remains blocked
-
-`keyword.create` remains logically allowlisted but execution-blocked because the exact Unified API bid representation for the product's optional `bidMicros` contract has not yet been frozen from authoritative Amazon material.
-
-Current state:
-
-- endpoint family known: `/adsApi/v1/create/targets`
-- keyword target shape known
-- bid mapping: `positive_keyword_bid_mapping_unverified`
-- `permitIssuanceReady=false`
-- `networkDispatchAuthorized=false`
-
-Do not silently drop a governed bid or guess a legacy bid field.
+Phase 11 completion does not require positive keyword execution. Positive keyword support is explicitly outside the first controlled execution scope and must not silently drop or guess bid semantics.
 
 ## Retry / 207 policy
 
@@ -131,33 +137,58 @@ For Unified Create Target HTTP 207:
 
 - entity index 0 in `error` → deterministic rejection / no retry;
 - entity index 0 in `partialSuccess` → unknown / read-back required;
-- entity index 0 in `success` → transport accepted / read-back still required;
+- entity index 0 in `success` → transport accepted / read-back required;
 - malformed or missing entity result → unknown / read-back required.
 
 For connection loss, 5xx, or any state where dispatch may have happened:
 
 `readback_required`
 
-No unrestricted automatic retry is allowed after a possible mutation dispatch.
+There is no unrestricted automatic retry after a possible mutation dispatch.
 
 ## Applied-state rule
 
-An action may transition to `applied` only when all are true:
+An action may transition to `applied` only when all required execution invariants are satisfied, including:
 
-1. the action was approved under the frozen execution contract;
-2. a valid single-use permit matched request/target/execution fingerprints;
-3. immutable transport receipt exists;
-4. Amazon read-back was performed;
-5. verification result is `confirmed`;
-6. receipt, verification and execution-plan fingerprints match.
+1. approved action under the frozen execution contract;
+2. valid single-use permit bound to request/target/execution fingerprints;
+3. immutable transport receipt;
+4. Amazon read-back;
+5. verification result `confirmed`;
+6. matching receipt, verification and execution-plan fingerprints.
 
-## Remaining work before Phase 11 COMPLETE
+Amazon request ID is not an `applied` gate because the verified Unified contract does not authoritatively expose an extraction field.
 
-- verify/freeze positive keyword bid mapping or explicitly exclude positive keyword execution from the first release;
-- add permit issuance/consumption API with RBAC and explicit execution enablement;
-- add dormant negative-keyword transport adapter using the frozen Unified request builder;
-- make transport impossible while `AMAZON_ADS_ENABLED=false`;
-- write immutable receipt around the external request boundary;
-- implement target read-back and reconciliation;
-- integrate `applying/applied/failed` transitions only after receipt/read-back invariants are satisfied;
-- keep the first real execution to one store, one profile, one action, one permit, one external mutation.
+## Phase 11 completion audit
+
+The Phase 11 completion audit is PASS for:
+
+- operator execution readiness;
+- permit lifecycle and TTL;
+- request fingerprint;
+- target fingerprint;
+- execution fingerprint;
+- canonical request SHA-256;
+- HTTP 207 classification;
+- request-ID no-guessing / nullable observability contract;
+- immutable receipt;
+- response SHA-256;
+- target read-back;
+- exact entity verification;
+- unknown outcome policy;
+- no blind retry;
+- confirmed-only finalization;
+- positive keyword still blocked;
+- network dispatch still dormant.
+
+Therefore:
+
+**Phase 11 = COMPLETE**
+
+## Phase 12 boundary
+
+Phase 12 is **not started by this document**.
+
+Phase 11 completion does not enable `AMAZON_ADS_ENABLED`, does not enable `SYNC_TRIGGER_ENABLED`, does not issue a real permit, and does not perform a real mutation.
+
+The next phase may authorize only the separately governed controlled single-mutation scope: one store, one profile, one campaign, one ad group, one approved `negative_keyword.create` action, one permit, one Amazon mutation request, and one read-back verification.
