@@ -5,7 +5,13 @@ const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'ST
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
-const CSV_CONTENT_TYPES = new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain', 'application/octet-stream']);
+const CSV_CONTENT_TYPES = new Set([
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+  'text/plain',
+  'application/octet-stream',
+]);
 
 export async function handleCsvImportsApiRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/imports(?:\/(search-terms|[^/]+))?(?:\/(errors))?$/);
@@ -20,8 +26,8 @@ export async function handleCsvImportsApiRoute({ request, env, actor, url }) {
 
   const route = await authorizedStoreRoute(env, storeId);
   if (route.error) return json(request, { error: route.error }, route.status);
-
   const method = request.method.toUpperCase();
+
   if (!resource) {
     if (method !== 'GET') return json(request, { error: 'method_not_allowed' }, 405);
     if (!await hasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.read')) {
@@ -42,7 +48,6 @@ export async function handleCsvImportsApiRoute({ request, env, actor, url }) {
   if (!await hasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.read')) {
     return json(request, { error: 'forbidden', permission: 'ads.read' }, 403);
   }
-
   if (!child) {
     if (method !== 'GET') return json(request, { error: 'method_not_allowed' }, 405);
     return importDetail(request, route, resource);
@@ -66,11 +71,8 @@ async function uploadSearchTerms(request, controlDb, route, actor, storeId, url)
   }
 
   let csvText;
-  try {
-    csvText = await request.text();
-  } catch {
-    return json(request, { error: 'csv_body_unreadable' }, 400);
-  }
+  try { csvText = await request.text(); }
+  catch { return json(request, { error: 'csv_body_unreadable' }, 400); }
   if (!csvText) return json(request, { error: 'csv_empty' }, 400);
   if (new TextEncoder().encode(csvText).byteLength > MAX_CSV_BYTES) {
     return json(request, { error: 'csv_size_limit_exceeded', maxBytes: MAX_CSV_BYTES }, 413);
@@ -78,6 +80,8 @@ async function uploadSearchTerms(request, controlDb, route, actor, storeId, url)
 
   const sourceFileName = sourceFileNameFromRequest(request, url);
   if (!sourceFileName) return json(request, { error: 'source_file_name_required' }, 400);
+  const context = parseUploadContext(url);
+  if (context.error) return json(request, { error: context.error }, 400);
 
   const repository = createD1CsvSearchTermImportRepository(route.storeDb);
   const importId = `csv-${crypto.randomUUID()}`;
@@ -91,21 +95,32 @@ async function uploadSearchTerms(request, controlDb, route, actor, storeId, url)
       input: {
         csvText,
         sourceFileName,
-        marketplace: optionalQuery(url, 'marketplace', 32),
-        profileId: optionalQuery(url, 'profileId', 200),
-        currencyCode: optionalQuery(url, 'currencyCode', 8),
+        marketplace: context.value.marketplace,
+        profileId: context.value.profileId,
+        currencyCode: context.value.currencyCode,
         uploadedAt,
         maxBytes: MAX_CSV_BYTES,
       },
     });
   } catch (error) {
-    const sourceCode = String(error?.cause?.code || error?.code || '').trim();
-    const status = sourceCode === 'CSV_IMPORT_PARSE_FAILED' || sourceCode.startsWith('CSV_') ? 400 : 500;
+    const rootCode = String(error?.code || '').trim();
+    const causeCode = String(error?.cause?.code || '').trim();
+    const isParserFailure = rootCode === 'CSV_IMPORT_PARSE_FAILED';
     await audit(controlDb, request, actor.user_id, storeId, 'csv_import.failed', 'csv_import', importId, {
       sourceFileName,
-      errorCode: sourceCode || 'csv_import_failed',
+      failureClass: isParserFailure ? 'validation' : 'internal',
+      errorCode: isParserFailure ? safeParserErrorCode(causeCode) : 'csv_import_failed',
     });
-    return json(request, { error: normalizeErrorCode(sourceCode || 'csv_import_failed') }, status);
+    if (isParserFailure) {
+      return json(request, { error: safeParserErrorCode(causeCode) }, 400);
+    }
+    console.error('csv_import_internal_failure', {
+      rootCode: rootCode || 'unknown',
+      causeName: error?.cause?.name || null,
+      storeId,
+      importId,
+    });
+    return json(request, { error: 'csv_import_failed' }, 500);
   }
 
   const response = publicOutcome(outcome);
@@ -133,7 +148,8 @@ async function uploadSearchTerms(request, controlDb, route, actor, storeId, url)
 async function listImports(request, route, url) {
   const limit = parseLimit(url.searchParams.get('limit'));
   if (limit.error) return json(request, { error: limit.error }, 400);
-  const before = optionalQuery(url, 'before', 64);
+  const before = parseOptionalText(url.searchParams.get('before'), 64, 'invalid_before');
+  if (before.error) return json(request, { error: before.error }, 400);
   const status = optionalEnum(url.searchParams.get('status'), ['validated', 'published', 'rejected']);
   if (status.error) return json(request, { error: 'invalid_import_status' }, 400);
 
@@ -147,7 +163,7 @@ async function listImports(request, route, url) {
       AND (?2 IS NULL OR status = ?2)
     ORDER BY uploaded_at DESC, import_id DESC
     LIMIT ?3
-  `).bind(before, status.value, limit.value + 1).all();
+  `).bind(before.value, status.value, limit.value + 1).all();
 
   const rows = result.results || [];
   const hasMore = rows.length > limit.value;
@@ -334,22 +350,34 @@ function publicStore(store) {
 }
 
 function sourceFileNameFromRequest(request, url) {
-  const header = request.headers.get('x-import-file-name');
-  const raw = header || url.searchParams.get('fileName') || '';
+  const raw = request.headers.get('x-import-file-name') || url.searchParams.get('fileName') || '';
   if (!raw) return null;
   let text = raw;
-  try { text = decodeURIComponent(raw); } catch { text = raw; }
+  try { text = decodeURIComponent(raw); } catch { return null; }
   text = String(text).trim();
   if (!text || text.length > 240 || /[\u0000-\u001f\u007f]/u.test(text)) return null;
   return text;
 }
 
-function optionalQuery(url, key, maxLength) {
-  const value = url.searchParams.get(key);
-  if (value == null || value === '') return null;
+function parseUploadContext(url) {
+  const marketplace = parseOptionalText(url.searchParams.get('marketplace'), 32, 'invalid_marketplace');
+  if (marketplace.error) return marketplace;
+  const profileId = parseOptionalText(url.searchParams.get('profileId'), 200, 'invalid_profile_id');
+  if (profileId.error) return profileId;
+  const currencyCode = parseOptionalText(url.searchParams.get('currencyCode'), 8, 'invalid_currency_code');
+  if (currencyCode.error) return currencyCode;
+  return { value: {
+    marketplace: marketplace.value,
+    profileId: profileId.value,
+    currencyCode: currencyCode.value?.toUpperCase() || null,
+  } };
+}
+
+function parseOptionalText(value, maxLength, errorCode) {
+  if (value == null || value === '') return { value: null };
   const text = String(value).trim();
-  if (!text || text.length > maxLength || /[\u0000-\u001f\u007f]/u.test(text)) return null;
-  return text;
+  if (!text || text.length > maxLength || /[\u0000-\u001f\u007f]/u.test(text)) return { error: errorCode };
+  return { value: text };
 }
 
 function parseLimit(value) {
@@ -381,8 +409,10 @@ function parseJsonObject(value) {
   } catch { return {}; }
 }
 
-function normalizeErrorCode(value) {
-  return String(value || 'csv_import_failed').trim().toLowerCase().replace(/[^a-z0-9_.:-]+/g, '_').slice(0, 120);
+function safeParserErrorCode(value) {
+  const code = String(value || '').trim();
+  if (!/^CSV_[A-Z0-9_]{1,100}$/.test(code)) return 'csv_validation_failed';
+  return code.toLowerCase();
 }
 
 function json(request, payload, status) {
