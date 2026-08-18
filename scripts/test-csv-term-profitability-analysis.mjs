@@ -93,6 +93,8 @@ assert.deepEqual(
 const toxicFree = result.toxicRoots.find((item) => item.root === 'free');
 assert.ok(toxicFree, 'shared waste root must be classified as toxic');
 assert.equal(toxicFree.termCount, 2);
+assert.equal(toxicFree.profitTermCount, 0);
+assert.equal(toxicFree.wasteTermCount, 2);
 assert.equal(toxicFree.metrics.purchases, 0);
 assert.equal(toxicFree.metrics.spendMicros, 11_000_000);
 
@@ -114,6 +116,47 @@ for (const suggestion of [...result.negativeSuggestions, ...result.harvestSugges
   assert.equal(suggestion.executionAuthorized, false);
   assert.equal(suggestion.amazonMutationAuthorized, false);
 }
+
+const protectedRootResult = analyzeCsvTermProfitability([
+  {
+    ...common,
+    searchTerm: 'glasses profitable',
+    impressions: 100,
+    clicks: 10,
+    purchases: 4,
+    costMicros: 2_000_000,
+    salesMicros: 10_000_000,
+  },
+  {
+    ...common,
+    searchTerm: 'glasses waste one',
+    impressions: 150,
+    clicks: 12,
+    purchases: 0,
+    costMicros: 8_000_000,
+    salesMicros: 0,
+  },
+  {
+    ...common,
+    searchTerm: 'glasses waste two',
+    impressions: 150,
+    clicks: 12,
+    purchases: 0,
+    costMicros: 8_000_000,
+    salesMicros: 0,
+  },
+]);
+const protectedGlasses = protectedRootResult.protectedRoots.find((item) => item.root === 'glasses');
+assert.ok(protectedGlasses, 'root containing a profitable Search Term must enter the profit-protection set');
+assert.equal(protectedGlasses.profitTermCount, 1);
+assert.equal(protectedGlasses.wasteTermCount, 2);
+assert.equal(protectedGlasses.profitProtectionApplied, true);
+assert.notEqual(protectedGlasses.classification, 'toxic');
+assert.equal(
+  protectedRootResult.negativeSuggestions.some((item) => item.matchScope === 'phrase_review' && item.value === 'glasses'),
+  false,
+  'a root containing a profitable Search Term must never become a phrase-negative review candidate',
+);
 
 const strictProfit = analyzeCsvTermProfitability([
   {
@@ -189,11 +232,12 @@ assert.deepEqual(reordered.harvestSuggestions, reorderedAgain.harvestSuggestions
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-term-profitability-analysis-v1',
+  contract: 'csv-term-profitability-analysis-v2-profit-root-protection',
   profitTerms: result.summary.profitTermCount,
   wasteTerms: result.summary.wasteTermCount,
   toxicRoots: result.summary.toxicRootCount,
   profitableRoots: result.summary.profitableRootCount,
+  protectedRootSafety: true,
   exactNegativeCandidates: result.summary.exactNegativeCandidateCount,
   phraseRootReviews: result.summary.phraseRootReviewCount,
   harvestCandidates: result.summary.harvestCandidateCount,
