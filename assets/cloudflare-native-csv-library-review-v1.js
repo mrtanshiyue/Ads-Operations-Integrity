@@ -11,6 +11,8 @@ const REVIEW_REASON_CODES = Object.freeze([
   'irrelevant_or_duplicate',
   'operator_other',
 ]);
+const SHORTLIST_REASON_CODES = new Set(['evidence_supports_follow_up', 'identity_resolution_needed', 'more_data_needed', 'operator_other']);
+const DISMISS_REASON_CODES = new Set(['irrelevant_or_duplicate', 'operator_other']);
 const state = {
   mounted: false,
   building: false,
@@ -84,15 +86,26 @@ export function canApplyLocalReviewTransition(nextState, annotation = {}) {
   if (reasonCode === 'operator_other' && !String(annotation.note || '').trim()) {
     return Object.freeze({ allowed: false, code: 'LOCAL_REVIEW_OTHER_NOTE_REQUIRED' });
   }
+  const allowedReasons = next === 'shortlisted' ? SHORTLIST_REASON_CODES : DISMISS_REASON_CODES;
+  if (!allowedReasons.has(reasonCode)) return Object.freeze({ allowed: false, code: 'LOCAL_REVIEW_REASON_STATE_MISMATCH' });
   return Object.freeze({ allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
 }
 
 export function localFollowUpReadiness(item, reviewState, annotation = {}) {
   const current = String(reviewState || item?.initialReviewState || 'open');
+  if (current === 'open') return Object.freeze({ state: 'not_shortlisted', label: 'Not shortlisted', persistenceReady: false, executionReady: false });
   const transition = canApplyLocalReviewTransition(current, annotation);
+  if (!transition.allowed) {
+    const label = transition.code === 'LOCAL_REVIEW_REASON_STATE_MISMATCH' ? 'Decision reason/state mismatch' : 'Decision reason missing';
+    return Object.freeze({ state: transition.code === 'LOCAL_REVIEW_REASON_STATE_MISMATCH' ? 'decision_reason_state_mismatch' : 'decision_reason_missing', label, persistenceReady: false, executionReady: false });
+  }
   if (current === 'dismissed') return Object.freeze({ state: 'dismissed', label: 'Dismissed locally', persistenceReady: false, executionReady: false });
-  if (current !== 'shortlisted') return Object.freeze({ state: 'not_shortlisted', label: 'Not shortlisted', persistenceReady: false, executionReady: false });
-  if (!transition.allowed) return Object.freeze({ state: 'decision_reason_missing', label: 'Decision reason missing', persistenceReady: false, executionReady: false });
+
+  const reasonCode = String(annotation.reasonCode || '');
+  if (reasonCode === 'identity_resolution_needed') return Object.freeze({ state: 'identity_resolution_needed', label: 'Identity resolution needed', persistenceReady: false, executionReady: false });
+  if (reasonCode === 'more_data_needed') return Object.freeze({ state: 'more_data_needed', label: 'More data needed', persistenceReady: false, executionReady: false });
+  if (reasonCode === 'operator_other') return Object.freeze({ state: 'operator_context_review', label: 'Operator context review', persistenceReady: false, executionReady: false });
+
   const identity = item?.observedIdentity || {};
   if (identity.confidenceBlocked === true || identity.quality === 'blocked_observed_identity') {
     return Object.freeze({ state: 'blocked_observed_identity', label: 'Identity blocked', persistenceReady: false, executionReady: false });
@@ -171,12 +184,17 @@ function mount() {
   root.querySelector('[data-cflr-state]').addEventListener('change', (event) => { state.reviewState = event.target.value; render(root); });
   root.querySelector('[data-cflr-sort]').addEventListener('change', (event) => { state.sort = event.target.value; render(root); });
   root.addEventListener('change', (event) => {
-    const select = event.target.closest?.('[data-cflr-reason]');
-    if (!select) return;
-    const id = String(select.dataset.reviewId || '');
+    const reason = event.target.closest?.('[data-cflr-reason]');
+    const note = event.target.closest?.('[data-cflr-note]');
+    const control = reason || note;
+    if (!control) return;
+    const id = String(control.dataset.reviewId || '');
     if (!state.annotations.has(id)) return;
     const current = state.annotations.get(id);
-    state.annotations.set(id, Object.freeze({ ...current, reasonCode: String(select.value || '') }));
+    state.annotations.set(id, Object.freeze({
+      reasonCode: reason ? String(reason.value || '') : current.reasonCode,
+      note: note ? String(note.value || '').slice(0, 240) : current.note,
+    }));
     render(root);
   });
   root.addEventListener('input', (event) => {
@@ -198,10 +216,13 @@ function mount() {
     if (!gate.allowed) {
       const message = gate.code === 'LOCAL_REVIEW_OTHER_NOTE_REQUIRED'
         ? 'Add a local note when using Other operator reason.'
-        : 'Choose a local decision reason before shortlisting or dismissing.';
+        : gate.code === 'LOCAL_REVIEW_REASON_STATE_MISMATCH'
+          ? 'Selected decision reason does not support this review transition.'
+          : 'Choose a local decision reason before shortlisting or dismissing.';
       return status(root, message, 'bad');
     }
     state.states.set(id, next);
+    if (next === 'open') state.annotations.set(id, Object.freeze({ reasonCode: '', note: '' }));
     render(root);
     status(root, `Local review state: ${next}. Decision annotation remains browser-memory only; nothing was persisted.`, 'ok');
   });
@@ -283,7 +304,7 @@ function render(root) {
       <span>Identity blocked <b>${num(state.queue.summary.blockedObservedIdentityCount)}</b></span>
     </div>
     <div class="cflr-group-summary">${CANDIDATE_GROUPS.map((kind) => `<span>${esc(candidateGroupLabel(kind))} <b>${num(state.queue.items.filter((item) => item.candidateKind === kind).length)}</b></span>`).join('')}</div>
-    <div class="cflr-note"><b>Shortlisted = local follow-up intent only.</b> A decision reason is required for shortlist/dismiss. Notes and states are browser-memory only and never create persistence, execution, or Amazon mutation authority.</div>
+    <div class="cflr-note"><b>Shortlisted = local follow-up intent only.</b> A transition-compatible decision reason is required for shortlist/dismiss. Notes and states are browser-memory only and never create persistence, execution, or Amazon mutation authority.</div>
     <div class="cflr-table"><table><thead><tr><th>Candidate</th><th>Match</th><th>Rationale</th><th>Evidence</th><th>Identity confidence</th><th>Local decision</th><th>State</th><th>Review</th></tr></thead><tbody>${groups.length ? groups.map(groupRows).join('') : '<tr><td colspan="8">No matching local items.</td></tr>'}</tbody></table></div>
     <div class="cflr-foot"><span>Input-set fingerprint</span><code>${esc(state.queue.source.inputSetFingerprint)}</code><span>Canonical identity</span><b>unresolved</b><span>Persistence / execution</span><b>disabled / disabled</b></div>`;
 }
@@ -309,7 +330,8 @@ function row(item) {
   const identity = item.observedIdentity || {};
   const confidence = identityConfidenceKey(identity);
   const readiness = localFollowUpReadiness(item, reviewState, annotation);
-  return `<tr data-cflr-id="${esc(item.reviewId)}"><td><b>${esc(item.value)}</b><small>${esc(candidateGroupLabel(item.candidateKind))} · priority ${dec(item.priorityScore)}</small></td><td>${esc(item.suggestedMatchType)}</td><td><b>${esc(rationaleLabel(item.rationaleCode))}</b><small>${esc(item.rationaleCode)}</small></td><td>${money(metrics.spendMicros)} spend · ${num(metrics.orders ?? metrics.purchases)} orders<small>${pct(metrics.acos)} ACoS · ${num(item.sourceTermCount)} source term${Number(item.sourceTermCount) === 1 ? '' : 's'}</small></td><td class="${confidence === 'blocked' ? 'bad' : ''}"><b>${esc(confidenceLabel(confidence))}</b><small>${esc(identity.quality || 'unresolved')} · ${num(identity.linkCount)} links · ${num(identity.ambiguousLinkCount)} ambiguous</small></td><td><select data-cflr-reason data-review-id="${esc(item.reviewId)}"><option value="">Select decision reason</option>${REVIEW_REASON_CODES.map((code) => `<option value="${code}"${annotation.reasonCode === code ? ' selected' : ''}>${esc(reviewReasonLabel(code))}</option>`).join('')}</select><input data-cflr-note data-review-id="${esc(item.reviewId)}" maxlength="240" placeholder="Local note (optional*)" value="${esc(annotation.note)}"><small>*Required only for Other operator reason</small><span class="cflr-readiness ${readiness.state.includes('blocked') || readiness.state.includes('unresolved') || readiness.state.includes('missing') ? 'bad' : ''}">${esc(readiness.label)} · persistence disabled</span></td><td><b>${esc(reviewState)}</b></td><td>${STATES.filter((next) => next !== reviewState).map((next) => `<button type="button" data-cflr-next="${next}" data-review-id="${esc(item.reviewId)}">${next}</button>`).join('')}</td></tr>`;
+  const readinessBad = !['local_follow_up_ready', 'dismissed', 'not_shortlisted'].includes(readiness.state);
+  return `<tr data-cflr-id="${esc(item.reviewId)}"><td><b>${esc(item.value)}</b><small>${esc(candidateGroupLabel(item.candidateKind))} · priority ${dec(item.priorityScore)}</small></td><td>${esc(item.suggestedMatchType)}</td><td><b>${esc(rationaleLabel(item.rationaleCode))}</b><small>${esc(item.rationaleCode)}</small></td><td>${money(metrics.spendMicros)} spend · ${num(metrics.orders ?? metrics.purchases)} orders<small>${pct(metrics.acos)} ACoS · ${num(item.sourceTermCount)} source term${Number(item.sourceTermCount) === 1 ? '' : 's'}</small></td><td class="${confidence === 'blocked' ? 'bad' : ''}"><b>${esc(confidenceLabel(confidence))}</b><small>${esc(identity.quality || 'unresolved')} · ${num(identity.linkCount)} links · ${num(identity.ambiguousLinkCount)} ambiguous</small></td><td><select data-cflr-reason data-review-id="${esc(item.reviewId)}"><option value="">Select decision reason</option>${REVIEW_REASON_CODES.map((code) => `<option value="${code}"${annotation.reasonCode === code ? ' selected' : ''}>${esc(reviewReasonLabel(code))}</option>`).join('')}</select><input data-cflr-note data-review-id="${esc(item.reviewId)}" maxlength="240" placeholder="Local note (optional*)" value="${esc(annotation.note)}"><small>*Required for Other operator reason</small><span class="cflr-readiness ${readinessBad ? 'bad' : ''}">${esc(readiness.label)} · persistence disabled</span></td><td><b>${esc(reviewState)}</b></td><td>${STATES.filter((next) => next !== reviewState).map((next) => `<button type="button" data-cflr-next="${next}" data-review-id="${esc(item.reviewId)}">${next}</button>`).join('')}</td></tr>`;
 }
 
 function candidateGroupLabel(kind) {
