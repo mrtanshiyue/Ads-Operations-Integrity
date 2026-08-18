@@ -19,6 +19,7 @@ const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'ass
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
 const phase11AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase11-execution-readiness-v1.js');
 const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.3';
+const PHASE9_ASSET_VERSION = '1.2.1';
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
 const importsTag = '<script src="assets/cloudflare-native-imports-console-v1.js"></script>';
 const contextTag = '<script src="assets/cloudflare-native-operator-context-v1.js"></script>';
@@ -26,7 +27,8 @@ const decisionTag = '<script src="assets/cloudflare-native-decision-intelligence
 const csvIntelligenceTag = `<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=${CSV_INTELLIGENCE_ASSET_VERSION}"></script>`;
 const csvIntelligenceTagPattern = /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvProductUiTag = '<script src="assets/cloudflare-native-csv-product-ui-v2.js"></script>';
-const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
+const phase9Tag = `<script src="assets/cloudflare-native-phase9-productization-v1.js?v=${PHASE9_ASSET_VERSION}"></script>`;
+const phase9TagPattern = /<script src="assets\/cloudflare-native-phase9-productization-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-readiness-v1.js"></script>';
 
 await import('./build-cloudflare-native-copy-all.mjs');
@@ -40,10 +42,11 @@ await access(phase9AssetPath, constants.R_OK);
 await access(phase11AssetPath, constants.R_OK);
 
 let nativeIndex = await readFile(distIndexPath, 'utf8');
-for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvProductUiTag, phase9Tag, phase11Tag]) {
+for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvProductUiTag, phase11Tag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(csvIntelligenceTagPattern, '');
+nativeIndex = nativeIndex.replace(phase9TagPattern, '');
 if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
 nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
