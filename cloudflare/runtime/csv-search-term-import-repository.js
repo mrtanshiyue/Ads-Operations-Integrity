@@ -29,11 +29,11 @@ export function createD1CsvSearchTermImportRepository(db) {
       const statements = [];
       statements.push(db.prepare(`
         INSERT INTO csv_import_batches(
-          import_id, source_file_name, report_type, marketplace, profile_id, currency_code,
+          import_id, source_file_name, report_type, marketplace, profile_id, advertiser_account_id, currency_code,
           report_start_date, report_end_date, content_sha256, content_bytes, schema_version,
           row_count, accepted_rows, rejected_rows, duplicate_status, status,
           validation_summary_json, uploaded_at
-        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,0,'unique','validated',?14,?15)
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,0,'unique','validated',?15,?16)
       `).bind(...batch.bindValues));
 
       for (const row of parsed.rows) {
@@ -45,7 +45,9 @@ export function createD1CsvSearchTermImportRepository(db) {
 
       statements.push(db.prepare(`
         INSERT INTO csv_search_term_daily(
-          row_key, report_date, portfolio_name, campaign_name, ad_group_name, targeting,
+          row_key, report_date, advertiser_account_id, portfolio_id, portfolio_name,
+          campaign_id, campaign_name, ad_group_id, ad_group_name, targeting_id, targeting,
+          targeting_identity_state, targeting_type, targeting_state, target_bid_micros,
           match_type, search_term, normalized_search_term, impressions, clicks, cost_micros,
           purchases, units_sold, sales_micros, marketplace, profile_id, currency_code,
           source_import_id, source_row_ordinal, updated_at
@@ -53,10 +55,19 @@ export function createD1CsvSearchTermImportRepository(db) {
         SELECT
           json_extract(canonical_row_json,'$.rowKey'),
           json_extract(canonical_row_json,'$.reportDate'),
+          json_extract(canonical_row_json,'$.advertiserAccountId'),
+          json_extract(canonical_row_json,'$.portfolioId'),
           json_extract(canonical_row_json,'$.portfolioName'),
+          json_extract(canonical_row_json,'$.campaignId'),
           json_extract(canonical_row_json,'$.campaignName'),
+          json_extract(canonical_row_json,'$.adGroupId'),
           json_extract(canonical_row_json,'$.adGroupName'),
-          json_extract(canonical_row_json,'$.targeting'),
+          json_extract(canonical_row_json,'$.targetingId'),
+          COALESCE(json_extract(canonical_row_json,'$.targeting'),''),
+          COALESCE(json_extract(canonical_row_json,'$.targetingIdentityState'),'name_only'),
+          json_extract(canonical_row_json,'$.targetingType'),
+          json_extract(canonical_row_json,'$.targetingState'),
+          CAST(json_extract(canonical_row_json,'$.targetBidMicros') AS INTEGER),
           json_extract(canonical_row_json,'$.matchType'),
           json_extract(canonical_row_json,'$.searchTerm'),
           json_extract(canonical_row_json,'$.normalizedSearchTerm'),
@@ -82,6 +93,9 @@ export function createD1CsvSearchTermImportRepository(db) {
           purchases=excluded.purchases,
           units_sold=excluded.units_sold,
           sales_micros=excluded.sales_micros,
+          target_bid_micros=excluded.target_bid_micros,
+          targeting_type=excluded.targeting_type,
+          targeting_state=excluded.targeting_state,
           marketplace=excluded.marketplace,
           profile_id=excluded.profile_id,
           currency_code=excluded.currency_code,
@@ -115,14 +129,14 @@ export function createD1CsvSearchTermImportRepository(db) {
       const uploadedAt = requiredText(parsed.uploadedAt, 'CSV_UPLOADED_AT_REQUIRED');
       const statements = [db.prepare(`
         INSERT INTO csv_import_batches(
-          import_id, source_file_name, report_type, marketplace, profile_id, currency_code,
+          import_id, source_file_name, report_type, marketplace, profile_id, advertiser_account_id, currency_code,
           report_start_date, report_end_date, content_sha256, content_bytes, schema_version,
           row_count, accepted_rows, rejected_rows, duplicate_status, status,
           validation_summary_json, uploaded_at
-        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,'unique','rejected',?15,?16)
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,'unique','rejected',?16,?17)
       `).bind(
         requiredText(importId,'CSV_IMPORT_ID_REQUIRED'), requiredText(parsed.sourceFileName,'CSV_SOURCE_FILE_NAME_REQUIRED'),
-        CSV_SEARCH_TERM_REPORT_TYPE, parsed.marketplace, parsed.profileId, parsed.currencyCode,
+        CSV_SEARCH_TERM_REPORT_TYPE, parsed.marketplace, parsed.profileId, parsed.advertiserAccountId, parsed.currencyCode,
         requiredText(parsed.reportStartDate,'CSV_REPORT_START_DATE_REQUIRED'), requiredText(parsed.reportEndDate,'CSV_REPORT_END_DATE_REQUIRED'),
         requiredText(parsed.contentSha256,'CSV_CONTENT_SHA256_REQUIRED'), parsed.contentBytes, CSV_IMPORT_SCHEMA_VERSION,
         parsed.rowCount, parsed.acceptedRows, parsed.rejectedRows, canonicalJson(parsed.validationSummary), uploadedAt,
@@ -157,6 +171,7 @@ function normalizeBatch(importId, parsed, now) {
       CSV_SEARCH_TERM_REPORT_TYPE,
       parsed.marketplace,
       parsed.profileId,
+      parsed.advertiserAccountId,
       parsed.currencyCode,
       requiredText(parsed.reportStartDate,'CSV_REPORT_START_DATE_REQUIRED'),
       requiredText(parsed.reportEndDate,'CSV_REPORT_END_DATE_REQUIRED'),

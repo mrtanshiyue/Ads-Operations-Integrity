@@ -6,28 +6,37 @@ export const CSV_SEARCH_TERM_REPORT_TYPE = 'spSearchTerm';
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_ROWS = 200_000;
 const FORMULA_PREFIX = /^[\t\r\n ]*[=+\-@]/u;
+const SAFE_IDENTIFIER = /^[A-Za-z0-9._:-]+$/u;
 
 const HEADER_ALIASES = Object.freeze({
-  reportDate: ['date', 'report date', 'start date'],
-  portfolioName: ['portfolio name', 'portfolio'],
-  campaignName: ['campaign name', 'campaign'],
-  adGroupName: ['ad group name', 'ad group'],
-  targeting: ['targeting', 'keyword', 'target'],
-  matchType: ['match type'],
-  searchTerm: ['customer search term', 'search term'],
-  impressions: ['impressions'],
-  clicks: ['clicks'],
-  spend: ['spend', 'cost'],
-  purchases: ['7 day total orders', '7 day total orders (#)', 'orders'],
-  sales: ['7 day total sales', 'sales'],
-  unitsSold: ['7 day total units', '7 day total units (#)', 'units'],
+  reportDate: ['date', 'report date', 'start date', '日期'],
+  portfolioId: ['portfolio id', 'portfolio identifier', '广告组合编号'],
+  portfolioName: ['portfolio name', 'portfolio', '广告组合名称'],
+  advertiserAccountId: ['advertiser account id', 'advertiser id', '广告主账户 id'],
+  campaignId: ['campaign id', 'campaign identifier', '广告活动编号'],
+  campaignName: ['campaign name', 'campaign', '广告活动名称'],
+  adGroupId: ['ad group id', 'ad group identifier', '广告组编号'],
+  adGroupName: ['ad group name', 'ad group', '广告组名称'],
+  targetingId: ['targeting id', 'target id', '投放方案编号'],
+  targetBid: ['target bid', 'bid', '目标竞价'],
+  targetingType: ['targeting type', '投放类型'],
+  targetingState: ['targeting state', 'state', '投放状态'],
+  targeting: ['targeting', 'keyword', 'target', '投放方案'],
+  matchType: ['match type', 'targeting match type', '投放匹配类型-targeting match type'],
+  searchTerm: ['customer search term', 'search term', '搜索词'],
+  impressions: ['impressions', '展示量'],
+  clicks: ['clicks', '点击量'],
+  spend: ['spend', 'cost', '总成本'],
+  purchases: ['7 day total orders', '7 day total orders (#)', 'orders', '购买量'],
+  sales: ['7 day total sales', 'sales', '销售额'],
+  unitsSold: ['7 day total units', '7 day total units (#)', 'units', '已售商品数量'],
   marketplace: ['marketplace'],
   profileId: ['profile id', 'profileid'],
-  currencyCode: ['currency', 'currency code'],
+  currencyCode: ['currency', 'currency code', '预算货币'],
 });
 
 const REQUIRED = Object.freeze([
-  'reportDate', 'campaignName', 'adGroupName', 'targeting', 'searchTerm',
+  'reportDate', 'campaignName', 'adGroupName', 'searchTerm',
   'impressions', 'clicks', 'spend', 'purchases', 'sales', 'unitsSold',
 ]);
 
@@ -73,7 +82,13 @@ export async function parseAmazonSearchTermCsv({
   const canonicalRows = [];
   const errors = [];
   const rowKeys = new Set();
-  const observed = { marketplace:new Set(), profileId:new Set(), currencyCode:new Set() };
+  const observed = {
+    marketplace:new Set(),
+    profileId:new Set(),
+    currencyCode:new Set(),
+    advertiserAccountId:new Set(),
+  };
+  const targetingIdentityStates = {};
 
   for (let index = 1; index < rows.length; index += 1) {
     const sourceRowOrdinal = index - 1;
@@ -88,6 +103,7 @@ export async function parseAmazonSearchTermCsv({
         fact,
       }));
       collectObserved(observed, fact);
+      targetingIdentityStates[fact.targetingIdentityState] = (targetingIdentityStates[fact.targetingIdentityState] || 0) + 1;
     } catch (error) {
       errors.push(normalizeRowError(error, sourceRowOrdinal));
     }
@@ -116,6 +132,7 @@ export async function parseAmazonSearchTermCsv({
     reportEndDate,
     marketplace:singleValue(observed.marketplace) || suppliedContext.marketplace,
     profileId:singleValue(observed.profileId) || suppliedContext.profileId,
+    advertiserAccountId:singleValue(observed.advertiserAccountId),
     currencyCode:singleValue(observed.currencyCode) || suppliedContext.currencyCode,
     rowCount,
     acceptedRows,
@@ -125,6 +142,7 @@ export async function parseAmazonSearchTermCsv({
     validationSummary:Object.freeze({
       rowCount, acceptedRows, rejectedRows,
       errorCodes:Object.freeze(countErrorCodes(errors)),
+      targetingIdentityStates:Object.freeze({ ...targetingIdentityStates }),
     }),
   });
 }
@@ -193,12 +211,27 @@ export function buildHeaderMap(headerRow) {
 
 async function canonicalizeCsvSearchTermRow(row, header, sourceRowOrdinal, context) {
   const reportDate = isoDate(cell(row, header.reportDate));
-  const campaignName = requiredSafeText(cell(row, header.campaignName), 'CSV_CAMPAIGN_NAME_REQUIRED');
-  const adGroupName = requiredSafeText(cell(row, header.adGroupName), 'CSV_AD_GROUP_NAME_REQUIRED');
-  const targeting = requiredSafeText(cell(row, header.targeting), 'CSV_TARGETING_REQUIRED');
-  const searchTerm = requiredSafeText(cell(row, header.searchTerm), 'CSV_SEARCH_TERM_REQUIRED');
-  const normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+  const advertiserAccountId = optionalIdentifier(cell(row, header.advertiserAccountId));
+  const portfolioId = optionalIdentifier(cell(row, header.portfolioId));
   const portfolioName = optionalSafeText(cell(row, header.portfolioName));
+  const campaignId = optionalIdentifier(cell(row, header.campaignId));
+  const campaignName = requiredSafeText(cell(row, header.campaignName), 'CSV_CAMPAIGN_NAME_REQUIRED');
+  const adGroupId = optionalIdentifier(cell(row, header.adGroupId));
+  const adGroupName = requiredSafeText(cell(row, header.adGroupName), 'CSV_AD_GROUP_NAME_REQUIRED');
+  const targetingId = optionalIdentifier(cell(row, header.targetingId));
+  const targeting = optionalSafeText(cell(row, header.targeting)) || '';
+  const targetingIdentityState = targeting && targetingId
+    ? 'resolved_id'
+    : targeting
+      ? 'name_only'
+      : targetingId
+        ? 'id_only'
+        : 'unresolved';
+  const targetingType = optionalSafeText(cell(row, header.targetingType));
+  const targetingState = optionalSafeText(cell(row, header.targetingState))?.toUpperCase() || null;
+  const targetBidMicros = optionalMoneyMicros(cell(row, header.targetBid));
+  const searchTerm = requiredBusinessText(cell(row, header.searchTerm), 'CSV_SEARCH_TERM_REQUIRED');
+  const normalizedSearchTerm = normalizeSearchTerm(searchTerm);
   const matchType = optionalSafeText(cell(row, header.matchType))?.toUpperCase() || null;
   const marketplace = optionalSafeText(cell(row, header.marketplace)) || context.marketplace;
   const profileId = optionalSafeText(cell(row, header.profileId)) || context.profileId;
@@ -210,19 +243,29 @@ async function canonicalizeCsvSearchTermRow(row, header, sourceRowOrdinal, conte
   const unitsSold = parseNonNegativeInteger(cleanInteger(cell(row, header.unitsSold)), 'CSV_UNITS_INVALID');
   const salesMicros = String(exactDecimalToMicros(cleanMoney(cell(row, header.sales))));
   const rowKey = await buildCsvSearchTermRowKey({
-    reportDate, portfolioName, campaignName, adGroupName, targeting, matchType, searchTerm,
+    reportDate, advertiserAccountId, portfolioId, portfolioName, campaignId, campaignName,
+    adGroupId, adGroupName, targetingId, targeting, matchType, searchTerm,
   });
   return Object.freeze({
-    rowKey, reportDate, portfolioName, campaignName, adGroupName, targeting, matchType,
-    searchTerm, normalizedSearchTerm, impressions, clicks, costMicros, purchases, unitsSold,
-    salesMicros, marketplace, profileId, currencyCode, sourceRowOrdinal,
+    rowKey, reportDate, advertiserAccountId, portfolioId, portfolioName,
+    campaignId, campaignName, adGroupId, adGroupName, targetingId, targeting,
+    targetingIdentityState, targetingType, targetingState, targetBidMicros,
+    matchType, searchTerm, normalizedSearchTerm, impressions, clicks, costMicros,
+    purchases, unitsSold, salesMicros, marketplace, profileId, currencyCode, sourceRowOrdinal,
   });
 }
 
 export async function buildCsvSearchTermRowKey(input) {
   const identity = [
-    'csv.search_term_daily.v1', input.reportDate, input.portfolioName || null,
-    input.campaignName, input.adGroupName, input.targeting, input.matchType || null, input.searchTerm,
+    'csv.search_term_daily.v2',
+    input.reportDate,
+    input.advertiserAccountId || null,
+    input.portfolioId || input.portfolioName || null,
+    input.campaignId || input.campaignName,
+    input.adGroupId || input.adGroupName,
+    input.targetingId || input.targeting || null,
+    input.matchType || null,
+    input.searchTerm,
   ];
   return sha256Hex(new TextEncoder().encode(JSON.stringify(identity)));
 }
@@ -236,9 +279,25 @@ function cleanMoney(value) {
   return text;
 }
 
+function optionalMoneyMicros(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  return String(exactDecimalToMicros(cleanMoney(text)));
+}
+
 function cleanInteger(value) {
   const text = String(value ?? '').trim().replace(/,/g, '');
   if (!/^\d+$/.test(text)) throw new CsvSearchTermImportError('CSV_INTEGER_INVALID');
+  return text;
+}
+
+function optionalIdentifier(value) {
+  if (value == null) return null;
+  let text = String(value).trim();
+  if (!text) return null;
+  const excel = text.match(/^="([^"]*)"$/u);
+  if (excel) text = excel[1].trim();
+  if (!text || !SAFE_IDENTIFIER.test(text)) throw new CsvSearchTermImportError('CSV_IDENTIFIER_INVALID');
   return text;
 }
 
@@ -246,7 +305,10 @@ function normalizeHeader(value) {
   return String(value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
 }
 function normalizeSearchTerm(value) {
-  return requiredSafeText(value, 'CSV_SEARCH_TERM_REQUIRED').normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
+  return requiredBusinessText(value, 'CSV_SEARCH_TERM_REQUIRED').normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
+}
+function requiredBusinessText(value, code) {
+  return requiredText(value, code);
 }
 function requiredSafeText(value, code) {
   const text = requiredText(value, code);
@@ -270,20 +332,34 @@ function isBlankRow(row) { return row.every((value) => String(value ?? '').trim(
 function isoDate(value) {
   const raw = String(value ?? '').trim();
   const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  const text = mdy ? `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}` : raw;
+  const chinese = raw.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日$/u);
+  const text = mdy
+    ? `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`
+    : chinese
+      ? `${chinese[1]}-${chinese[2].padStart(2,'0')}-${chinese[3].padStart(2,'0')}`
+      : raw;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new CsvSearchTermImportError('CSV_REPORT_DATE_INVALID');
   const parsed = new Date(`${text}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0,10) !== text) throw new CsvSearchTermImportError('CSV_REPORT_DATE_INVALID');
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0,10) !== text) {
+    throw new CsvSearchTermImportError('CSV_REPORT_DATE_INVALID');
+  }
   return text;
 }
 function collectObserved(observed, fact) {
   for (const key of Object.keys(observed)) if (fact[key]) observed[key].add(fact[key]);
 }
 function validateSingleContext(observed, supplied, errors) {
-  for (const key of Object.keys(observed)) {
-    if (observed[key].size > 1) errors.push(Object.freeze({ sourceRowOrdinal:null, errorCode:`CSV_MIXED_${key.replace(/[A-Z]/g, m => `_${m}`).toUpperCase()}` }));
+  for (const key of ['marketplace','profileId','currencyCode']) {
+    if (observed[key].size > 1) {
+      errors.push(Object.freeze({ sourceRowOrdinal:null, errorCode:`CSV_MIXED_${key.replace(/[A-Z]/g, m => `_${m}`).toUpperCase()}` }));
+    }
     const only = singleValue(observed[key]);
-    if (supplied[key] && only && supplied[key] !== only) errors.push(Object.freeze({ sourceRowOrdinal:null, errorCode:`CSV_${key.replace(/[A-Z]/g, m => `_${m}`).toUpperCase()}_CONTEXT_MISMATCH` }));
+    if (supplied[key] && only && supplied[key] !== only) {
+      errors.push(Object.freeze({ sourceRowOrdinal:null, errorCode:`CSV_${key.replace(/[A-Z]/g, m => `_${m}`).toUpperCase()}_CONTEXT_MISMATCH` }));
+    }
+  }
+  if (observed.advertiserAccountId.size > 1) {
+    errors.push(Object.freeze({ sourceRowOrdinal:null, errorCode:'CSV_MIXED_ADVERTISER_ACCOUNT_ID' }));
   }
 }
 function singleValue(set) { return set.size === 1 ? [...set][0] : null; }

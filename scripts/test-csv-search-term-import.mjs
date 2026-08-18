@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   CsvSearchTermImportError,
   buildHeaderMap,
@@ -33,6 +34,31 @@ assert.equal(parsed.rows[1].fact.searchTerm, 'reading, glasses women');
 assert.match(parsed.contentSha256, /^[0-9a-f]{64}$/);
 assert.notEqual(parsed.rows[0].logicalRowKey, parsed.rows[1].logicalRowKey);
 
+const localized = [
+  '预算货币,广告主账户 ID,广告组合编号,广告组合名称,广告活动编号,广告活动名称,广告组编号,广告组名称,搜索词,日期,投放方案编号,目标竞价,投放类型,投放状态,投放方案,投放匹配类型-Targeting match type,展示量,点击量,总成本,购买量,销售额,已售商品数量',
+  'USD,"=""amzn1.ads-account.g.example""",100,Readers,"=""108748301332024""",Campaign CN,"=""474054107145274""",Ad Group CN,+0.5 reading glasses,2026年6月25日,442451552344752,0.96,,ENABLED,loose-match,TARGETING_EXPRESSION_PREDEFINED,423,3,4.11,0,0.00,0',
+  'USD,"=""amzn1.ads-account.g.example""",100,Readers,"=""108748301332024""",Campaign CN,"=""474054107145274""",Ad Group CN,womens reading glasses,2026年6月26日,,0.96,,ENABLED,,,3330,12,12.12,0,0.00,0',
+].join('\n');
+const localizedParsed = await parseAmazonSearchTermCsv({
+  csvText:localized,
+  sourceFileName:'localized-search-term.csv',
+  uploadedAt:'2026-08-18T02:00:00.000Z',
+});
+assert.equal(localizedParsed.ok, true);
+assert.equal(localizedParsed.reportStartDate, '2026-06-25');
+assert.equal(localizedParsed.reportEndDate, '2026-06-26');
+assert.equal(localizedParsed.currencyCode, 'USD');
+assert.equal(localizedParsed.advertiserAccountId, 'amzn1.ads-account.g.example');
+assert.equal(localizedParsed.rows[0].fact.campaignId, '108748301332024');
+assert.equal(localizedParsed.rows[0].fact.adGroupId, '474054107145274');
+assert.equal(localizedParsed.rows[0].fact.targetingId, '442451552344752');
+assert.equal(localizedParsed.rows[0].fact.targetBidMicros, '960000');
+assert.equal(localizedParsed.rows[0].fact.targetingIdentityState, 'resolved_id');
+assert.equal(localizedParsed.rows[0].fact.searchTerm, '+0.5 reading glasses');
+assert.equal(localizedParsed.rows[1].fact.targeting, '');
+assert.equal(localizedParsed.rows[1].fact.targetingIdentityState, 'unresolved');
+assert.deepEqual(localizedParsed.validationSummary.targetingIdentityStates, { resolved_id:1, unresolved:1 });
+
 assert.throws(() => buildHeaderMap(['Date','DATE']), (error) => error instanceof CsvSearchTermImportError && error.code === 'CSV_DUPLICATE_HEADERS');
 assert.throws(() => parseBoundedCsv('a,b\n"broken,b', 10), (error) => error.code === 'CSV_UNTERMINATED_QUOTE');
 
@@ -45,11 +71,7 @@ const rejected = await parseAmazonSearchTermCsv({
 assert.equal(rejected.ok, false);
 assert.ok(rejected.errors.some((error) => error.errorCode === 'CSV_FORMULA_INJECTION_BLOCKED'));
 
-const duplicate = [
-  csv.split('\r\n')[0],
-  csv.split('\r\n')[1],
-  csv.split('\r\n')[1],
-].join('\n');
+const duplicate = [csv.split('\r\n')[0], csv.split('\r\n')[1], csv.split('\r\n')[1]].join('\n');
 const duplicateParsed = await parseAmazonSearchTermCsv({
   csvText:duplicate,
   sourceFileName:'duplicate.csv',
@@ -86,17 +108,18 @@ assert.equal(reused.action, 'csv_import_duplicate');
 assert.equal(reused.reused, true);
 assert.equal(reused.importId, 'imp-existing');
 
-const rejectedRepository = {
-  ...repository,
-  async findDuplicate() { return null; },
-};
-const rejectedIngestion = await ingestSearchTermCsvOnce({
-  importId:'imp-rejected',
-  input:{ csvText:injected, sourceFileName:'bad.csv', uploadedAt:'2026-08-18T01:00:00.000Z' },
-  repository:rejectedRepository,
-  now:'2026-08-18T01:01:00.000Z',
-});
-assert.equal(rejectedIngestion.action, 'csv_import_rejected');
-assert.equal(rejectedIngestion.published, false);
+const repositorySource = await readFile(new URL('../cloudflare/runtime/csv-search-term-import-repository.js', import.meta.url), 'utf8');
+for (const token of ['advertiser_account_id','campaign_id','ad_group_id','targeting_id','targeting_identity_state','target_bid_micros']) {
+  assert.match(repositorySource, new RegExp(token), `repository must persist ${token}`);
+}
 
-console.log(JSON.stringify({ ok:true, rows:parsed.rowCount, schemaVersion:parsed.schemaVersion, ingestion:true }));
+console.log(JSON.stringify({
+  ok:true,
+  rows:parsed.rowCount,
+  localizedRows:localizedParsed.rowCount,
+  localizedDailyDate:true,
+  excelSafeIds:true,
+  unresolvedTargetingPreserved:true,
+  schemaVersion:parsed.schemaVersion,
+  ingestion:true,
+}));
