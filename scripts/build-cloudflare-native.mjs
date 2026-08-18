@@ -15,6 +15,7 @@ const importsAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets',
 const contextAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-operator-context-v1.js');
 const decisionAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-decision-intelligence-v1.js');
 const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-intelligence-v1.js');
+const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-product-ui-v1.js');
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
 const phase11AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase11-execution-readiness-v1.js');
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
@@ -22,6 +23,7 @@ const importsTag = '<script src="assets/cloudflare-native-imports-console-v1.js"
 const contextTag = '<script src="assets/cloudflare-native-operator-context-v1.js"></script>';
 const decisionTag = '<script src="assets/cloudflare-native-decision-intelligence-v1.js"></script>';
 const csvIntelligenceTag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js"></script>';
+const csvProductUiTag = '<script src="assets/cloudflare-native-csv-product-ui-v1.js"></script>';
 const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
 const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-readiness-v1.js"></script>';
 
@@ -31,15 +33,16 @@ await access(importsAssetPath, constants.R_OK);
 await access(contextAssetPath, constants.R_OK);
 await access(decisionAssetPath, constants.R_OK);
 await access(csvIntelligenceAssetPath, constants.R_OK);
+await access(csvProductUiAssetPath, constants.R_OK);
 await access(phase9AssetPath, constants.R_OK);
 await access(phase11AssetPath, constants.R_OK);
 
 let nativeIndex = await readFile(distIndexPath, 'utf8');
-for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvIntelligenceTag, phase9Tag, phase11Tag]) {
+for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvIntelligenceTag, csvProductUiTag, phase9Tag, phase11Tag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
-nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
+nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
 for (const [tag, label] of [
   [operatorTag, 'Operator Workspace'],
@@ -47,6 +50,7 @@ for (const [tag, label] of [
   [contextTag, 'Operator Context'],
   [decisionTag, 'Decision Intelligence'],
   [csvIntelligenceTag, 'CSV Intelligence extension'],
+  [csvProductUiTag, 'CSV product UI integration'],
   [phase9Tag, 'Phase 9 productization extension'],
   [phase11Tag, 'Phase 11 execution readiness extension'],
 ]) {
@@ -56,7 +60,8 @@ if (nativeIndex.indexOf(operatorTag) > nativeIndex.indexOf(importsTag)) throw ne
 if (nativeIndex.indexOf(importsTag) > nativeIndex.indexOf(contextTag)) throw new Error('Operator Context must load after Imports console');
 if (nativeIndex.indexOf(contextTag) > nativeIndex.indexOf(decisionTag)) throw new Error('Decision Intelligence must load after Operator Context');
 if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(csvIntelligenceTag)) throw new Error('CSV Intelligence extension must load after Decision Intelligence');
-if (nativeIndex.indexOf(csvIntelligenceTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after CSV Intelligence');
+if (nativeIndex.indexOf(csvIntelligenceTag) > nativeIndex.indexOf(csvProductUiTag)) throw new Error('CSV product UI integration must load after CSV Intelligence');
+if (nativeIndex.indexOf(csvProductUiTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after CSV product UI integration');
 if (nativeIndex.indexOf(phase9Tag) > nativeIndex.indexOf(phase11Tag)) throw new Error('Phase 11 execution readiness extension must load after Phase 9 productization');
 await writeFile(distIndexPath, nativeIndex, 'utf8');
 
@@ -66,6 +71,7 @@ await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-operator-context-contract.mjs');
 await import('./test-decision-intelligence-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
+await import('./test-csv-product-ui-navigation-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
 await import('./test-phase11-execution-readiness-ui-contract.mjs');
 await import('./test-phase11-execution-safety.mjs');
