@@ -1,9 +1,17 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const STORAGE_SOURCE = 'aoi.decision.source';
-  const state = { mounted: false, payload: null, amazonProfileId: '' };
+  const REQUEST_TIMEOUT_MS = 30000;
+  const state = {
+    mounted: false,
+    payload: null,
+    amazonProfileId: '',
+    requestId: 0,
+    requestController: null,
+    timedOutRequestId: 0,
+  };
 
   Object.defineProperty(global, 'CloudflareCsvIntelligence', {
     value: Object.freeze({ version: VERSION, source: () => currentSource() }),
@@ -43,12 +51,14 @@
       const next = select.value;
       if (next === 'csv') state.amazonProfileId = String(profile?.value || state.amazonProfileId || '').trim();
       localStorage.setItem(STORAGE_SOURCE, next);
+      cancelActiveRequest();
       state.payload = null;
       applySourceMode();
     });
 
     panel.addEventListener('click', captureClick, true);
     global.addEventListener?.('cloudflare-operator-store-change', () => {
+      cancelActiveRequest();
       state.payload = null;
       if (currentSource() === 'csv') clearCsvResults();
     });
@@ -61,6 +71,7 @@
     if (run) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (state.requestController) return;
       void runCsvIntelligence();
       return;
     }
@@ -115,21 +126,66 @@
     });
     const profileId = value(panel, 'profileId');
     if (profileId) params.set('profileId', profileId);
+
+    const requestId = ++state.requestId;
+    const controller = new AbortController();
+    state.requestController = controller;
+    state.timedOutRequestId = 0;
+    const timeoutId = global.setTimeout(() => {
+      if (state.requestId !== requestId || state.requestController !== controller) return;
+      state.timedOutRequestId = requestId;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    setRunPending(panel, true);
     setStatus('Computing advisory intelligence over imported CSV facts…', 'loading');
     closeDrawer();
 
     try {
-      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence?${params}`);
+      const payload = await requestJson(
+        `/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence?${params}`,
+        { signal: controller.signal },
+      );
+      if (requestId !== state.requestId) return;
       state.payload = payload;
       renderCsvResults(payload);
       const valid = Number(payload?.summary?.csvProvenanceValidItemCount || 0);
       const candidates = Number(payload?.summary?.recommendationCandidateCount || 0);
       setStatus(`Imported CSV · ${valid}/${payload?.summary?.itemCount || 0} rows with valid CSV provenance · ${candidates} advisory candidates. Persistence and Amazon execution are disabled.`, 'warn');
     } catch (error) {
+      if (requestId !== state.requestId) return;
       state.payload = null;
       clearCsvResults();
-      setStatus(error.message || 'Imported CSV intelligence request failed.', 'error');
+      if (controller.signal.aborted && state.timedOutRequestId === requestId) {
+        setStatus('Imported CSV intelligence timed out after 30 seconds. No data was changed. Retry once; if it repeats, the server-side query needs investigation.', 'error');
+      } else if (!controller.signal.aborted) {
+        setStatus(error.message || 'Imported CSV intelligence request failed.', 'error');
+      }
+    } finally {
+      global.clearTimeout(timeoutId);
+      if (requestId === state.requestId) {
+        state.requestController = null;
+        state.timedOutRequestId = 0;
+        setRunPending(panel, false);
+      }
     }
+  }
+
+  function cancelActiveRequest() {
+    if (!state.requestController) return;
+    state.requestId += 1;
+    state.requestController.abort();
+    state.requestController = null;
+    state.timedOutRequestId = 0;
+    setRunPending(document.getElementById('cfDecisionPanel'), false);
+  }
+
+  function setRunPending(panel, pending) {
+    const run = panel?.querySelector('[data-run]');
+    if (!run) return;
+    run.disabled = Boolean(pending);
+    if (pending) run.setAttribute('aria-busy', 'true');
+    else run.removeAttribute('aria-busy');
   }
 
   function renderCsvResults(payload) {
@@ -203,8 +259,13 @@
   function currentStoreId() { return String(global.CloudflareOperatorContext?.getContext?.().storeId || global.CloudflareOperatorWorkspace?.currentStoreId?.() || '').trim(); }
   function value(panel, name) { return String(panel?.querySelector(`[name="${name}"]`)?.value || '').trim(); }
 
-  async function requestJson(url) {
-    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } });
+  async function requestJson(url, { signal } = {}) {
+    const response = await fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+      signal,
+    });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
     return payload;
