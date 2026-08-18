@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+await import('../cloudflare/runtime/csv-productization-api.js');
 const api = await readFile(path.join(root, 'cloudflare/runtime/csv-search-term-intelligence-api.js'), 'utf8');
 const productization = await readFile(path.join(root, 'cloudflare/runtime/csv-productization-api.js'), 'utf8');
 const migration = await readFile(path.join(root, 'cloudflare/foundation/migrations/store/0019_store_advisory_review_workflow.sql'), 'utf8');
