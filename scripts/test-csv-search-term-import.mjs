@@ -6,6 +6,7 @@ import {
   parseAmazonSearchTermCsv,
   parseBoundedCsv,
 } from '../cloudflare/runtime/csv-search-term-import.js';
+import { createD1CsvSearchTermImportRepository } from '../cloudflare/runtime/csv-search-term-import-repository.js';
 import { ingestSearchTermCsvOnce } from '../cloudflare/runtime/csv-search-term-ingestion.js';
 
 const csv = [
@@ -113,6 +114,61 @@ for (const token of ['advertiser_account_id','campaign_id','ad_group_id','target
   assert.match(repositorySource, new RegExp(token), `repository must persist ${token}`);
 }
 
+function fakeStatement(sql, values = []) {
+  return {
+    sql,
+    values,
+    bind(...nextValues) { return fakeStatement(sql, nextValues); },
+    async first() { return { import_id:'imp-scale-8753', status:'published' }; },
+  };
+}
+const scaleBatches = [];
+const scaleDb = {
+  prepare(sql) { return fakeStatement(sql); },
+  async batch(statements) {
+    scaleBatches.push(statements);
+    return statements.map(() => ({ success:true, meta:{ changes:1 } }));
+  },
+};
+const realScaleRowCount = 8753;
+const scaleParsed = {
+  ok:true,
+  sourceFileName:'202606 (1).csv',
+  marketplace:'US',
+  profileId:null,
+  advertiserAccountId:'amzn1.ads-account.g.scale',
+  currencyCode:'USD',
+  reportStartDate:'2026-06-01',
+  reportEndDate:'2026-06-30',
+  contentSha256:'a'.repeat(64),
+  contentBytes:3_202_495,
+  rowCount:realScaleRowCount,
+  acceptedRows:realScaleRowCount,
+  rejectedRows:0,
+  validationSummary:{ targetingIdentityStates:{ resolved_id:8750, unresolved:3 } },
+  uploadedAt:'2026-08-18T03:13:03.000Z',
+  rows:Array.from({ length:realScaleRowCount }, (_, index) => ({
+    sourceRowOrdinal:index + 1,
+    logicalRowKey:`row-${index + 1}`,
+    canonicalRowJson:JSON.stringify({ rowKey:`row-${index + 1}`, reportDate:'2026-06-01' }),
+  })),
+};
+const scaleRepository = createD1CsvSearchTermImportRepository(scaleDb);
+const scaleResult = await scaleRepository.commitValidatedImport({
+  importId:'imp-scale-8753',
+  parsed:scaleParsed,
+  now:'2026-08-18T03:14:00.000Z',
+});
+assert.equal(scaleResult.status, 'published');
+assert.equal(scaleBatches.length, 1, 'validated import must remain one atomic D1 batch');
+const scaleStatements = scaleBatches[0];
+assert.ok(scaleStatements.length < 50, `real-scale import must stay below the Free D1 per-invocation query ceiling; got ${scaleStatements.length}`);
+const stageStatements = scaleStatements.filter((statement) => /INSERT INTO csv_search_term_stage/.test(statement.sql));
+assert.equal(stageStatements.length, Math.ceil(realScaleRowCount / 500));
+assert.ok(stageStatements.every((statement) => /FROM json_each\(\?2\)/.test(statement.sql)), 'stage writes must be set-based JSON1 inserts');
+assert.equal(stageStatements.reduce((sum, statement) => sum + JSON.parse(statement.values[1]).length, 0), realScaleRowCount);
+assert.ok(stageStatements.every((statement) => Buffer.byteLength(statement.values[1], 'utf8') <= 1_000_000), 'stage JSON bind payloads must stay under the repository chunk byte ceiling');
+
 console.log(JSON.stringify({
   ok:true,
   rows:parsed.rowCount,
@@ -122,4 +178,6 @@ console.log(JSON.stringify({
   unresolvedTargetingPreserved:true,
   schemaVersion:parsed.schemaVersion,
   ingestion:true,
+  realScaleRows:realScaleRowCount,
+  realScaleD1Statements:scaleStatements.length,
 }));
