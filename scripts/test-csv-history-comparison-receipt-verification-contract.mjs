@@ -22,9 +22,12 @@ assert.match(verificationSource, /receipt drift, ledger drift, evidence-key drif
 assert.match(verificationSource, /generatedTimestampIncluded: false/);
 assert.match(verificationSource, /replayedFromExplicitLocalLedger: true/);
 assert.match(verificationSource, /csv-history-audit-package-v1/);
+assert.match(verificationSource, /csv-history-audit-package-verification-v1/);
 assert.match(verificationSource, /Download audit package/);
+assert.match(verificationSource, /Verify downloaded audit package/);
 assert.match(verificationSource, /packageFingerprintBasis: 'canonical_manifest_without_package_fingerprint'/);
 assert.match(verificationSource, /portable_immutable_local_historical_audit_material/);
+assert.match(verificationSource, /CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH/);
 
 for (const pattern of [
   /\bfetch\s*\(/,
@@ -56,10 +59,12 @@ const exportMod = await import(`${pathToFileURL(path.join(distRoot, 'assets/clou
 assert.equal(verificationMod.CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_SCHEMA_VERSION, 'csv-history-comparison-receipt-verification-v1');
 assert.equal(verificationMod.CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_UI_VERSION, '1.0.0');
 assert.equal(verificationMod.CSV_HISTORY_AUDIT_PACKAGE_SCHEMA_VERSION, 'csv-history-audit-package-v1');
+assert.equal(verificationMod.CSV_HISTORY_AUDIT_PACKAGE_VERIFICATION_SCHEMA_VERSION, 'csv-history-audit-package-verification-v1');
 assert.equal(typeof verificationMod.verifyHistoricalComparisonReceiptAgainstLedger, 'function');
 assert.equal(typeof verificationMod.buildHistoricalAuditPackage, 'function');
 assert.equal(typeof verificationMod.validateHistoricalAuditPackageArtifact, 'function');
 assert.equal(typeof verificationMod.buildHistoricalAuditPackageZipFiles, 'function');
+assert.equal(typeof verificationMod.verifyHistoricalAuditPackageZip, 'function');
 assert.equal(typeof exportMod.buildStoredZip, 'function');
 
 const completeA = await fixture({
@@ -142,6 +147,22 @@ const zipB = exportMod.buildStoredZip(zipFilesB);
 assert.deepEqual([...zipA], [...zipB], 'Same evidence must produce byte-identical deterministic ZIP bytes');
 assert.equal(new DataView(zipA.buffer, zipA.byteOffset, zipA.byteLength).getUint32(0, true), 0x04034b50, 'Audit package must be a ZIP archive');
 
+const zipVerification = await verificationMod.verifyHistoricalAuditPackageZip(zipA, exportMod.buildStoredZip);
+assert.equal(zipVerification.schemaVersion, 'csv-history-audit-package-verification-v1');
+assert.equal(zipVerification.verificationState, 'audit_package_zip_verified_locally');
+assert.equal(zipVerification.packageFingerprint, auditA.packageFingerprint);
+assert.equal(zipVerification.ledgerFingerprint, ledger.ledgerFingerprint);
+assert.equal(zipVerification.comparisonReceiptFingerprint, receipt.receiptFingerprint);
+assert.equal(zipVerification.comparisonAllowed, true);
+assert.equal(zipVerification.rawEvidenceOnly, false);
+assert.equal(zipVerification.archiveFormat, 'zip_store_utf8');
+assert.equal(zipVerification.archiveEntryCount, 4);
+assert.equal(zipVerification.canonicalZipBytesMatch, true);
+assert.equal(zipVerification.generatedTimestampIncluded, false);
+assert.equal(zipVerification.replayedFromPackageContents, true);
+assert.equal(zipVerification.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+assertAuthorityFalse(zipVerification.authority);
+
 const partialA = await fixture({
   hashChar: 'c', month: '2026-06', startDate: '2026-06-01', endDate: '2026-06-15', expectedDayCount: 30, coveredDayCount: 15,
 });
@@ -165,6 +186,46 @@ assert.equal(blockedAudit.manifest.rawEvidenceOnly, true, 'Blocked comparison mu
 assert.match(blockedAudit.files.find((file) => file.path === 'historical-comparison-receipt.json').text, /"comparisonAllowed": false/);
 assert.match(blockedAudit.files.find((file) => file.path === 'comparison-verification.json').text, /"rawEvidenceOnly": true/);
 await verificationMod.validateHistoricalAuditPackageArtifact(blockedAudit);
+const blockedZipFiles = await verificationMod.buildHistoricalAuditPackageZipFiles(blockedAudit);
+const blockedZip = exportMod.buildStoredZip(blockedZipFiles);
+const blockedZipVerification = await verificationMod.verifyHistoricalAuditPackageZip(blockedZip, exportMod.buildStoredZip);
+assert.equal(blockedZipVerification.comparisonAllowed, false, 'Downloaded blocked package must remain blocked');
+assert.equal(blockedZipVerification.rawEvidenceOnly, true, 'Downloaded blocked package must remain raw-evidence-only');
+assertAuthorityFalse(blockedZipVerification.authority);
+
+const centralDirectoryDrift = Uint8Array.from(zipA);
+centralDirectoryDrift[centralDirectoryDrift.length - 3] ^= 0x01;
+await assertZipRejects(centralDirectoryDrift, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH', 'Central-directory or EOCD drift must fail byte-for-byte canonical validation');
+
+const appendedBytes = new Uint8Array(zipA.length + 1);
+appendedBytes.set(zipA);
+appendedBytes[appendedBytes.length - 1] = 1;
+await assertZipRejects(appendedBytes, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH', 'Appended archive bytes must fail canonical validation');
+
+const metadataDrift = Uint8Array.from(zipA);
+metadataDrift[8] = 8;
+await assertZipRejects(metadataDrift, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_METADATA_INVALID', 'Unsupported compression metadata must fail before package replay');
+
+const missingArchiveEntry = exportMod.buildStoredZip(zipFilesA.slice(0, -1));
+await assertZipRejects(missingArchiveEntry, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_REQUIRED_ENTRY_MISSING', 'ZIP missing a required package entry must fail closed');
+
+const reorderedArchive = exportMod.buildStoredZip([zipFilesA[1], zipFilesA[0], zipFilesA[2], zipFilesA[3]]);
+await assertZipRejects(reorderedArchive, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_ENTRY_ORDER_INVALID', 'ZIP entry order drift must fail closed');
+
+const evidenceTamperFiles = zipFilesA.map((file) => ({ ...file }));
+evidenceTamperFiles.find((file) => file.name === 'history-ledger.json').text += ' ';
+const evidenceTamperZip = exportMod.buildStoredZip(evidenceTamperFiles);
+await assertZipRejects(evidenceTamperZip, 'CSV_HISTORY_AUDIT_PACKAGE_ENTRY_HASH_MISMATCH', 'Canonical ZIP containing tampered evidence bytes must fail entry SHA-256 validation');
+
+const authorityTamperFiles = zipFilesA.map((file) => ({ ...file }));
+const authorityManifest = JSON.parse(authorityTamperFiles[0].text);
+authorityManifest.authority.executionAuthorized = true;
+authorityTamperFiles[0].text = serializeSorted(authorityManifest);
+const authorityTamperZip = exportMod.buildStoredZip(authorityTamperFiles);
+await assertZipRejects(authorityTamperZip, 'CSV_HISTORY_AUDIT_PACKAGE_AUTHORITY_ESCALATION_BLOCKED', 'Canonical ZIP must not smuggle authority escalation through manifest bytes');
+
+const unrelatedZip = exportMod.buildStoredZip([{ name: 'unrelated.json', text: '{}\n' }]);
+await assertZipRejects(unrelatedZip, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_REQUIRED_ENTRY_MISSING', 'Unrelated ZIP archives must not be accepted as historical audit packages');
 
 const wrongLedger = await engine.createCsvHistoryLedger(await fixture({
   hashChar: 'e', month: '2026-08', startDate: '2026-08-01', endDate: '2026-08-31', expectedDayCount: 31, coveredDayCount: 31,
@@ -269,17 +330,23 @@ await assertPackageRejects(receiptBindingDrift, 'CSV_HISTORY_AUDIT_PACKAGE_RECEI
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-history-audit-package-v1',
-  priorVerificationContractPreserved: true,
+  contract: 'csv-history-audit-package-verification-v1',
+  priorReceiptVerificationContractPreserved: true,
+  priorAuditPackageContractPreserved: true,
   standaloneReceiptIntegrityCheckedFirst: true,
   explicitLocalLedgerReplay: true,
   exactReceiptFingerprintMatchRequired: true,
   exactReceiptSerializationMatchRequired: true,
   deterministicPackageFingerprint: true,
   deterministicZipBytes: true,
+  downloadedZipReimportVerified: true,
+  canonicalArchiveBytesRebuiltAndMatched: true,
+  archiveMetadataDriftBlocked: true,
+  archiveEntryOrderDriftBlocked: true,
+  archiveTrailingBytesBlocked: true,
   entrySha256Bound: true,
-  allowedReceiptPackaged: true,
-  blockedRawEvidenceReceiptPackagedWithoutUpgrade: true,
+  allowedReceiptPackagedAndReverified: true,
+  blockedRawEvidenceReceiptPackagedAndReverifiedWithoutUpgrade: true,
   wrongLedgerBlocked: true,
   receiptTamperBlocked: true,
   ledgerTamperBlocked: true,
@@ -316,6 +383,14 @@ function assertAuthorityFalse(authority) {
 async function assertPackageRejects(artifact, code, message) {
   await assert.rejects(
     () => verificationMod.validateHistoricalAuditPackageArtifact(artifact),
+    (error) => error?.code === code,
+    message,
+  );
+}
+
+async function assertZipRejects(bytes, code, message) {
+  await assert.rejects(
+    () => verificationMod.verifyHistoricalAuditPackageZip(bytes, exportMod.buildStoredZip),
     (error) => error?.code === code,
     message,
   );
