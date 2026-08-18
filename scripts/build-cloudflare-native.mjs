@@ -24,6 +24,7 @@ const csvMonthlyWorkspaceAssetPath = path.join(repoRoot, 'dist-cloudflare-native
 const csvHistoryLedgerAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-ledger-v1.js');
 const csvHistoryComparisonReceiptAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-v1.js');
 const csvHistoryComparisonReceiptVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-verification-v1.js');
+const csvHistoryAuditPackageIndexVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-audit-package-index-verification-v1.js');
 const csvProvenanceAuditAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-provenance-audit-v1.js');
 const csvAnalysisExportAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-analysis-export-v1.js');
 const csvLibraryReviewAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-library-review-v1.js');
@@ -55,6 +56,7 @@ const CSV_MONTHLY_WORKSPACE_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_LEDGER_ASSET_VERSION = '1.4.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION = '1.0.0';
+const CSV_HISTORY_AUDIT_PACKAGE_INDEX_VERIFICATION_ASSET_VERSION = '1.0.0';
 const CSV_PROVENANCE_AUDIT_ASSET_VERSION = '1.0.0';
 const CSV_ANALYSIS_EXPORT_ASSET_VERSION = '1.0.0';
 const CSV_LIBRARY_REVIEW_ASSET_VERSION = '1.0.0';
@@ -83,6 +85,8 @@ const csvHistoryComparisonReceiptTag = `<script type="module" src="assets/cloudf
 const csvHistoryComparisonReceiptTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-comparison-receipt-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryComparisonReceiptVerificationTag = `<script type="module" src="assets/cloudflare-native-csv-history-comparison-receipt-verification-v1.js?v=${CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION}"></script>`;
 const csvHistoryComparisonReceiptVerificationTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-comparison-receipt-verification-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
+const csvHistoryAuditPackageIndexVerificationTag = `<script type="module" src="assets/cloudflare-native-csv-history-audit-package-index-verification-v1.js?v=${CSV_HISTORY_AUDIT_PACKAGE_INDEX_VERIFICATION_ASSET_VERSION}"></script>`;
+const csvHistoryAuditPackageIndexVerificationTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-audit-package-index-verification-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvProvenanceAuditTag = `<script type="module" src="assets/cloudflare-native-csv-provenance-audit-v1.js?v=${CSV_PROVENANCE_AUDIT_ASSET_VERSION}"></script>`;
 const csvProvenanceAuditTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-provenance-audit-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvAnalysisExportTag = `<script type="module" src="assets/cloudflare-native-csv-analysis-export-v1.js?v=${CSV_ANALYSIS_EXPORT_ASSET_VERSION}"></script>`;
@@ -113,6 +117,7 @@ await access(csvMonthlyWorkspaceAssetPath, constants.R_OK);
 await access(csvHistoryLedgerAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptVerificationAssetPath, constants.R_OK);
+await access(csvHistoryAuditPackageIndexVerificationAssetPath, constants.R_OK);
 await access(csvProvenanceAuditAssetPath, constants.R_OK);
 await access(csvAnalysisExportAssetPath, constants.R_OK);
 await access(csvLibraryReviewAssetPath, constants.R_OK);
@@ -133,12 +138,13 @@ nativeIndex = nativeIndex.replace(csvMonthlyWorkspaceTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryLedgerTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptVerificationTagPattern, '');
+nativeIndex = nativeIndex.replace(csvHistoryAuditPackageIndexVerificationTagPattern, '');
 nativeIndex = nativeIndex.replace(csvProvenanceAuditTagPattern, '');
 nativeIndex = nativeIndex.replace(csvAnalysisExportTagPattern, '');
 nativeIndex = nativeIndex.replace(csvLibraryReviewTagPattern, '');
 nativeIndex = nativeIndex.replace(phase9TagPattern, '');
 if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
-nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvDataQualityCommandCenterTag}\n  ${csvHierarchyQualityTag}\n  ${csvHierarchyDrilldownTag}\n  ${csvPeriodUiTag}\n  ${csvMonthlyWorkspaceTag}\n  ${csvHistoryLedgerTag}\n  ${csvHistoryComparisonReceiptTag}\n  ${csvHistoryComparisonReceiptVerificationTag}\n  ${csvProvenanceAuditTag}\n  ${csvAnalysisExportTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
+nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvDataQualityCommandCenterTag}\n  ${csvHierarchyQualityTag}\n  ${csvHierarchyDrilldownTag}\n  ${csvPeriodUiTag}\n  ${csvMonthlyWorkspaceTag}\n  ${csvHistoryLedgerTag}\n  ${csvHistoryComparisonReceiptTag}\n  ${csvHistoryComparisonReceiptVerificationTag}\n  ${csvHistoryAuditPackageIndexVerificationTag}\n  ${csvProvenanceAuditTag}\n  ${csvAnalysisExportTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
 for (const [tag, label] of [
   [operatorTag, 'Operator Workspace'], [importsTag, 'Imports console'], [contextTag, 'Operator Context'],
@@ -148,6 +154,7 @@ for (const [tag, label] of [
   [csvPeriodUiTag, 'CSV period UI extension'], [csvMonthlyWorkspaceTag, 'CSV monthly operating workspace'],
   [csvHistoryLedgerTag, 'CSV historical local-data ledger'], [csvHistoryComparisonReceiptTag, 'CSV historical comparison receipt'],
   [csvHistoryComparisonReceiptVerificationTag, 'CSV historical comparison receipt verification'],
+  [csvHistoryAuditPackageIndexVerificationTag, 'CSV historical audit package index verification'],
   [csvProvenanceAuditTag, 'CSV provenance audit extension'], [csvAnalysisExportTag, 'CSV analysis export extension'],
   [csvLibraryReviewTag, 'CSV Library Review extension'], [csvProductUiTag, 'CSV product UI integration'],
   [phase9Tag, 'Phase 9 productization extension'], [phase11Tag, 'Phase 11 execution readiness extension'],
@@ -167,7 +174,8 @@ if (nativeIndex.indexOf(csvPeriodUiTag) > nativeIndex.indexOf(csvMonthlyWorkspac
 if (nativeIndex.indexOf(csvMonthlyWorkspaceTag) > nativeIndex.indexOf(csvHistoryLedgerTag)) throw new Error('CSV historical local-data ledger must load after CSV monthly operating workspace');
 if (nativeIndex.indexOf(csvHistoryLedgerTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptTag)) throw new Error('CSV historical comparison receipt must load after CSV historical local-data ledger');
 if (nativeIndex.indexOf(csvHistoryComparisonReceiptTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag)) throw new Error('CSV historical comparison receipt verification must load after comparison receipt builder');
-if (nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag) > nativeIndex.indexOf(csvProvenanceAuditTag)) throw new Error('CSV provenance audit UI must load after CSV historical comparison receipt verification');
+if (nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag) > nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag)) throw new Error('CSV historical audit package index verification must load after package/index builder');
+if (nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag) > nativeIndex.indexOf(csvProvenanceAuditTag)) throw new Error('CSV provenance audit UI must load after CSV historical audit package index verification');
 if (nativeIndex.indexOf(csvProvenanceAuditTag) > nativeIndex.indexOf(csvAnalysisExportTag)) throw new Error('CSV analysis export UI must load after CSV provenance audit UI');
 if (nativeIndex.indexOf(csvAnalysisExportTag) > nativeIndex.indexOf(csvLibraryReviewTag)) throw new Error('CSV Library Review must load after CSV analysis export UI');
 if (nativeIndex.indexOf(csvLibraryReviewTag) > nativeIndex.indexOf(csvProductUiTag)) throw new Error('CSV product UI integration must load after CSV Library Review');
@@ -194,6 +202,7 @@ await import('./test-csv-history-ledger-contract.mjs');
 await import('./test-csv-history-period-comparison-contract.mjs');
 await import('./test-csv-history-comparison-receipt-contract.mjs');
 await import('./test-csv-history-comparison-receipt-verification-contract.mjs');
+await import('./test-csv-history-audit-package-index-verification-contract.mjs');
 await import('./test-csv-provenance-audit-contract.mjs');
 await import('./test-csv-analysis-export-contract.mjs');
 await import('./test-csv-library-review-bridge-contract.mjs');
