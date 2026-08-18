@@ -8,9 +8,10 @@ import {
   validateCsvHistoryLedger,
 } from './csv-analysis-engine/csv-history-ledger.js';
 
-export const CSV_HISTORY_LEDGER_UI_VERSION = '1.2.0';
+export const CSV_HISTORY_LEDGER_UI_VERSION = '1.3.0';
 export const CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION = 'csv-history-monthly-workspace-v1';
 export const CSV_HISTORY_TREND_SCHEMA_VERSION = 'csv-history-trend-v1';
+export const CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION = 'csv-history-evidence-drilldown-v1';
 export const CSV_HISTORY_TREND_METRICS = Object.freeze([
   Object.freeze({ key: 'spendMicros', label: 'Spend', unit: 'micros' }),
   Object.freeze({ key: 'salesMicros', label: 'Sales', unit: 'micros' }),
@@ -150,6 +151,126 @@ export function buildHistoricalTrend(ledger, metricKey = 'adContributionMicros')
   });
 }
 
+export async function buildHistoricalEvidenceDrilldown(ledger, selection) {
+  if (!selection || typeof selection !== 'object' || Array.isArray(selection)) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SELECTION_INVALID');
+  const requestedLedgerFingerprint = selectionHash(selection.ledgerFingerprint, 'CSV_HISTORY_EVIDENCE_LEDGER_FINGERPRINT_INVALID');
+  const requestedInputSetFingerprint = selectionHash(selection.sourceInputSetFingerprint, 'CSV_HISTORY_EVIDENCE_INPUT_SET_FINGERPRINT_INVALID');
+  const month = String(selection.month || '');
+  if (!/^\d{4}-\d{2}$/.test(month)) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_MONTH_INVALID');
+  const metricKey = String(selection.metricKey || 'adContributionMicros');
+  const metric = CSV_HISTORY_TREND_METRICS.find((item) => item.key === metricKey);
+  if (!metric) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_METRIC_UNSUPPORTED');
+
+  const validated = await validateCsvHistoryLedger(ledger);
+  if (validated.ledgerFingerprint !== requestedLedgerFingerprint) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_LEDGER_FINGERPRINT_UNKNOWN');
+
+  const snapshots = validated.snapshots.filter((item) => item.inputSetFingerprint === requestedInputSetFingerprint);
+  if (snapshots.length === 0) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_INPUT_SET_FINGERPRINT_UNKNOWN');
+  if (snapshots.length !== 1) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SELECTION_AMBIGUOUS');
+  const snapshot = snapshots[0];
+
+  const monthSnapshots = (snapshot.monthlySnapshots || []).filter((item) => String(item?.month || item?.startDate || '').slice(0, 7) === month);
+  if (monthSnapshots.length === 0) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_MONTH_NOT_IN_SNAPSHOT');
+  if (monthSnapshots.length !== 1) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SELECTION_AMBIGUOUS');
+  const monthly = monthSnapshots[0];
+
+  const workspace = buildHistoricalMonthlyWorkspace(validated);
+  const rows = workspace.rows.filter((item) => item.ledgerFingerprint === requestedLedgerFingerprint && item.sourceInputSetFingerprint === requestedInputSetFingerprint && item.month === month);
+  if (rows.length !== 1) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SELECTION_AMBIGUOUS');
+  const row = rows[0];
+
+  const receipts = snapshot.sourceReceipts || [];
+  if (!Array.isArray(receipts) || receipts.length === 0) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SOURCE_RECEIPTS_REQUIRED');
+  if (snapshot.batchCount !== receipts.length) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_BATCH_COUNT_MISMATCH');
+  for (const receipt of receipts) {
+    if (!/\.csv$/i.test(String(receipt?.sourceFileName || ''))) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SOURCE_FILE_INVALID');
+    if (!/^[a-f0-9]{64}$/i.test(String(receipt?.contentSha256 || ''))) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SOURCE_HASH_INVALID');
+  }
+  const receiptHashes = receipts.map((item) => String(item.contentSha256).toLowerCase()).sort();
+  const sourceHashes = (snapshot.contentSha256s || []).map((item) => String(item).toLowerCase()).sort();
+  if (receiptHashes.length !== sourceHashes.length || receiptHashes.some((hash, index) => hash !== sourceHashes[index])) {
+    throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_SOURCE_RECEIPT_MISMATCH');
+  }
+
+  const metricValue = row[metric.key] == null ? null : Number(row[metric.key]);
+  if (metricValue != null && !Number.isFinite(metricValue)) throw evidenceDrilldownError('CSV_HISTORY_EVIDENCE_METRIC_VALUE_INVALID');
+  const sourceFileNames = receipts.map((item) => item.sourceFileName);
+  const marketplaceCodes = [...new Set(receipts.map((item) => item.marketplace).filter(Boolean))].sort();
+  const currencyCodes = [...new Set(receipts.map((item) => item.currencyCode).filter(Boolean))].sort();
+  const authority = {
+    authoritative: false,
+    canonicalAmazonIdentityResolved: false,
+    governancePersistenceAllowed: false,
+    executionAuthorized: false,
+    amazonMutationAuthorized: false,
+  };
+
+  return deepFreezeEvidence({
+    schemaVersion: CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION,
+    navigationOnly: true,
+    analyticalAuthorityCreated: false,
+    evidenceKey: {
+      ledgerFingerprint: requestedLedgerFingerprint,
+      sourceInputSetFingerprint: requestedInputSetFingerprint,
+      month,
+    },
+    selectedMonth: month,
+    metric: {
+      key: metric.key,
+      label: metric.label,
+      unit: metric.unit,
+      value: metricValue,
+      missingValue: metricValue == null,
+    },
+    coverage: {
+      coverageRatio: row.coverageRatio,
+      coverageComplete: row.coverageComplete,
+      periodStartDate: row.periodStartDate,
+      periodEndDate: row.periodEndDate,
+    },
+    decision: {
+      qualityState: row.qualityState,
+      decisionState: row.decisionState,
+      safeForNaiveAggregation: row.safeForNaiveAggregation,
+      contiguousCoverage: row.contiguousCoverage,
+      sameMonthEvidenceCount: row.sameMonthEvidenceCount,
+      sameMonthMultipleSnapshots: row.sameMonthMultipleSnapshots,
+    },
+    source: {
+      ledgerFingerprint: requestedLedgerFingerprint,
+      inputSetFingerprint: requestedInputSetFingerprint,
+      sourceKind: snapshot.sourceKind,
+      batchCount: snapshot.batchCount,
+      sourceReceiptCount: receipts.length,
+      sourceReceipts: [...receipts],
+      sourceFileNames,
+      contentSha256s: [...sourceHashes],
+      reportStartDate: snapshot.reportStartDate,
+      reportEndDate: snapshot.reportEndDate,
+      rowCount: receipts.reduce((sum, item) => sum + Number(item.rowCount || 0), 0),
+      acceptedRows: receipts.reduce((sum, item) => sum + Number(item.acceptedRows || 0), 0),
+      rejectedRows: receipts.reduce((sum, item) => sum + Number(item.rejectedRows || 0), 0),
+      marketplaceCodes,
+      currencyCodes,
+    },
+    observedIdentity: {
+      summary: snapshot.observedIdentitySummary || {},
+      canonicalAmazonIdentityResolved: false,
+    },
+    hierarchy: {
+      summary: snapshot.hierarchySummary || {},
+    },
+    period: {
+      summary: snapshot.periodSummary || {},
+      monthlySnapshot: monthly,
+    },
+    profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
+    crossSnapshotAggregationApplied: false,
+    normalizationApplied: false,
+    authority,
+  });
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHistoryLedger', {
     value: Object.freeze({
@@ -157,6 +278,7 @@ if (typeof window !== 'undefined') {
       schemaVersion: CSV_HISTORY_LEDGER_SCHEMA_VERSION,
       monthlyWorkspaceSchemaVersion: CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION,
       trendSchemaVersion: CSV_HISTORY_TREND_SCHEMA_VERSION,
+      evidenceDrilldownSchemaVersion: CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION,
       trendMetrics: CSV_HISTORY_TREND_METRICS,
       authority: 'local_file_history_ledger_only',
       buildCsvHistorySnapshot,
@@ -167,6 +289,7 @@ if (typeof window !== 'undefined') {
       validateCsvHistoryLedger,
       buildHistoricalMonthlyWorkspace,
       buildHistoricalTrend,
+      buildHistoricalEvidenceDrilldown,
     }),
     writable: false,
     configurable: false,
@@ -324,9 +447,11 @@ function renderLedger(root, ledger) {
     </table></div>
     ${renderMonthlyWorkspace(monthlyWorkspace)}
     ${renderHistoricalTrendSection(ledger)}
+    ${renderSelectedEvidenceShell()}
     <details><summary>Historical overlap / gap evidence</summary><pre>${esc(JSON.stringify(windowEvidence, null, 2))}</pre></details>
     <details><summary>Ledger authority boundary</summary><pre>${esc(JSON.stringify(ledger.authority, null, 2))}</pre></details>`;
   bindTrendControls(body, ledger);
+  bindEvidenceNavigation(body, ledger);
   body.hidden = false;
   syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success');
 }
@@ -335,7 +460,7 @@ function renderMonthlyWorkspace(workspace) {
   return `
     <section class="cfhl-monthly" data-cfhl-monthly-workspace="${CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION}">
       <div class="cfhl-monthly-head">
-        <div><b>Historical Monthly Workspace</b><small>Each row stays bound to coverage, quality state, and source input fingerprint. Same-month evidence from multiple snapshots is displayed separately, never cross-snapshot aggregated.</small></div>
+        <div><b>Historical Monthly Workspace</b><small>Each row stays bound to coverage, quality state, and source input fingerprint. Same-month evidence from multiple snapshots is displayed separately, never cross-snapshot aggregated. Select a row to audit its exact immutable evidence.</small></div>
         <span>${workspace.distinctMonthCount} month(s) · ${workspace.rowCount} evidence row(s)</span>
       </div>
       <div class="cfhl-guard">Ad Contribution = Sales - Ad Spend only; it is not Net Profit. Multi-evidence months: ${workspace.multiEvidenceMonthCount}. Cross-snapshot aggregation: none.</div>
@@ -351,11 +476,22 @@ function renderHistoricalTrendSection(ledger) {
   return `
     <section class="cfhl-trend" data-cfhl-history-trend="${CSV_HISTORY_TREND_SCHEMA_VERSION}">
       <div class="cfhl-monthly-head">
-        <div><b>Historical Trend Evidence</b><small>Every plotted point remains bound to coverage, quality state, and source input fingerprint. Partial, blocked, duplicate-month, and missing-value evidence is never hidden or merged.</small></div>
+        <div><b>Historical Trend Evidence</b><small>Every plotted point remains bound to coverage, quality state, and source input fingerprint. Partial, blocked, duplicate-month, and missing-value evidence is never hidden or merged. Select a point to audit its exact immutable evidence.</small></div>
         <label>Metric <select data-cfhl-trend-metric>${CSV_HISTORY_TREND_METRICS.map((item) => `<option value="${esc(item.key)}"${item.key === trend.metricKey ? ' selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>
       </div>
       <div class="cfhl-guard">Ad Contribution uses Sales - Ad Spend only and is not Net Profit. Trend normalization: none. Cross-snapshot aggregation: none.</div>
       <div data-cfhl-trend-chart>${renderTrendEvidence(trend)}</div>
+    </section>`;
+}
+
+function renderSelectedEvidenceShell() {
+  return `
+    <section class="cfhl-evidence" data-cfhl-selected-evidence="${CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION}">
+      <div class="cfhl-monthly-head">
+        <div><b>Selected Historical Evidence</b><small>Choose a Historical Monthly row or Historical Trend point. The deterministic key is ledger fingerprint + input-set fingerprint + month.</small></div>
+        <span>navigation only</span>
+      </div>
+      <div class="cfhl-evidence-empty">No historical evidence selected.</div>
     </section>`;
 }
 
@@ -366,6 +502,85 @@ function bindTrendControls(body, ledger) {
   select.addEventListener('change', () => {
     target.innerHTML = renderTrendEvidence(buildHistoricalTrend(ledger, select.value));
   });
+}
+
+function bindEvidenceNavigation(body, ledger) {
+  const activate = (trigger) => void selectHistoricalEvidence(body, ledger, trigger);
+  body.addEventListener('click', (event) => {
+    const trigger = event.target?.closest?.('[data-cfhl-evidence-nav]');
+    if (trigger && body.contains(trigger)) activate(trigger);
+  });
+  body.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const trigger = event.target?.closest?.('[data-cfhl-evidence-nav]');
+    if (!trigger || !body.contains(trigger)) return;
+    event.preventDefault();
+    activate(trigger);
+  });
+}
+
+async function selectHistoricalEvidence(body, ledger, trigger) {
+  const target = body.querySelector('[data-cfhl-selected-evidence]');
+  if (!target) return;
+  target.dataset.kind = 'loading';
+  target.innerHTML = '<div class="cfhl-evidence-empty">Validating exact historical evidence…</div>';
+  try {
+    const evidence = await buildHistoricalEvidenceDrilldown(ledger, {
+      ledgerFingerprint: trigger.dataset.ledgerFingerprint,
+      sourceInputSetFingerprint: trigger.dataset.inputSetFingerprint,
+      month: trigger.dataset.evidenceMonth,
+      metricKey: trigger.dataset.metricKey || 'adContributionMicros',
+    });
+    target.dataset.kind = 'ok';
+    target.innerHTML = renderSelectedEvidence(evidence);
+  } catch (error) {
+    target.dataset.kind = 'bad';
+    target.innerHTML = `<div class="cfhl-evidence-empty">Evidence selection blocked: ${esc(String(error?.code || error?.message || 'unknown_error'))}</div>`;
+  }
+}
+
+function renderSelectedEvidence(evidence) {
+  const currency = evidence.source.currencyCodes[0] || null;
+  const metricValue = evidence.metric.missingValue
+    ? 'missing'
+    : (evidence.metric.unit === 'micros' ? money(evidence.metric.value, currency) : evidence.metric.unit === 'ratio' ? decimal(evidence.metric.value) : String(evidence.metric.value));
+  const receipts = evidence.source.sourceReceipts.map((receipt) => `<tr>
+    <td>${esc(receipt.sourceFileName)}</td>
+    <td><code>${esc(receipt.contentSha256)}</code></td>
+    <td>${esc(receipt.reportStartDate || 'unknown')} → ${esc(receipt.reportEndDate || 'unknown')}</td>
+    <td>${receipt.rowCount}</td>
+    <td>${receipt.acceptedRows}</td>
+    <td>${receipt.rejectedRows}</td>
+  </tr>`).join('');
+  return `
+    <div class="cfhl-monthly-head">
+      <div><b>Selected Historical Evidence</b><small>This is navigation into immutable evidence, not new analytical authority, canonical Amazon identity, governance state, or an execution target.</small></div>
+      <span>${esc(evidence.schemaVersion)}</span>
+    </div>
+    <div class="cfhl-guard">Evidence key = ledger fingerprint + input-set fingerprint + month. Same-month snapshots remain independently addressable. Ad Contribution = Sales - Ad Spend only; it is not Net Profit.</div>
+    <div class="cfhl-grid cfhl-evidence-grid">
+      ${card('Selected month', `<b>${esc(evidence.selectedMonth)}</b>`)}
+      ${card('Metric', `${esc(evidence.metric.label)}<br><b>${esc(metricValue)}</b>`)}
+      ${card('Coverage', `${evidence.coverage.coverageRatio == null ? 'unknown' : percent(evidence.coverage.coverageRatio)}<br>${evidence.coverage.coverageComplete ? 'complete' : 'partial'}`)}
+      ${card('Decision', `${esc(evidence.decision.decisionState)}<br>${esc(evidence.decision.qualityState)}`)}
+      ${card('Aggregation', `${evidence.decision.safeForNaiveAggregation ? 'safe for naive aggregation' : 'blocked / review'}<br>${evidence.decision.contiguousCoverage ? 'contiguous coverage' : 'incomplete / gap'}`)}
+      ${card('Duplicate-month evidence', `${evidence.decision.sameMonthEvidenceCount}<br>${evidence.decision.sameMonthMultipleSnapshots ? 'multiple snapshots preserved' : 'single snapshot evidence'}`)}
+    </div>
+    <div class="cfhl-evidence-key"><b>Ledger fingerprint</b><code>${esc(evidence.evidenceKey.ledgerFingerprint)}</code><b>Input-set fingerprint</b><code>${esc(evidence.evidenceKey.sourceInputSetFingerprint)}</code></div>
+    <div class="cfhl-table-wrap"><table>
+      <thead><tr><th>Source file</th><th>SHA-256</th><th>Report window</th><th>Rows</th><th>Accepted</th><th>Rejected</th></tr></thead>
+      <tbody>${receipts}</tbody>
+    </table></div>
+    <div class="cfhl-grid cfhl-evidence-grid">
+      ${card('Source totals', `files ${evidence.source.sourceReceiptCount} · rows ${evidence.source.rowCount}<br>accepted ${evidence.source.acceptedRows} · rejected ${evidence.source.rejectedRows}`)}
+      ${card('Snapshot window', `${esc(evidence.source.reportStartDate || 'unknown')} → ${esc(evidence.source.reportEndDate || 'unknown')}`)}
+      ${card('Marketplace', evidence.source.marketplaceCodes.length ? esc(evidence.source.marketplaceCodes.join(', ')) : 'unknown')}
+      ${card('Currency', evidence.source.currencyCodes.length ? esc(evidence.source.currencyCodes.join(', ')) : 'unknown')}
+    </div>
+    <details open><summary>Observed Identity</summary><pre>${esc(JSON.stringify(evidence.observedIdentity, null, 2))}</pre></details>
+    <details><summary>Hierarchy</summary><pre>${esc(JSON.stringify(evidence.hierarchy, null, 2))}</pre></details>
+    <details><summary>Period evidence</summary><pre>${esc(JSON.stringify(evidence.period, null, 2))}</pre></details>
+    <details><summary>Authority boundary</summary><pre>${esc(JSON.stringify(evidence.authority, null, 2))}</pre></details>`;
 }
 
 function renderTrendEvidence(trend) {
@@ -392,12 +607,13 @@ function renderTrendEvidence(trend) {
   const marks = trend.points.map((point, index) => {
     const x = xAt(index);
     const title = `${point.month} · ${formatTrendValue(point.value, trend.metricUnit)} · coverage ${point.coverageRatio == null ? 'unknown' : percent(point.coverageRatio)} · ${point.qualityState} · ${point.decisionState} · ${point.sourceInputSetFingerprint}`;
+    const nav = `data-cfhl-evidence-nav data-ledger-fingerprint="${esc(point.ledgerFingerprint)}" data-input-set-fingerprint="${esc(point.sourceInputSetFingerprint)}" data-evidence-month="${esc(point.month)}" data-metric-key="${esc(point.metricKey)}" role="button" tabindex="0"`;
     if (point.missingValue) {
-      return `<g><text x="${x.toFixed(2)}" y="${(padTop + drawableHeight / 2).toFixed(2)}" class="cfhl-trend-missing">×<title>${esc(title)}</title></text><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
+      return `<g ${nav}><text x="${x.toFixed(2)}" y="${(padTop + drawableHeight / 2).toFixed(2)}" class="cfhl-trend-missing">×<title>${esc(title)}</title></text><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
     }
     const y = yAt(point.value);
     const status = point.decisionState === 'blocked_overlap_or_invalid_window' ? ' blocked' : (!point.coverageComplete ? ' partial' : '');
-    return `<g><circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5" class="cfhl-trend-point${status}"><title>${esc(title)}</title></circle><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
+    return `<g ${nav}><circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5" class="cfhl-trend-point${status}"><title>${esc(title)}</title></circle><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
   }).join('');
   const chart = trend.points.length
     ? `<svg class="cfhl-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(trend.metricLabel)} historical evidence trend"><line x1="${padX}" y1="${padTop + drawableHeight}" x2="${width - padX}" y2="${padTop + drawableHeight}" class="cfhl-trend-axis"/>${segments.join('')}${marks}</svg>`
@@ -418,7 +634,7 @@ function snapshotRow(item) {
 
 function monthlyRow(item) {
   const multi = item.sameMonthMultipleSnapshots ? `<br><b>${item.sameMonthEvidenceCount} separate evidence rows</b>` : '';
-  return `<tr>
+  return `<tr data-cfhl-evidence-nav data-ledger-fingerprint="${esc(item.ledgerFingerprint)}" data-input-set-fingerprint="${esc(item.sourceInputSetFingerprint)}" data-evidence-month="${esc(item.month)}" data-metric-key="adContributionMicros" role="button" tabindex="0">
     <td><b>${esc(item.month)}</b>${multi}</td>
     <td>${money(item.spendMicros, item.currencyCode)}</td>
     <td>${money(item.salesMicros, item.currencyCode)}</td>
@@ -449,6 +665,16 @@ function assertLedgerForMonthlyWorkspace(ledger) {
   }
 }
 
+function selectionHash(value, code) {
+  const normalized = String(value || '').toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) throw evidenceDrilldownError(code);
+  return normalized;
+}
+function deepFreezeEvidence(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const nested of Object.values(value)) deepFreezeEvidence(nested);
+  return Object.freeze(value);
+}
 function safeInteger(value, code) { const number = Number(value); if (!Number.isSafeInteger(number)) throw monthlyWorkspaceError(code); return number; }
 function finiteOrNull(value) { if (value == null) return null; const number = Number(value); if (!Number.isFinite(number)) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_METRIC_INVALID'); return number; }
 function money(micros, currency) { const value = Number(micros || 0) / 1_000_000; try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 2 }).format(value); } catch { return value.toFixed(2); } }
@@ -457,6 +683,7 @@ function decimal(value) { return value == null || !Number.isFinite(Number(value)
 function formatTrendValue(value, unit) { if (value == null) return 'missing'; if (unit === 'micros') return money(value, 'USD'); if (unit === 'ratio') return decimal(value); return String(value); }
 function monthlyWorkspaceError(code) { const error = new Error(code); error.name = 'CsvHistoryMonthlyWorkspaceError'; error.code = code; return error; }
 function trendError(code) { const error = new Error(code); error.name = 'CsvHistoryTrendError'; error.code = code; return error; }
+function evidenceDrilldownError(code) { const error = new Error(code); error.name = 'CsvHistoryEvidenceDrilldownError'; error.code = code; return error; }
 function card(label, value) { return `<div class="cfhl-card"><small>${esc(label)}</small><div>${value}</div></div>`; }
 function setBusy(root, busy) { state.busy = busy; syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success'); }
 function syncButtons(root, jointReady) {
@@ -472,6 +699,6 @@ function installStyles() {
   if (document.getElementById('cfhl-style-v1')) return;
   const style = document.createElement('style');
   style.id = 'cfhl-style-v1';
-  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button,.cfhl-trend select{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly,.cfhl-trend{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.cfhl-trend-svg{width:100%;min-width:520px;display:block;margin-top:8px;overflow:visible}.cfhl-trend-axis{stroke:#cbd5e1;stroke-width:1}.cfhl-trend-line{stroke:#475569;stroke-width:2}.cfhl-trend-point{fill:#0f172a}.cfhl-trend-point.partial{fill:#b45309}.cfhl-trend-point.blocked{fill:#b91c1c}.cfhl-trend-label{font-size:10px;text-anchor:middle;fill:#64748b}.cfhl-trend-missing{font-size:18px;text-anchor:middle;fill:#64748b}.cfhl-trend-meta{font-size:12px;color:#475569;margin-top:6px}.cfhl-empty{padding:12px;color:#64748b}';
+  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button,.cfhl-trend select{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly,.cfhl-trend,.cfhl-evidence{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.cfhl-trend-svg{width:100%;min-width:520px;display:block;margin-top:8px;overflow:visible}.cfhl-trend-axis{stroke:#cbd5e1;stroke-width:1}.cfhl-trend-line{stroke:#475569;stroke-width:2}.cfhl-trend-point{fill:#0f172a}.cfhl-trend-point.partial{fill:#b45309}.cfhl-trend-point.blocked{fill:#b91c1c}.cfhl-trend-label{font-size:10px;text-anchor:middle;fill:#64748b}.cfhl-trend-missing{font-size:18px;text-anchor:middle;fill:#64748b}.cfhl-trend-meta{font-size:12px;color:#475569;margin-top:6px}.cfhl-empty,.cfhl-evidence-empty{padding:12px;color:#64748b}.cfhl [data-cfhl-evidence-nav]{cursor:pointer}.cfhl tr[data-cfhl-evidence-nav]:hover{background:#f8fafc}.cfhl [data-cfhl-evidence-nav]:focus{outline:2px solid #94a3b8;outline-offset:2px}.cfhl-evidence[data-kind="bad"]{border-color:#fecaca}.cfhl-evidence[data-kind="loading"]{opacity:.8}.cfhl-evidence-grid{margin-top:9px}.cfhl-evidence-key{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:start;margin-top:9px;padding:8px;border:1px solid #e2e8f0;border-radius:8px}.cfhl-evidence-key code{overflow-wrap:anywhere}';
   document.head.appendChild(style);
 }
