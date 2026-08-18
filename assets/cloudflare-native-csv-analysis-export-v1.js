@@ -1,7 +1,12 @@
 export const CSV_ANALYSIS_EXPORT_SCHEMA_VERSION = 'csv-analysis-export-v1';
 export const CSV_ANALYSIS_EXPORT_UI_VERSION = '1.0.0';
+export const CSV_OPERATOR_PACKAGE_SCHEMA_VERSION = 'csv-operator-package-v1';
 
 const state = { mounted: false, busy: false };
+const ZIP_UTF8_FLAG = 0x0800;
+const ZIP_STORE_METHOD = 0;
+const ZIP_DOS_TIME = 0;
+const ZIP_DOS_DATE = 0x0021;
 
 export function buildCsvAnalysisExportBundle(result) {
   assertAdvisoryOnly(result);
@@ -77,16 +82,143 @@ export function buildPeriodCsv(result) {
   ], rows);
 }
 
+export function buildCsvOperatorPackageFiles(result) {
+  assertAdvisoryOnly(result);
+  const fingerprint = result.source.inputSetFingerprint;
+  const shortFingerprint = fingerprint.slice(0, 12);
+  const payloads = [
+    textPackageFile('README.txt', buildOperatorReadme(result)),
+    textPackageFile('advisory.json', JSON.stringify(buildCsvAnalysisExportBundle(result), null, 2)),
+    textPackageFile('candidate-review.csv', buildCandidateReviewCsv(result)),
+    textPackageFile('hierarchy.csv', buildHierarchyCsv(result)),
+    textPackageFile('periods.csv', buildPeriodCsv(result)),
+  ];
+  const manifest = Object.freeze({
+    schemaVersion: CSV_OPERATOR_PACKAGE_SCHEMA_VERSION,
+    authority: Object.freeze({
+      mode: 'local_operator_package_only',
+      authoritative: false,
+      canonicalAmazonIdentityResolved: false,
+      governancePersistenceAllowed: false,
+      executionAuthorized: false,
+      amazonMutationAuthorized: false,
+    }),
+    source: Object.freeze({
+      inputSetFingerprint: fingerprint,
+      shortFingerprint,
+      contentSha256s: Object.freeze([...(result.source.contentSha256s || [])]),
+      reportStartDate: result.range?.startDate || null,
+      reportEndDate: result.range?.endDate || null,
+    }),
+    package: Object.freeze({
+      archiveFormat: 'zip_store_utf8',
+      deterministicTimestamp: '1980-01-01T00:00:00Z',
+      reportFileCount: payloads.length,
+      files: Object.freeze(payloads.map((file) => Object.freeze({
+        name: file.name,
+        byteLength: file.byteLength,
+        crc32: file.crc32,
+      }))),
+    }),
+    notes: Object.freeze([
+      'Local advisory evidence only.',
+      'Observed CSV identity is not canonical Amazon identity.',
+      'Persistence, execution, and Amazon mutation authority remain disabled.',
+      'Ad contribution = Sales - Ad Spend only; it is not net profit.',
+    ]),
+  });
+  const manifestFile = textPackageFile('manifest.json', JSON.stringify(manifest, null, 2));
+  return Object.freeze([manifestFile, ...payloads]);
+}
+
+export function buildStoredZip(files) {
+  if (!Array.isArray(files) || !files.length) throw exportError('CSV_OPERATOR_PACKAGE_FILES_REQUIRED');
+  const encoder = new TextEncoder();
+  const seen = new Set();
+  const entries = files.map((file) => {
+    const name = String(file?.name || '');
+    if (!isSafeZipEntryName(name) || seen.has(name)) throw exportError('CSV_OPERATOR_PACKAGE_ENTRY_NAME_INVALID');
+    seen.add(name);
+    const nameBytes = encoder.encode(name);
+    const data = file.bytes instanceof Uint8Array ? file.bytes : encoder.encode(String(file?.text ?? ''));
+    if (nameBytes.length > 0xffff || data.length > 0xffffffff) throw exportError('CSV_OPERATOR_PACKAGE_ENTRY_TOO_LARGE');
+    const crc = crc32Bytes(data);
+    return { name, nameBytes, data, crc };
+  });
+  if (entries.length > 0xffff) throw exportError('CSV_OPERATOR_PACKAGE_TOO_MANY_ENTRIES');
+
+  const localChunks = [];
+  const centralChunks = [];
+  let localOffset = 0;
+  for (const entry of entries) {
+    const localHeader = new Uint8Array(30 + entry.nameBytes.length);
+    const localView = new DataView(localHeader.buffer);
+    write32(localView, 0, 0x04034b50);
+    write16(localView, 4, 20);
+    write16(localView, 6, ZIP_UTF8_FLAG);
+    write16(localView, 8, ZIP_STORE_METHOD);
+    write16(localView, 10, ZIP_DOS_TIME);
+    write16(localView, 12, ZIP_DOS_DATE);
+    write32(localView, 14, entry.crc);
+    write32(localView, 18, entry.data.length);
+    write32(localView, 22, entry.data.length);
+    write16(localView, 26, entry.nameBytes.length);
+    write16(localView, 28, 0);
+    localHeader.set(entry.nameBytes, 30);
+    localChunks.push(localHeader, entry.data);
+
+    const centralHeader = new Uint8Array(46 + entry.nameBytes.length);
+    const centralView = new DataView(centralHeader.buffer);
+    write32(centralView, 0, 0x02014b50);
+    write16(centralView, 4, 20);
+    write16(centralView, 6, 20);
+    write16(centralView, 8, ZIP_UTF8_FLAG);
+    write16(centralView, 10, ZIP_STORE_METHOD);
+    write16(centralView, 12, ZIP_DOS_TIME);
+    write16(centralView, 14, ZIP_DOS_DATE);
+    write32(centralView, 16, entry.crc);
+    write32(centralView, 20, entry.data.length);
+    write32(centralView, 24, entry.data.length);
+    write16(centralView, 28, entry.nameBytes.length);
+    write16(centralView, 30, 0);
+    write16(centralView, 32, 0);
+    write16(centralView, 34, 0);
+    write16(centralView, 36, 0);
+    write32(centralView, 38, 0);
+    write32(centralView, 42, localOffset);
+    centralHeader.set(entry.nameBytes, 46);
+    centralChunks.push(centralHeader);
+    localOffset += localHeader.length + entry.data.length;
+  }
+
+  const centralOffset = localOffset;
+  const centralSize = centralChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  write32(endView, 0, 0x06054b50);
+  write16(endView, 4, 0);
+  write16(endView, 6, 0);
+  write16(endView, 8, entries.length);
+  write16(endView, 10, entries.length);
+  write32(endView, 12, centralSize);
+  write32(endView, 16, centralOffset);
+  write16(endView, 20, 0);
+  return concatBytes([...localChunks, ...centralChunks, end]);
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvAnalysisExport', {
     value: Object.freeze({
       version: CSV_ANALYSIS_EXPORT_UI_VERSION,
       schemaVersion: CSV_ANALYSIS_EXPORT_SCHEMA_VERSION,
+      operatorPackageSchemaVersion: CSV_OPERATOR_PACKAGE_SCHEMA_VERSION,
       authority: 'local_operator_export_only',
       buildCsvAnalysisExportBundle,
       buildCandidateReviewCsv,
       buildHierarchyCsv,
       buildPeriodCsv,
+      buildCsvOperatorPackageFiles,
+      buildStoredZip,
     }),
     writable: false,
     configurable: false,
@@ -117,6 +249,7 @@ function mount() {
   root.innerHTML = `
     <div class="cfae-head"><div><b>Local Analysis Export</b><small>Download operator-facing evidence files from the currently selected CSV inputs. Ad contribution = Sales - Ad Spend only; it is not net profit.</small></div><span>local files only</span></div>
     <div class="cfae-actions">
+      <button type="button" data-cfae-kind="package" disabled>Operator package ZIP</button>
       <button type="button" data-cfae-kind="json" disabled>Full advisory JSON</button>
       <button type="button" data-cfae-kind="candidates" disabled>Candidate review CSV</button>
       <button type="button" data-cfae-kind="hierarchy" disabled>Hierarchy CSV</button>
@@ -159,7 +292,11 @@ async function exportCurrent(root, joint, kind) {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
     const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
     const fingerprint = String(result.source.inputSetFingerprint || '').slice(0, 12) || 'local';
-    if (kind === 'json') downloadText(`ads-ops-${fingerprint}-advisory.json`, JSON.stringify(buildCsvAnalysisExportBundle(result), null, 2), 'application/json;charset=utf-8');
+    if (kind === 'package') {
+      const packageFiles = buildCsvOperatorPackageFiles(result);
+      const zip = buildStoredZip(packageFiles);
+      downloadBytes(`ads-ops-${fingerprint}-operator-package.zip`, zip, 'application/zip');
+    } else if (kind === 'json') downloadText(`ads-ops-${fingerprint}-advisory.json`, JSON.stringify(buildCsvAnalysisExportBundle(result), null, 2), 'application/json;charset=utf-8');
     else if (kind === 'candidates') downloadText(`ads-ops-${fingerprint}-candidate-review.csv`, buildCandidateReviewCsv(result), 'text/csv;charset=utf-8');
     else if (kind === 'hierarchy') downloadText(`ads-ops-${fingerprint}-hierarchy.csv`, buildHierarchyCsv(result), 'text/csv;charset=utf-8');
     else if (kind === 'periods') downloadText(`ads-ops-${fingerprint}-periods.csv`, buildPeriodCsv(result), 'text/csv;charset=utf-8');
@@ -193,6 +330,35 @@ function assertAdvisoryOnly(result) {
     result.periods?.authority?.amazonMutationAuthorized,
   ];
   if (flags.some((value) => value === true)) throw exportError('CSV_ANALYSIS_EXPORT_AUTHORITY_ESCALATION_BLOCKED');
+}
+
+function buildOperatorReadme(result) {
+  return [
+    'Ads Operations Integrity — Local Operator Package',
+    '',
+    `Input-set fingerprint: ${result.source.inputSetFingerprint}`,
+    `Report range: ${result.range?.startDate || 'unknown'} to ${result.range?.endDate || 'unknown'}`,
+    '',
+    'Authority: local advisory evidence only.',
+    'Observed CSV identity is not canonical Amazon identity.',
+    'Governance persistence is disabled.',
+    'Execution is disabled.',
+    'Amazon mutation is disabled.',
+    'Ad contribution = Sales - Ad Spend only; it is not net profit.',
+    '',
+    'Files:',
+    '- manifest.json — package evidence index, byte lengths, CRC32 values, and authority boundary',
+    '- advisory.json — full Joint CSV Analysis advisory object',
+    '- candidate-review.csv — keyword / negative review candidates',
+    '- hierarchy.csv — campaign / ad group / targeting analytical hierarchy',
+    '- periods.csv — trailing-window and calendar-month analytics',
+    '',
+  ].join('\n');
+}
+
+function textPackageFile(name, text) {
+  const bytes = new TextEncoder().encode(String(text));
+  return Object.freeze({ name, text: String(text), byteLength: bytes.length, crc32: crc32Hex(bytes), bytes });
 }
 
 function candidateRow(result, item, candidateType, destination, matchIntent) {
@@ -292,7 +458,14 @@ function toCsv(headers, rows) {
 function csvCell(value) { const text = String(value ?? ''); return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text; }
 function moneyNumber(micros) { return micros == null || !Number.isFinite(Number(micros)) ? '' : (Number(micros) / 1_000_000).toFixed(6); }
 function numberOrBlank(value) { return value == null || !Number.isFinite(Number(value)) ? '' : String(Number(value)); }
-function downloadText(fileName, text, mimeType) { const blob = new Blob([text], { type: mimeType }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName; anchor.style.display = 'none'; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); }
+function crc32Hex(bytes) { return crc32Bytes(bytes).toString(16).padStart(8, '0'); }
+function crc32Bytes(bytes) { let crc = 0xffffffff; for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); } return (crc ^ 0xffffffff) >>> 0; }
+function isSafeZipEntryName(name) { return Boolean(name) && !name.includes('/') && !name.includes('\\') && !name.includes('..') && !/^[.]/.test(name); }
+function write16(view, offset, value) { view.setUint16(offset, value, true); }
+function write32(view, offset, value) { view.setUint32(offset, value >>> 0, true); }
+function concatBytes(chunks) { const size = chunks.reduce((sum, chunk) => sum + chunk.length, 0); const output = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; } return output; }
+function downloadText(fileName, text, mimeType) { downloadBytes(fileName, new TextEncoder().encode(text), mimeType); }
+function downloadBytes(fileName, bytes, mimeType) { const blob = new Blob([bytes], { type: mimeType }); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = fileName; anchor.style.display = 'none'; document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url); }
 function setEnabled(root, enabled) { for (const button of root.querySelectorAll('[data-cfae-kind]')) button.disabled = !enabled || state.busy; }
 function status(root, message, kind = '') { const node = root.querySelector('[data-cfae-status]'); node.textContent = message; node.dataset.kind = kind; }
 function exportError(code) { const error = new Error(code); error.name = 'CsvAnalysisExportError'; error.code = code; return error; }

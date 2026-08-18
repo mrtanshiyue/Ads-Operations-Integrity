@@ -15,11 +15,16 @@ const reviewTag = '<script type="module" src="assets/cloudflare-native-csv-libra
 assert.equal(indexSource.split(exportTag).length - 1, 1, 'Analysis export UI must be injected exactly once');
 assert.ok(indexSource.indexOf(periodTag) < indexSource.indexOf(exportTag), 'Analysis export UI must load after period UI');
 assert.ok(indexSource.indexOf(exportTag) < indexSource.indexOf(reviewTag), 'Analysis export UI must load before local library review');
+assert.match(uiSource, /Operator package ZIP/);
 assert.match(uiSource, /Full advisory JSON/);
 assert.match(uiSource, /Candidate review CSV/);
 assert.match(uiSource, /Hierarchy CSV/);
 assert.match(uiSource, /Period CSV/);
 assert.match(uiSource, /local_operator_export_only/);
+assert.match(uiSource, /local_operator_package_only/);
+assert.match(uiSource, /csv-operator-package-v1/);
+assert.match(uiSource, /zip_store_utf8/);
+assert.match(uiSource, /CRC32/i);
 assert.match(uiSource, /CSV_ANALYSIS_EXPORT_AUTHORITY_ESCALATION_BLOCKED/);
 assert.match(uiSource, /not net profit/i);
 assert.match(uiSource, /Remote persistence and Amazon mutation remain disabled/);
@@ -46,6 +51,9 @@ for (const pattern of [
 const mod = await import(`${pathToFileURL(path.join(distRoot, uiRelative)).href}?contract=${Date.now()}`);
 assert.equal(mod.CSV_ANALYSIS_EXPORT_SCHEMA_VERSION, 'csv-analysis-export-v1');
 assert.equal(mod.CSV_ANALYSIS_EXPORT_UI_VERSION, '1.0.0');
+assert.equal(mod.CSV_OPERATOR_PACKAGE_SCHEMA_VERSION, 'csv-operator-package-v1');
+assert.equal(typeof mod.buildCsvOperatorPackageFiles, 'function');
+assert.equal(typeof mod.buildStoredZip, 'function');
 
 const result = fixture();
 const bundle = mod.buildCsvAnalysisExportBundle(result);
@@ -85,10 +93,74 @@ for (const text of [candidates, hierarchy, periods]) {
   assert.match(text, new RegExp(result.source.inputSetFingerprint));
 }
 
+const packageFiles = mod.buildCsvOperatorPackageFiles(result);
+assert.deepEqual(packageFiles.map((file) => file.name), [
+  'manifest.json',
+  'README.txt',
+  'advisory.json',
+  'candidate-review.csv',
+  'hierarchy.csv',
+  'periods.csv',
+]);
+assert.ok(packageFiles.every((file) => file.bytes instanceof Uint8Array));
+assert.ok(packageFiles.every((file) => file.byteLength === file.bytes.length));
+assert.ok(packageFiles.every((file) => /^[0-9a-f]{8}$/.test(file.crc32)));
+const manifest = JSON.parse(packageFiles[0].text);
+assert.equal(manifest.schemaVersion, 'csv-operator-package-v1');
+assert.equal(manifest.authority.authoritative, false);
+assert.equal(manifest.authority.canonicalAmazonIdentityResolved, false);
+assert.equal(manifest.authority.governancePersistenceAllowed, false);
+assert.equal(manifest.authority.executionAuthorized, false);
+assert.equal(manifest.authority.amazonMutationAuthorized, false);
+assert.equal(manifest.source.inputSetFingerprint, result.source.inputSetFingerprint);
+assert.equal(manifest.source.shortFingerprint, result.source.inputSetFingerprint.slice(0, 12));
+assert.equal(manifest.package.archiveFormat, 'zip_store_utf8');
+assert.equal(manifest.package.deterministicTimestamp, '1980-01-01T00:00:00Z');
+assert.equal(manifest.package.reportFileCount, 5);
+assert.deepEqual(manifest.package.files.map((file) => file.name), packageFiles.slice(1).map((file) => file.name));
+assert.ok(manifest.package.files.every((file) => Number.isInteger(file.byteLength) && file.byteLength > 0));
+assert.ok(manifest.package.files.every((file) => /^[0-9a-f]{8}$/.test(file.crc32)));
+const readme = packageFiles.find((file) => file.name === 'README.txt').text;
+assert.match(readme, /Observed CSV identity is not canonical Amazon identity/);
+assert.match(readme, /Governance persistence is disabled/);
+assert.match(readme, /Execution is disabled/);
+assert.match(readme, /Amazon mutation is disabled/);
+assert.match(readme, /not net profit/i);
+
+const zip = mod.buildStoredZip(packageFiles);
+assert.ok(zip instanceof Uint8Array);
+assert.ok(zip.length > packageFiles.reduce((sum, file) => sum + file.byteLength, 0));
+const startView = new DataView(zip.buffer, zip.byteOffset, 4);
+assert.equal(startView.getUint32(0, true), 0x04034b50, 'ZIP must start with a local file header');
+const endOffset = zip.length - 22;
+const endView = new DataView(zip.buffer, zip.byteOffset + endOffset, 22);
+assert.equal(endView.getUint32(0, true), 0x06054b50, 'ZIP must end with EOCD');
+assert.equal(endView.getUint16(8, true), packageFiles.length, 'EOCD entry count must match package files');
+assert.equal(endView.getUint16(10, true), packageFiles.length, 'EOCD total entry count must match package files');
+const zipText = new TextDecoder().decode(zip);
+for (const file of packageFiles) assert.match(zipText, new RegExp(file.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+const zipAgain = mod.buildStoredZip(mod.buildCsvOperatorPackageFiles(result));
+assert.deepEqual(zipAgain, zip, 'Operator package ZIP must be byte-deterministic for identical advisory input');
+assert.throws(
+  () => mod.buildStoredZip([{ name: '../escape.txt', text: 'bad' }]),
+  (error) => error?.code === 'CSV_OPERATOR_PACKAGE_ENTRY_NAME_INVALID',
+  'ZIP builder must reject path traversal entry names',
+);
+assert.throws(
+  () => mod.buildStoredZip([{ name: 'duplicate.txt', text: 'one' }, { name: 'duplicate.txt', text: 'two' }]),
+  (error) => error?.code === 'CSV_OPERATOR_PACKAGE_ENTRY_NAME_INVALID',
+  'ZIP builder must reject duplicate entry names',
+);
+
 assert.throws(
   () => mod.buildCsvAnalysisExportBundle({ ...result, source: { ...result.source, amazonMutationAuthorized: true } }),
   (error) => error?.code === 'CSV_ANALYSIS_EXPORT_AUTHORITY_ESCALATION_BLOCKED',
   'Export builder must fail closed if mutation authority appears',
+);
+assert.throws(
+  () => mod.buildCsvOperatorPackageFiles({ ...result, source: { ...result.source, executionAuthorized: true } }),
+  (error) => error?.code === 'CSV_ANALYSIS_EXPORT_AUTHORITY_ESCALATION_BLOCKED',
+  'Operator package builder must fail closed if execution authority appears',
 );
 
 console.log(JSON.stringify({
@@ -98,6 +170,10 @@ console.log(JSON.stringify({
   candidateReviewCsv: true,
   hierarchyCsv: true,
   periodCsv: true,
+  operatorPackageZip: true,
+  operatorPackageManifest: true,
+  deterministicZip: true,
+  entryPathTraversalBlocked: true,
   authorityEscalationBlocked: true,
   remotePersistence: false,
   amazonMutationAuthorized: false,
