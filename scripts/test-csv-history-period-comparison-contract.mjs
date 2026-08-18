@@ -146,7 +146,9 @@ function select(row) {
 }
 
 function assertMetric(comparison, key, delta, direction) {
-  assert.equal(comparison.metrics[key].delta, delta);
+  const actual = comparison.metrics[key].delta;
+  if (Number.isInteger(delta)) assert.equal(actual, delta);
+  else assert.ok(Math.abs(actual - delta) < 1e-12, `${key} delta ${actual} must be within tolerance of ${delta}`);
   assert.equal(comparison.metrics[key].direction, direction);
   assert.equal(comparison.metrics[key].interpretationAllowed, true);
 }
