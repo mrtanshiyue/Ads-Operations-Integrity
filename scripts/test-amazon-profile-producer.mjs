@@ -137,3 +137,5 @@ console.log(JSON.stringify({
   conflictingProfileRaceFailsClosed: true,
   durableProfileReceiptHydratedWithoutAmazonRefetch: true,
 }, null, 2));
+
+await import('./test-amazon-advertiser-profile-binding.mjs');
