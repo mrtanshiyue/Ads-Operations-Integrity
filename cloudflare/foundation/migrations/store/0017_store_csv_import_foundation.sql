@@ -113,6 +113,9 @@ BEGIN
      OR OLD.validation_summary_json IS NOT NEW.validation_summary_json
      OR OLD.uploaded_at IS NOT NEW.uploaded_at;
 
+  SELECT RAISE(ABORT, 'CSV_IMPORT_PUBLISHED_AT_IMMUTABLE')
+  WHERE OLD.published_at IS NOT NULL AND OLD.published_at IS NOT NEW.published_at;
+
   SELECT RAISE(ABORT, 'CSV_IMPORT_STATUS_TRANSITION_INVALID')
   WHERE OLD.status <> NEW.status
     AND NOT (OLD.status = 'validated' AND NEW.status = 'published');
@@ -132,11 +135,52 @@ BEGIN
   SELECT RAISE(ABORT, 'CSV_IMPORT_STAGE_ROW_KEY_MISMATCH')
   WHERE json_type(NEW.canonical_row_json, '$.rowKey') <> 'text'
      OR json_extract(NEW.canonical_row_json, '$.rowKey') IS NOT NEW.logical_row_key;
+  SELECT RAISE(ABORT, 'CSV_IMPORT_STAGE_ORDINAL_MISMATCH')
+  WHERE json_type(NEW.canonical_row_json, '$.sourceRowOrdinal') <> 'integer'
+     OR CAST(json_extract(NEW.canonical_row_json, '$.sourceRowOrdinal') AS INTEGER) <> NEW.source_row_ordinal;
+END;
+
+CREATE TRIGGER trg_csv_stage_update_guard
+BEFORE UPDATE ON csv_search_term_stage
+BEGIN
+  SELECT RAISE(ABORT, 'CSV_IMPORT_STAGE_IMMUTABLE');
+END;
+
+CREATE TRIGGER trg_csv_stage_delete_guard
+BEFORE DELETE ON csv_search_term_stage
+BEGIN
+  SELECT RAISE(ABORT, 'CSV_IMPORT_STAGE_DELETE_BEFORE_PUBLISH')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM csv_import_batches b
+    WHERE b.import_id = OLD.import_id AND b.status = 'published'
+  );
 END;
 
 CREATE TRIGGER trg_csv_fact_insert_guard
 BEFORE INSERT ON csv_search_term_daily
 BEGIN
+  SELECT RAISE(ABORT, 'CSV_IMPORT_FACT_SOURCE_INVALID')
+  WHERE NOT EXISTS (
+    SELECT 1 FROM csv_import_batches b
+    WHERE b.import_id = NEW.source_import_id
+      AND b.status IN ('validated','published')
+      AND NEW.report_date BETWEEN b.report_start_date AND b.report_end_date
+  );
+END;
+
+CREATE TRIGGER trg_csv_fact_update_guard
+BEFORE UPDATE ON csv_search_term_daily
+BEGIN
+  SELECT RAISE(ABORT, 'CSV_IMPORT_FACT_IDENTITY_IMMUTABLE')
+  WHERE OLD.row_key IS NOT NEW.row_key
+     OR OLD.report_date IS NOT NEW.report_date
+     OR OLD.portfolio_name IS NOT NEW.portfolio_name
+     OR OLD.campaign_name IS NOT NEW.campaign_name
+     OR OLD.ad_group_name IS NOT NEW.ad_group_name
+     OR OLD.targeting IS NOT NEW.targeting
+     OR OLD.match_type IS NOT NEW.match_type
+     OR OLD.search_term IS NOT NEW.search_term
+     OR OLD.normalized_search_term IS NOT NEW.normalized_search_term;
   SELECT RAISE(ABORT, 'CSV_IMPORT_FACT_SOURCE_INVALID')
   WHERE NOT EXISTS (
     SELECT 1 FROM csv_import_batches b
