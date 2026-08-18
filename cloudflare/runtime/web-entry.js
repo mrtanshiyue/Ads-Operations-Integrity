@@ -162,10 +162,18 @@ export default {
           const gate27Layer = createStoreDailySourceObjectEtagLayer({ env: gate26Layer.env });
           const response = await handleStoreDailySourceObjectChecksumApiRoute({ request, env: gate27Layer.env, actor, url });
           if (response) {
-            const gate23Response = await (async () => gate23Layer.enrich(response))();
-            const gate24Response = await (async () => gate24Layer.enrich(gate23Response))();
-            const gate25Response = await (async () => gate25Layer.enrich(gate24Response))();
-            const gate26Response = await (async () => gate26Layer.enrich(gate25Response))();
+            const gate23Response = await (async () => {
+              return gate23Layer.enrich(response);
+            })();
+            const gate24Response = await (async () => {
+              return gate24Layer.enrich(gate23Response);
+            })();
+            const gate25Response = await (async () => {
+              return gate25Layer.enrich(gate24Response);
+            })();
+            const gate26Response = await (async () => {
+              return gate26Layer.enrich(gate25Response);
+            })();
             return gate27Layer.enrich(gate26Response);
           }
         }
@@ -195,9 +203,17 @@ export default {
 
 void handleStoreDailySourceObjectMetadataApiRoute;
 
-function isControlRoute(pathname) { return CONTROL_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname)); }
-function isNegativeKeywordScopeRoute(pathname) { return NEGATIVE_KEYWORD_SCOPE_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname)); }
-function isAccessGovernanceRoute(pathname) { return ACCESS_GOVERNANCE_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname)); }
+function isControlRoute(pathname) {
+  return CONTROL_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));
+}
+
+function isNegativeKeywordScopeRoute(pathname) {
+  return NEGATIVE_KEYWORD_SCOPE_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));
+}
+
+function isAccessGovernanceRoute(pathname) {
+  return ACCESS_GOVERNANCE_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));
+}
 
 function shouldApplyStrictAccessGuard(pathname, method, env) {
   return String(env.ACCESS_MODE || '').toLowerCase() === 'enforce'
@@ -207,10 +223,14 @@ function shouldApplyStrictAccessGuard(pathname, method, env) {
 }
 
 async function strictAccessGuard(request, env) {
-  if (!env.CONTROL_DB) return json(request, { error: 'control_db_not_bound' }, 503);
+  if (!env.CONTROL_DB) {
+    return json(request, { error: 'control_db_not_bound' }, 503);
+  }
+
   const access = await evaluateAccessIdentity(request, env);
   const result = await enforceStrictAccessActorBinding(env.CONTROL_DB, access);
   if (result.ok) return null;
+
   const payload = { error: result.error };
   if (result.reason) payload.reason = result.reason;
   return json(request, payload, result.status);
@@ -242,7 +262,11 @@ async function resolveActor(db, access) {
 }
 
 async function touchLastSeen(db, userId) {
-  await db.prepare(`UPDATE users SET last_seen_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE user_id=?1`).bind(userId).run();
+  await db.prepare(`
+    UPDATE users
+    SET last_seen_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?1
+  `).bind(userId).run();
 }
 
 function json(request, payload, status) {
