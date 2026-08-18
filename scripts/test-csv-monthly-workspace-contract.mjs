@@ -56,9 +56,14 @@ assert.equal(workspace.authority.executionAuthorized, false);
 assert.equal(workspace.authority.amazonMutationAuthorized, false);
 assert.equal(workspace.source.inputSetFingerprint, result.source.inputSetFingerprint);
 assert.equal(workspace.summary.monthCount, 3);
-assert.equal(workspace.summary.fullMonthCount, 2);
+assert.equal(workspace.summary.fullMonthCount, 1);
 assert.equal(workspace.summary.partialMonthCount, 1);
 assert.equal(workspace.summary.blockedMonthCount, 1);
+assert.equal(
+  workspace.summary.fullMonthCount + workspace.summary.partialMonthCount + workspace.summary.blockedMonthCount,
+  workspace.summary.monthCount,
+  'Monthly operating-state counts must be mutually exclusive and exhaustive',
+);
 assert.equal(workspace.months[0].operatingState, 'full_month_review');
 assert.equal(workspace.months[1].operatingState, 'partial_month_review');
 assert.equal(workspace.months[2].operatingState, 'blocked');
@@ -87,6 +92,7 @@ console.log(JSON.stringify({
   monthlyMetrics: true,
   monthOverMonth: true,
   sourceReceiptMapping: true,
+  mutuallyExclusiveOperatingStateCounts: true,
   partialCoveragePreserved: true,
   blockedDecisionStatePreserved: true,
   remotePersistence: false,
