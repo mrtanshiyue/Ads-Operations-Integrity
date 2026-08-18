@@ -4,11 +4,13 @@ Status: **AUTHORITATIVE FOR FUTURE DELIVERY**
 Effective: 2026-08-17  
 Supersedes: historical Phase/Gate sequencing as a future roadmap. Phase 0–3 remain immutable implementation history and regression evidence.
 
+> **Active temporary delivery override — 2026-08-18:** Amazon Ads live API work is frozen while CSV-first / analytics-first / local-data-first productization continues. During this freeze, `docs/architecture/CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md` takes precedence over conflicting Phase 5+ sequencing below. Existing Amazon code remains dormant; the historical roadmap is retained so it can be resumed only after explicit authorization.
+
 ## 1. Product thesis
 
 Ads Operations Integrity is no longer primarily an infrastructure-convergence project. Architecture, security, deployment integrity, D1/R2 provenance, and operator governance are mature enough to support productization.
 
-The business system now optimizes this loop:
+The long-term business system optimizes this loop:
 
 ```text
 real Amazon data
@@ -21,6 +23,18 @@ real Amazon data
 → learning
 ```
 
+While the active CSV-first directive is in force, the delivery loop is intentionally narrower:
+
+```text
+CSV/manual report evidence
+→ trusted local facts
+→ decision intelligence
+→ explainable advisory output
+→ human review
+```
+
+The temporary loop does not grant canonical Amazon identity, governance persistence, or execution authority.
+
 Work that only increases receipt count, provenance depth, or Gate count is not prioritized unless it closes a concrete architecture, security, audit, or data-integrity risk.
 
 ## 2. Current capability / missing capability matrix
@@ -31,16 +45,16 @@ Work that only increases receipt count, provenance depth, or Gate count is not p
 | Security | Cloudflare Access, application RBAC, store-scoped authorization, fail-closed controls | Production launch policy and execution-specific approval hardening | Phase 8–10 |
 | Deployment | Canonical CI, exact-SHA Workers Builds provenance, immutable runtime receipts | Product release cadence without reopening old Gate taxonomy | Phase 4+ |
 | Control data | Users/RBAC/stores/products/product mappings/keyword & negative governance/rules/rollups/audit | Recommendation policy configuration and product-facing explainability | Phase 6–8 |
-| Store entities | Amazon profile/campaign/ad-group/keyword/target/product-ad schemas plus entity mirror implementation | Real Store 01 population and freshness evidence | Phase 5 |
-| Store fact schemas | campaign/ad-group/keyword/target/search-term/product/placement daily tables and ingestion/provenance structures exist | Additional live producer implementations beyond Search Term | Phase 5+ incremental |
-| Implemented live fact producer | `search_term_daily` only; requires entity mirror and `search_term_daily.sp.v1` report contract | Controlled Store 01 live activation, then explicit producer expansion | Phase 5 |
-| Provenance | Report jobs, sync receipts, R2 source identity/content evidence, ingestion state | Operational data-health SLOs for live Store 01 | Phase 5–6 |
-| Amazon transport | Credential provider, profile bootstrap, entity mirror, Search Term Create/Poll/Download Report path, report-cycle runtime | Controlled live credential provisioning and single-store live-read acceptance | Phase 5 |
-| Search Term intelligence | Read/query primitives and Search Term fact pipeline | Business scoring: waste, harvest, bid opportunity, confidence, explanation | Phase 6 |
-| Recommendation | `optimization_rules` governance exists | Recommendation engine, deterministic fingerprinting, evidence envelope | Phase 6 |
+| Store entities | Amazon profile/campaign/ad-group/keyword/target/product-ad schemas plus entity mirror implementation | Live Store 01 population remains frozen; local observed CSV identity is available for advisory analysis | Phase 5 / active CSV-first override |
+| Store fact schemas | campaign/ad-group/keyword/target/search-term/product/placement daily tables and ingestion/provenance structures exist | Expand CSV/manual-report producers and local historical analytics while Amazon live producers are frozen | Phase 5+ / active CSV-first override |
+| Implemented live fact producer | Dormant `search_term_daily` Amazon path plus active CSV Search Term import/analysis | Keep Amazon producer dormant; continue CSV-first productization | Phase 5 / active CSV-first override |
+| Provenance | Report jobs, sync receipts, R2 source identity/content evidence, CSV content hashes/import receipts/input-set fingerprints | Operational data-quality diagnostics for CSV overlap/gaps/mixed scopes and future live Store 01 SLOs | Phase 5–6 |
+| Amazon transport | Credential provider, profile bootstrap, entity mirror, Search Term Create/Poll/Download Report path, report-cycle runtime | **Frozen:** no credential provisioning, live reads/writes, report jobs, or activation until explicit authorization | Phase 5 / frozen |
+| Search Term intelligence | Search Term fact pipeline, CSV advisory profitability/waste/harvest/root analysis, local observed targeting identity | Same-origin UI exposure, historical comparison, keyword/negative library review integration | Phase 6 / active CSV-first override |
+| Recommendation | deterministic advisory scoring/fingerprinting and existing governance primitives | Keep CSV outputs advisory-only; build review workflows without Amazon mutation authority | Phase 6 |
 | Action ledger | `optimization_actions` + events and lifecycle states already exist | Governed Action API and transition enforcement | Phase 8 |
 | Approval UX | Operator product surfaces exist | Recommendation inbox, evidence drilldown, approve/reject UX | Phase 8 |
-| Amazon writes | No authorized mutation path | Store-isolated execution adapter, idempotent apply/verify/revert | Phase 11 |
+| Amazon writes | No authorized mutation path | **Frozen** and remains unauthorized | Phase 11 |
 | Frontend | Native same-origin UI on Cloudflare APIs | React + Vite + TypeScript strangler for intelligence workflows | Phase 7 |
 | Multi-store | Central store routing and multiple Store D1 model | Per-store Worker/Workflow/credential/R2 physical execution boundary | Phase 9 |
 | Production | Historical/placeholder config exists; Production not current priority | Read-only production contract and launch evidence | Phase 10 |
@@ -58,6 +72,8 @@ Work that only increases receipt count, provenance depth, or Gate count is not p
 8. **Exact-SHA deployment provenance remains valid infrastructure, not a roadmap.** Do not create new Gate numbering merely to preserve the old process shape.
 9. **Fact-table existence is not producer readiness.** A Store D1 schema or generic intent name must not be described as live-acquirable until the producer capability explicitly implements it.
 10. **Recommendation authority is profile + provenance scoped.** Unscoped Dev fixture queries must not feed live optimization decisions.
+11. **Observed CSV identity is not canonical Amazon identity.** Local CSV IDs may support advisory grouping, but they cannot establish live Amazon authority while the active directive is in force.
+12. **Dormant-code divergence is allowed during the freeze.** Do not deploy merely to align GitHub with a safe runtime when the delta is inactive and deployment is not otherwise required.
 
 ## 4. Phase 4 — Project Truth & Productization Reset
 
@@ -76,9 +92,11 @@ Make repository, runtime, product capability, and future roadmap tell the same t
 
 ### Exit
 
-Canonical CI green, merged to `main`, post-merge correlation confirms no architecture/security regression. Then proceed immediately to Phase 5 preflight.
+Canonical CI green, merged to `main`, post-merge correlation confirms no architecture/security regression. Under the active 2026-08-18 directive, continue CSV-first productization instead of proceeding to Phase 5 activation.
 
 ## 5. Phase 5 — Store 01 Real Amazon Read-Only Pipeline
+
+> **Temporarily frozen by `CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md`.** The content in this phase remains the long-term restart plan; it is not current execution authorization.
 
 ### Objective
 
@@ -112,9 +130,11 @@ runtime/binding preflight
 → disable/retain trigger according to operating mode
 ```
 
+This sequence is dormant while the active CSV-first directive is in force. Do not execute any step that provisions credentials, enables Amazon flags, creates report jobs, applies live-binding migrations, or performs live Amazon reads/writes without explicit restart authorization.
+
 ### Data priority
 
-**Executable now**
+**Executable after the freeze is explicitly lifted**
 
 1. `search_term_daily`
 2. supporting entity mirror required for identity/explanation
@@ -145,7 +165,7 @@ Detailed contract: `docs/architecture/PHASE5_STORE01_LIVE_READ_ACTIVATION.md`.
 
 ### Objective
 
-Turn real Store 01 facts into explainable, deterministic recommendations.
+Turn trustworthy facts into explainable, deterministic recommendations. During the active CSV-first directive, this phase may operate over provenance-valid imported CSV evidence only as non-authoritative advisory analysis.
 
 ### MVP intelligence
 
@@ -154,16 +174,20 @@ Turn real Store 01 facts into explainable, deterministic recommendations.
 - keyword harvesting candidate recommendation;
 - bid opportunity/risk recommendation where the required targeting/bid source state is trustworthy;
 - ACoS/ROAS/CVR/CPC diagnostics;
-- evidence/confidence envelope for every recommendation.
+- evidence/confidence envelope for every recommendation;
+- profitable/toxic root analysis with profit-root protection;
+- deterministic Search Term → observed targeting identity links for local review.
 
 ### Recommendation authority
 
-A recommendation MUST consume the canonical real profile scope and provenance-valid facts. Dev fixture rows, missing source report lineage, or unscoped multi-profile aggregates are not authorized recommendation input.
+For live authority after the freeze, a recommendation MUST consume the canonical real profile scope and provenance-valid facts. Dev fixture rows, missing source report lineage, or unscoped multi-profile aggregates are not authorized recommendation input.
+
+During the active CSV-first directive, imported CSV recommendations remain explicitly non-authoritative even when the file contains observed Amazon identifiers. They may support human review but cannot establish canonical Amazon identity or execution authority.
 
 Every recommendation must identify:
 
 ```text
-store/profile
+store/profile or explicit observed CSV scope
 entity/action target
 analysis window
 source facts/provenance
@@ -175,7 +199,7 @@ confidence
 idempotency fingerprint
 ```
 
-A recommendation can create a `proposed` action but cannot approve or apply itself.
+A recommendation can create a `proposed` action only when the separately authorized governance path permits it; CSV advisory output alone cannot approve, persist, or apply itself.
 
 ## 7. Phase 7 — Ads Intelligence Native UI / React-Vite Strangler
 
@@ -186,8 +210,9 @@ Modernize only the product surfaces needed for intelligence workflows while pres
 Priority screens:
 
 - Search Term Intelligence;
+- joint CSV profitability/toxicity analysis;
+- observed targeting identity/evidence drilldown;
 - Recommendation Inbox;
-- entity/evidence drilldown;
 - trend/efficiency context;
 - data freshness/health.
 
@@ -264,7 +289,19 @@ Outputs include outcome windows, counterfactual-safe attribution where feasible,
 
 ## 13. Priority rule
 
-When sequencing work, use this order of value:
+While the active 2026-08-18 CSV-first directive remains in force, use this order:
+
+```text
+trusted CSV/manual report data
+> joint/historical analysis and data quality
+> Search Term profitability/waste/root intelligence
+> local observed identity and keyword/negative library review
+> explainable advisory UX
+> provenance/audit/CI/security integrity
+> other non-Amazon local automation
+```
+
+After the directive is explicitly lifted, the long-term order resumes:
 
 ```text
 trusted real Store 01 data
@@ -278,4 +315,4 @@ trusted real Store 01 data
 > autonomous/closed-loop optimization
 ```
 
-Infrastructure work may preempt this order only for a concrete architecture, security, availability, or data-integrity blocker.
+Infrastructure work may preempt either order only for a concrete architecture, security, availability, or data-integrity blocker.
