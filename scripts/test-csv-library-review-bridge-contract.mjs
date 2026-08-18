@@ -39,6 +39,19 @@ assert.match(reviewUiSource, /Efficient converting search term/);
 assert.match(reviewUiSource, /Spend without orders/);
 assert.match(reviewUiSource, /Toxic root pattern/);
 assert.match(reviewUiSource, /selectCsvLibraryReviewItems/);
+assert.match(reviewUiSource, /Select decision reason/);
+assert.match(reviewUiSource, /Evidence supports follow-up/);
+assert.match(reviewUiSource, /Identity resolution needed/);
+assert.match(reviewUiSource, /More data needed/);
+assert.match(reviewUiSource, /Irrelevant or duplicate/);
+assert.match(reviewUiSource, /Other operator reason/);
+assert.match(reviewUiSource, /transition-compatible decision reason/i);
+assert.match(reviewUiSource, /browser-memory only/i);
+assert.match(reviewUiSource, /persistence disabled/i);
+assert.match(reviewUiSource, /currentAnnotations/);
+assert.match(reviewUiSource, /canApplyLocalReviewTransition/);
+assert.match(reviewUiSource, /localFollowUpReadiness/);
+assert.match(reviewUiSource, /LOCAL_REVIEW_REASON_STATE_MISMATCH/);
 
 for (const pattern of [
   /\bfetch\s*\(/,
@@ -69,9 +82,26 @@ assert.equal(bridge.CSV_LIBRARY_REVIEW_BRIDGE_SCHEMA_VERSION, 'csv-library-revie
 assert.equal(typeof bridge.buildCsvLibraryReviewBridge, 'function');
 assert.equal(reviewUi.CSV_LIBRARY_REVIEW_UI_VERSION, '1.0.0');
 assert.equal(typeof reviewUi.selectCsvLibraryReviewItems, 'function');
+assert.equal(typeof reviewUi.canApplyLocalReviewTransition, 'function');
+assert.equal(typeof reviewUi.localFollowUpReadiness, 'function');
 assert.equal(reviewUi.rationaleLabel('efficient_converting_search_term'), 'Efficient converting search term');
 assert.equal(reviewUi.rationaleLabel('spend_without_orders'), 'Spend without orders');
 assert.equal(reviewUi.rationaleLabel('toxic_root_pattern'), 'Toxic root pattern');
+assert.equal(reviewUi.reviewReasonLabel('evidence_supports_follow_up'), 'Evidence supports follow-up');
+assert.equal(reviewUi.reviewReasonLabel('irrelevant_or_duplicate'), 'Irrelevant or duplicate');
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('open', {}), { allowed: true, code: 'LOCAL_REVIEW_OPEN_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('shortlisted', {}), { allowed: false, code: 'LOCAL_REVIEW_REASON_REQUIRED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('shortlisted', { reasonCode: 'evidence_supports_follow_up' }), { allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('shortlisted', { reasonCode: 'identity_resolution_needed' }), { allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('shortlisted', { reasonCode: 'more_data_needed' }), { allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('shortlisted', { reasonCode: 'irrelevant_or_duplicate' }), { allowed: false, code: 'LOCAL_REVIEW_REASON_STATE_MISMATCH' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'irrelevant_or_duplicate' }), { allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'evidence_supports_follow_up' }), { allowed: false, code: 'LOCAL_REVIEW_REASON_STATE_MISMATCH' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'identity_resolution_needed' }), { allowed: false, code: 'LOCAL_REVIEW_REASON_STATE_MISMATCH' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'more_data_needed' }), { allowed: false, code: 'LOCAL_REVIEW_REASON_STATE_MISMATCH' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'operator_other' }), { allowed: false, code: 'LOCAL_REVIEW_OTHER_NOTE_REQUIRED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('dismissed', { reasonCode: 'operator_other', note: 'Manual operator context' }), { allowed: true, code: 'LOCAL_REVIEW_TRANSITION_ALLOWED' });
+assert.deepEqual(reviewUi.canApplyLocalReviewTransition('invalid', { reasonCode: 'evidence_supports_follow_up' }), { allowed: false, code: 'LOCAL_REVIEW_STATE_INVALID' });
 
 const header = [
   'Date', 'Advertiser Account Id', 'Profile Id', 'Marketplace', 'Currency',
@@ -150,6 +180,51 @@ changedStates.set(shortlistedId, 'shortlisted');
 const shortlisted = reviewUi.selectCsvLibraryReviewItems(queue.items, { reviewState: 'shortlisted' }, changedStates);
 assert.deepEqual(shortlisted.map((item) => item.reviewId), [shortlistedId]);
 
+const observedKeyword = queue.items.find((item) => item.destination === 'keyword_library' && item.observedIdentity.quality === 'observed_only');
+const blockedNegative = queue.items.find((item) => item.destination === 'negative_keyword_library' && item.observedIdentity.confidenceBlocked === true);
+assert.ok(observedKeyword);
+assert.ok(blockedNegative);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', { reasonCode: 'evidence_supports_follow_up', note: '' }),
+  { state: 'local_follow_up_ready', label: 'Local follow-up ready', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(blockedNegative, 'shortlisted', { reasonCode: 'evidence_supports_follow_up', note: '' }),
+  { state: 'blocked_observed_identity', label: 'Identity blocked', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', { reasonCode: 'identity_resolution_needed', note: '' }),
+  { state: 'identity_resolution_needed', label: 'Identity resolution needed', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', { reasonCode: 'more_data_needed', note: '' }),
+  { state: 'more_data_needed', label: 'More data needed', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', { reasonCode: 'operator_other', note: 'Keep for manual context review' }),
+  { state: 'operator_context_review', label: 'Operator context review', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', { reasonCode: 'irrelevant_or_duplicate', note: '' }),
+  { state: 'decision_reason_state_mismatch', label: 'Decision reason/state mismatch', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'open', {}),
+  { state: 'not_shortlisted', label: 'Not shortlisted', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'shortlisted', {}),
+  { state: 'decision_reason_missing', label: 'Decision reason missing', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'dismissed', { reasonCode: 'irrelevant_or_duplicate' }),
+  { state: 'dismissed', label: 'Dismissed locally', persistenceReady: false, executionReady: false },
+);
+assert.deepEqual(
+  reviewUi.localFollowUpReadiness(observedKeyword, 'dismissed', { reasonCode: 'evidence_supports_follow_up' }),
+  { state: 'decision_reason_state_mismatch', label: 'Decision reason/state mismatch', persistenceReady: false, executionReady: false },
+);
+
 const reversedJoint = await jointUi.analyzeLocalCsvInputs([...inputs].reverse(), options);
 const reversedQueue = await bridge.buildCsvLibraryReviewBridge(reversedJoint);
 assert.equal(reversedQueue.source.inputSetFingerprint, queue.source.inputSetFingerprint);
@@ -177,6 +252,11 @@ console.log(JSON.stringify({
   reviewStateFilter: true,
   deterministicSorts: true,
   operatorRationaleLabels: true,
+  transitionCompatibleDecisionReasons: true,
+  localDecisionNotes: true,
+  localFollowUpReadiness: true,
+  persistenceReady: false,
+  executionReady: false,
   inputSetFingerprint: queue.source.inputSetFingerprint,
 }, null, 2));
 
