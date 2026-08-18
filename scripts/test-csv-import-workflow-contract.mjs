@@ -44,7 +44,7 @@ console.log(JSON.stringify({
     'csv-imports-ui-v1',
     'csv-real-data-intelligence-ui-v4-canonical-identity-copy',
     'csv-product-ui-navigation-v3-versioned-load-order',
-    'csv-term-profitability-analysis-v1',
+    'csv-term-profitability-analysis-v2-profit-root-protection',
     'csv-joint-report-analysis-v1',
   ],
   amazonLiveApiCalls: false,
