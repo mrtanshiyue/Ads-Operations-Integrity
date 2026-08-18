@@ -23,11 +23,17 @@ assert.match(verificationSource, /generatedTimestampIncluded: false/);
 assert.match(verificationSource, /replayedFromExplicitLocalLedger: true/);
 assert.match(verificationSource, /csv-history-audit-package-v1/);
 assert.match(verificationSource, /csv-history-audit-package-verification-v1/);
+assert.match(verificationSource, /csv-history-audit-package-index-v1/);
 assert.match(verificationSource, /Download audit package/);
 assert.match(verificationSource, /Verify downloaded audit package/);
+assert.match(verificationSource, /Download deterministic package index/);
 assert.match(verificationSource, /packageFingerprintBasis: 'canonical_manifest_without_package_fingerprint'/);
+assert.match(verificationSource, /indexFingerprintBasis: 'canonical_index_without_index_fingerprint'/);
 assert.match(verificationSource, /portable_immutable_local_historical_audit_material/);
+assert.match(verificationSource, /deterministic_catalog_of_independently_verified_historical_audit_packages/);
 assert.match(verificationSource, /CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH/);
+assert.match(verificationSource, /sameMonthAggregationApplied: false/);
+assert.match(verificationSource, /sourceFileNameIncluded: false/);
 
 for (const pattern of [
   /\bfetch\s*\(/,
@@ -47,7 +53,7 @@ for (const pattern of [
   /optimization-actions/,
   /execution-permits/,
 ]) {
-  assert.equal(pattern.test(verificationSource), false, `Receipt verification and audit packaging must remain local-only and execution-free: ${pattern}`);
+  assert.equal(pattern.test(verificationSource), false, `Receipt verification, audit packaging, and package indexing must remain local-only and execution-free: ${pattern}`);
 }
 
 const engine = await import(`${pathToFileURL(path.join(distRoot, 'assets/csv-analysis-engine/csv-history-ledger.js')).href}?verificationEngine=${Date.now()}`);
@@ -60,11 +66,15 @@ assert.equal(verificationMod.CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_SCHEMA_
 assert.equal(verificationMod.CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_UI_VERSION, '1.0.0');
 assert.equal(verificationMod.CSV_HISTORY_AUDIT_PACKAGE_SCHEMA_VERSION, 'csv-history-audit-package-v1');
 assert.equal(verificationMod.CSV_HISTORY_AUDIT_PACKAGE_VERIFICATION_SCHEMA_VERSION, 'csv-history-audit-package-verification-v1');
+assert.equal(verificationMod.CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_VERSION, 'csv-history-audit-package-index-v1');
 assert.equal(typeof verificationMod.verifyHistoricalComparisonReceiptAgainstLedger, 'function');
 assert.equal(typeof verificationMod.buildHistoricalAuditPackage, 'function');
 assert.equal(typeof verificationMod.validateHistoricalAuditPackageArtifact, 'function');
 assert.equal(typeof verificationMod.buildHistoricalAuditPackageZipFiles, 'function');
 assert.equal(typeof verificationMod.verifyHistoricalAuditPackageZip, 'function');
+assert.equal(typeof verificationMod.buildHistoricalAuditPackageIndex, 'function');
+assert.equal(typeof verificationMod.validateHistoricalAuditPackageIndex, 'function');
+assert.equal(typeof verificationMod.serializeHistoricalAuditPackageIndex, 'function');
 assert.equal(typeof exportMod.buildStoredZip, 'function');
 
 const completeA = await fixture({
@@ -130,6 +140,8 @@ for (const file of auditA.files) assert.match(file.contentSha256, /^[a-f0-9]{64}
 const auditValidation = await verificationMod.validateHistoricalAuditPackageArtifact(auditA);
 assert.equal(auditValidation.verificationState, 'audit_package_verified_locally');
 assert.equal(auditValidation.packageFingerprint, auditA.packageFingerprint);
+assert.deepEqual(auditValidation.periodAEvidenceKey, receipt.source.periodAEvidenceKey);
+assert.deepEqual(auditValidation.periodBEvidenceKey, receipt.source.periodBEvidenceKey);
 assert.equal(auditValidation.comparisonAllowed, true);
 assert.equal(auditValidation.rawEvidenceOnly, false);
 assertAuthorityFalse(auditValidation.authority);
@@ -153,6 +165,8 @@ assert.equal(zipVerification.verificationState, 'audit_package_zip_verified_loca
 assert.equal(zipVerification.packageFingerprint, auditA.packageFingerprint);
 assert.equal(zipVerification.ledgerFingerprint, ledger.ledgerFingerprint);
 assert.equal(zipVerification.comparisonReceiptFingerprint, receipt.receiptFingerprint);
+assert.deepEqual(zipVerification.periodAEvidenceKey, receipt.source.periodAEvidenceKey);
+assert.deepEqual(zipVerification.periodBEvidenceKey, receipt.source.periodBEvidenceKey);
 assert.equal(zipVerification.comparisonAllowed, true);
 assert.equal(zipVerification.rawEvidenceOnly, false);
 assert.equal(zipVerification.archiveFormat, 'zip_store_utf8');
@@ -191,11 +205,100 @@ const blockedZip = exportMod.buildStoredZip(blockedZipFiles);
 const blockedZipVerification = await verificationMod.verifyHistoricalAuditPackageZip(blockedZip, exportMod.buildStoredZip);
 assert.equal(blockedZipVerification.comparisonAllowed, false, 'Downloaded blocked package must remain blocked');
 assert.equal(blockedZipVerification.rawEvidenceOnly, true, 'Downloaded blocked package must remain raw-evidence-only');
+assert.deepEqual(blockedZipVerification.periodAEvidenceKey, blockedReceipt.source.periodAEvidenceKey);
+assert.deepEqual(blockedZipVerification.periodBEvidenceKey, blockedReceipt.source.periodBEvidenceKey);
 assertAuthorityFalse(blockedZipVerification.authority);
+
+const packageIndexA = await verificationMod.buildHistoricalAuditPackageIndex([blockedZip, zipA], exportMod.buildStoredZip);
+const packageIndexB = await verificationMod.buildHistoricalAuditPackageIndex([zipA, blockedZip], exportMod.buildStoredZip);
+assert.equal(packageIndexA.schemaVersion, 'csv-history-audit-package-index-v1');
+assert.equal(packageIndexA.indexPurpose, 'deterministic_catalog_of_independently_verified_historical_audit_packages');
+assert.equal(packageIndexA.packageCount, 2);
+assert.equal(packageIndexA.packages.length, 2);
+assert.match(packageIndexA.indexFingerprint, /^[a-f0-9]{64}$/);
+assert.equal(packageIndexA.indexFingerprint, packageIndexB.indexFingerprint, 'Local file selection order must not affect index fingerprint');
+assert.equal(
+  verificationMod.serializeHistoricalAuditPackageIndex(packageIndexA),
+  verificationMod.serializeHistoricalAuditPackageIndex(packageIndexB),
+  'Local file selection order must not affect deterministic index serialization',
+);
+assert.deepEqual(
+  packageIndexA.packages.map((item) => item.packageFingerprint),
+  [...packageIndexA.packages.map((item) => item.packageFingerprint)].sort(),
+  'Package entries must be deterministically sorted by package fingerprint',
+);
+assert.equal(packageIndexA.deterministic.generatedTimestampIncluded, false);
+assert.equal(packageIndexA.deterministic.sourceFileNameIncluded, false);
+assert.equal(packageIndexA.deterministic.selectionOrderAffectsFingerprint, false);
+assert.equal(packageIndexA.deterministic.packageOrder, 'package_fingerprint_ascending');
+assert.equal(packageIndexA.crossPackageAggregationApplied, false);
+assert.equal(packageIndexA.normalizationApplied, false);
+assert.equal(packageIndexA.deduplicationApplied, false);
+assert.equal(packageIndexA.sameMonthAggregationApplied, false);
+assert.equal(packageIndexA.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+assertAuthorityFalse(packageIndexA.authority);
+const packageIndexText = verificationMod.serializeHistoricalAuditPackageIndex(packageIndexA);
+assert.equal(packageIndexText.includes('sourceFileName'), false, 'Local source filenames must not enter deterministic package index identity');
+const allowedIndexEntry = packageIndexA.packages.find((item) => item.packageFingerprint === auditA.packageFingerprint);
+const blockedIndexEntry = packageIndexA.packages.find((item) => item.packageFingerprint === blockedAudit.packageFingerprint);
+assert.ok(allowedIndexEntry, 'Allowed audit package must remain present as its own immutable index entry');
+assert.ok(blockedIndexEntry, 'Blocked audit package must remain present as its own immutable index entry');
+assert.equal(allowedIndexEntry.comparisonAllowed, true);
+assert.equal(allowedIndexEntry.rawEvidenceOnly, false);
+assert.equal(blockedIndexEntry.comparisonAllowed, false);
+assert.equal(blockedIndexEntry.rawEvidenceOnly, true);
+assert.match(allowedIndexEntry.archiveSha256, /^[a-f0-9]{64}$/);
+assert.match(blockedIndexEntry.archiveSha256, /^[a-f0-9]{64}$/);
+assert.deepEqual(allowedIndexEntry.periodAEvidenceKey, receipt.source.periodAEvidenceKey);
+assert.deepEqual(allowedIndexEntry.periodBEvidenceKey, receipt.source.periodBEvidenceKey);
+assert.deepEqual(blockedIndexEntry.periodAEvidenceKey, blockedReceipt.source.periodAEvidenceKey);
+assert.deepEqual(blockedIndexEntry.periodBEvidenceKey, blockedReceipt.source.periodBEvidenceKey);
+assert.equal(allowedIndexEntry.verificationState, 'audit_package_zip_verified_locally');
+assert.equal(blockedIndexEntry.verificationState, 'audit_package_zip_verified_locally');
+const validatedPackageIndex = await verificationMod.validateHistoricalAuditPackageIndex(packageIndexA);
+assert.equal(validatedPackageIndex.indexFingerprint, packageIndexA.indexFingerprint);
+assert.equal(Object.isFrozen(validatedPackageIndex), true);
+
+await assert.rejects(
+  () => verificationMod.buildHistoricalAuditPackageIndex([], exportMod.buildStoredZip),
+  (error) => error?.code === 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_INPUTS_REQUIRED',
+  'Audit package index must require explicit local ZIP inputs',
+);
+await assert.rejects(
+  () => verificationMod.buildHistoricalAuditPackageIndex([zipA, zipA], exportMod.buildStoredZip),
+  (error) => error?.code === 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_DUPLICATE_PACKAGE_FINGERPRINT',
+  'Duplicate package fingerprints must fail closed instead of being silently deduplicated',
+);
+
+const indexOrderDrift = clone(packageIndexA);
+indexOrderDrift.packages.reverse();
+await assertIndexRejects(indexOrderDrift, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_ORDER_INVALID', 'Package index order drift must fail closed');
+
+const indexFingerprintDrift = clone(packageIndexA);
+indexFingerprintDrift.indexFingerprint = '9'.repeat(64);
+await assertIndexRejects(indexFingerprintDrift, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_FINGERPRINT_MISMATCH', 'Package index fingerprint drift must fail closed');
+
+const indexAuthorityEscalation = clone(packageIndexA);
+indexAuthorityEscalation.authority.executionAuthorized = true;
+await assertIndexRejects(indexAuthorityEscalation, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_AUTHORITY_ESCALATION_BLOCKED', 'Package index authority escalation must fail closed');
+
+const indexPeriodBindingDrift = clone(packageIndexA);
+indexPeriodBindingDrift.packages[0].ledgerFingerprint = '8'.repeat(64);
+await assertIndexRejects(indexPeriodBindingDrift, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_PERIOD_A_BINDING_INVALID', 'Package index evidence-key binding drift must fail closed');
+
+const indexComparisonUpgrade = clone(packageIndexA);
+const blockedEntryForUpgrade = indexComparisonUpgrade.packages.find((item) => item.rawEvidenceOnly);
+blockedEntryForUpgrade.comparisonAllowed = true;
+await assertIndexRejects(indexComparisonUpgrade, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_COMPARISON_STATE_INVALID', 'Package index must not upgrade a blocked/raw-only comparison');
 
 const centralDirectoryDrift = Uint8Array.from(zipA);
 centralDirectoryDrift[centralDirectoryDrift.length - 3] ^= 0x01;
 await assertZipRejects(centralDirectoryDrift, 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH', 'Central-directory or EOCD drift must fail byte-for-byte canonical validation');
+await assert.rejects(
+  () => verificationMod.buildHistoricalAuditPackageIndex([blockedZip, centralDirectoryDrift], exportMod.buildStoredZip),
+  (error) => error?.code === 'CSV_HISTORY_AUDIT_PACKAGE_ZIP_CANONICAL_BYTES_MISMATCH',
+  'A package that fails independent ZIP verification must not enter the deterministic package index',
+);
 
 const appendedBytes = new Uint8Array(zipA.length + 1);
 appendedBytes.set(zipA);
@@ -330,9 +433,10 @@ await assertPackageRejects(receiptBindingDrift, 'CSV_HISTORY_AUDIT_PACKAGE_RECEI
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-history-audit-package-verification-v1',
+  contract: 'csv-history-audit-package-index-v1',
   priorReceiptVerificationContractPreserved: true,
   priorAuditPackageContractPreserved: true,
+  priorDownloadedZipVerificationContractPreserved: true,
   standaloneReceiptIntegrityCheckedFirst: true,
   explicitLocalLedgerReplay: true,
   exactReceiptFingerprintMatchRequired: true,
@@ -341,12 +445,21 @@ console.log(JSON.stringify({
   deterministicZipBytes: true,
   downloadedZipReimportVerified: true,
   canonicalArchiveBytesRebuiltAndMatched: true,
+  deterministicPackageIndex: true,
+  packageSelectionOrderIgnored: true,
+  packageFingerprintAscendingOrder: true,
+  packageArchiveSha256Bound: true,
+  duplicatePackageFingerprintBlocked: true,
+  localSourceFileNameExcludedFromIndexIdentity: true,
+  crossPackageAggregationApplied: false,
+  sameMonthAggregationApplied: false,
+  deduplicationApplied: false,
   archiveMetadataDriftBlocked: true,
   archiveEntryOrderDriftBlocked: true,
   archiveTrailingBytesBlocked: true,
   entrySha256Bound: true,
-  allowedReceiptPackagedAndReverified: true,
-  blockedRawEvidenceReceiptPackagedAndReverifiedWithoutUpgrade: true,
+  allowedReceiptPackagedIndexed: true,
+  blockedRawEvidenceReceiptPackagedIndexedWithoutUpgrade: true,
   wrongLedgerBlocked: true,
   receiptTamperBlocked: true,
   ledgerTamperBlocked: true,
@@ -356,7 +469,6 @@ console.log(JSON.stringify({
   authorityEscalationBlocked: true,
   generatedTimestampIncluded: false,
   profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
-  crossSnapshotAggregationApplied: false,
   normalizationApplied: false,
   canonicalAmazonIdentityResolved: false,
   governancePersistenceAllowed: false,
@@ -391,6 +503,14 @@ async function assertPackageRejects(artifact, code, message) {
 async function assertZipRejects(bytes, code, message) {
   await assert.rejects(
     () => verificationMod.verifyHistoricalAuditPackageZip(bytes, exportMod.buildStoredZip),
+    (error) => error?.code === code,
+    message,
+  );
+}
+
+async function assertIndexRejects(index, code, message) {
+  await assert.rejects(
+    () => verificationMod.validateHistoricalAuditPackageIndex(index),
     (error) => error?.code === code,
     message,
   );
