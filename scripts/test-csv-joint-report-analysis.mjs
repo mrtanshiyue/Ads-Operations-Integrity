@@ -67,6 +67,7 @@ assert.equal(result.source.allImportsAccepted, true);
 assert.equal(result.source.duplicateContentDetected, false);
 assert.match(result.source.inputSetFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(result.source.canonicalAmazonIdentityResolved, false);
+assert.equal(result.source.observedTargetingIdentityAvailable, true);
 assert.equal(result.source.governancePersistenceAllowed, false);
 assert.equal(result.source.executionAuthorized, false);
 assert.equal(result.source.amazonMutationAuthorized, false);
@@ -80,9 +81,19 @@ assert.equal(result.summary.toxicRootCount, 1);
 assert.equal(result.summary.exactNegativeCandidateCount, 2);
 assert.equal(result.summary.phraseRootReviewCount, 1);
 assert.equal(result.summary.harvestCandidateCount, 1);
+assert.equal(result.summary.observedIdentityCount, 3);
+assert.equal(result.summary.observedResolvedIdCount, 0);
+assert.equal(result.summary.ambiguousObservedIdentityCount, 0);
+assert.equal(result.summary.searchTermIdentityLinkCount, 3);
 assert.equal(result.summary.metrics.spendMicros, 14_000_000);
 assert.equal(result.summary.metrics.salesMicros, 20_000_000);
 assert.equal(result.summary.metrics.acos, 0.7);
+assert.equal(result.observedIdentity.authority.authoritative, false);
+assert.equal(result.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
+assert.equal(result.observedIdentity.summary.identityCount, 3);
+assert.equal(result.observedIdentity.summary.searchTermLinkCount, 3);
+assert.ok(result.observedIdentity.identities.every((item) => item.observedIdentityState === 'name_only'));
+assert.ok(result.observedIdentity.identities.every((item) => item.authority.amazonMutationAuthorized === false));
 assert.deepEqual(
   result.analysis.negativeSuggestions.filter((item) => item.matchScope === 'exact').map((item) => item.value).sort(),
   ['free glasses case', 'free glasses sample'],
@@ -96,6 +107,7 @@ const reversed = await analyzeCsvImportBatches([batch2, batch1], { rules: { targ
 assert.equal(reversed.source.inputSetFingerprint, result.source.inputSetFingerprint, 'input-set fingerprint must be order independent');
 assert.deepEqual(reversed.summary, result.summary, 'joint summary must be input-order independent');
 assert.deepEqual(reversed.imports, result.imports, 'import receipts must use deterministic content-hash ordering');
+assert.deepEqual(reversed.observedIdentity, result.observedIdentity, 'observed identity graph must be input-order independent');
 
 await assert.rejects(
   () => analyzeCsvImportBatches([batch1, batch1]),
@@ -129,7 +141,9 @@ try {
   assert.equal(cliResult.schemaVersion, CSV_JOINT_ANALYSIS_SCHEMA_VERSION);
   assert.equal(cliResult.summary.batchCount, 2);
   assert.equal(cliResult.summary.factCount, 5);
+  assert.equal(cliResult.summary.observedIdentityCount, 3);
   assert.equal(cliResult.source.inputSetFingerprint, result.source.inputSetFingerprint);
+  assert.equal(cliResult.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
   assert.equal(cliResult.source.amazonMutationAuthorized, false);
 
   const duplicateRun = spawnSync(process.execPath, [cli, file1, file1], {
@@ -153,12 +167,15 @@ try {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-joint-report-analysis-v1',
+  contract: 'csv-joint-report-analysis-v2-observed-identity',
   batchCount: result.summary.batchCount,
   factCount: result.summary.factCount,
+  observedIdentityCount: result.summary.observedIdentityCount,
+  searchTermIdentityLinkCount: result.summary.searchTermIdentityLinkCount,
   inputSetFingerprint: result.source.inputSetFingerprint,
   duplicateContentRejected: true,
   inputOrderIndependent: true,
   cliReadOnly: true,
+  canonicalAmazonIdentityResolved: false,
   amazonMutationAuthorized: false,
 }, null, 2));
