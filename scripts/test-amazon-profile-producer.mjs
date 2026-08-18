@@ -141,3 +141,4 @@ console.log(JSON.stringify({
 await import('./test-amazon-advertiser-profile-binding.mjs');
 await import('./test-amazon-advertiser-profile-binding-migration.mjs');
 await import('./test-canonical-identity-read-harness.mjs');
+await import('./test-amazon-advertiser-profile-binding-repository.mjs');
