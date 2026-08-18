@@ -36,6 +36,7 @@ const allowedAssets = new Set([
   'csv-analysis-engine/csv-term-profitability-analysis.js',
   'csv-analysis-engine/csv-observed-targeting-identity.js',
   'csv-analysis-engine/csv-window-quality-analysis.js',
+  'csv-analysis-engine/csv-hierarchy-profitability-analysis.js',
   'csv-analysis-engine/csv-joint-report-analysis.js',
   'csv-analysis-engine/csv-library-review-bridge.js',
   'query-native-ads-source-readiness-v1.js',

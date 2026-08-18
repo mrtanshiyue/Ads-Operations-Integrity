@@ -71,6 +71,7 @@ assert.equal(result.source.naiveAggregationSafe, true);
 assert.match(result.source.inputSetFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(result.source.canonicalAmazonIdentityResolved, false);
 assert.equal(result.source.observedTargetingIdentityAvailable, true);
+assert.equal(result.source.hierarchyProfitabilityAvailable, true);
 assert.equal(result.source.governancePersistenceAllowed, false);
 assert.equal(result.source.executionAuthorized, false);
 assert.equal(result.source.amazonMutationAuthorized, false);
@@ -88,6 +89,12 @@ assert.equal(result.summary.observedIdentityCount, 3);
 assert.equal(result.summary.observedResolvedIdCount, 0);
 assert.equal(result.summary.ambiguousObservedIdentityCount, 0);
 assert.equal(result.summary.searchTermIdentityLinkCount, 3);
+assert.equal(result.summary.campaignAggregateCount, 2);
+assert.equal(result.summary.adGroupAggregateCount, 2);
+assert.equal(result.summary.targetingAggregateCount, 3);
+assert.equal(result.summary.ambiguousCampaignAggregateCount, 0);
+assert.equal(result.summary.ambiguousAdGroupAggregateCount, 0);
+assert.equal(result.summary.ambiguousTargetingAggregateCount, 0);
 assert.equal(result.summary.overlapPairCount, 0);
 assert.equal(result.summary.exactDuplicateWindowCount, 0);
 assert.equal(result.summary.dateGapCount, 0);
@@ -98,6 +105,7 @@ assert.equal(result.summary.overlapExcessDayCount, 0);
 assert.equal(result.summary.metrics.spendMicros, 14_000_000);
 assert.equal(result.summary.metrics.salesMicros, 20_000_000);
 assert.equal(result.summary.metrics.acos, 0.7);
+
 assert.equal(result.dataQuality.schemaVersion, 'csv-window-quality-v1');
 assert.equal(result.dataQuality.qualityState, 'clean_contiguous');
 assert.equal(result.dataQuality.safeForNaiveAggregation, true);
@@ -107,12 +115,43 @@ assert.equal(result.dataQuality.authority.authoritative, false);
 assert.equal(result.dataQuality.authority.governancePersistenceAllowed, false);
 assert.equal(result.dataQuality.authority.executionAuthorized, false);
 assert.equal(result.dataQuality.authority.amazonMutationAuthorized, false);
+
 assert.equal(result.observedIdentity.authority.authoritative, false);
 assert.equal(result.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
 assert.equal(result.observedIdentity.summary.identityCount, 3);
 assert.equal(result.observedIdentity.summary.searchTermLinkCount, 3);
 assert.ok(result.observedIdentity.identities.every((item) => item.observedIdentityState === 'name_only'));
 assert.ok(result.observedIdentity.identities.every((item) => item.authority.amazonMutationAuthorized === false));
+
+assert.equal(result.hierarchy.schemaVersion, 'csv-hierarchy-profitability-v1');
+assert.equal(result.hierarchy.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+assert.equal(result.hierarchy.reliability.state, 'observed');
+assert.equal(result.hierarchy.reliability.aggregationSafe, true);
+assert.equal(result.hierarchy.reliability.periodComplete, true);
+assert.equal(result.hierarchy.summary.campaignCount, 2);
+assert.equal(result.hierarchy.summary.adGroupCount, 2);
+assert.equal(result.hierarchy.summary.targetingCount, 3);
+assert.equal(result.hierarchy.summary.canonicalAmazonIdentityResolved, false);
+assert.equal(result.hierarchy.authority.authoritative, false);
+assert.equal(result.hierarchy.authority.canonicalAmazonIdentityResolved, false);
+assert.equal(result.hierarchy.authority.amazonMutationAuthorized, false);
+assert.ok(result.hierarchy.targetings.every((item) => item.requiresHumanReview === true));
+assert.ok(result.hierarchy.targetings.every((item) => item.persistenceAuthorized === false));
+assert.ok(result.hierarchy.targetings.every((item) => item.executionAuthorized === false));
+assert.ok(result.hierarchy.targetings.every((item) => item.amazonMutationAuthorized === false));
+assert.ok(result.hierarchy.targetings.every((item) => item.identity.canonicalAmazonIdentityResolved === false));
+const campaignA = result.hierarchy.campaigns.find((item) => item.identity.campaign?.name === 'Campaign A');
+assert.ok(campaignA);
+assert.equal(campaignA.metrics.spendMicros, 10_000_000);
+assert.equal(campaignA.metrics.salesMicros, 20_000_000);
+assert.equal(campaignA.metrics.acos, 0.5);
+assert.equal(campaignA.performanceBand, 'above_target_acos');
+assert.equal(campaignA.adContributionMicros, 10_000_000);
+const campaignB = result.hierarchy.campaigns.find((item) => item.identity.campaign?.name === 'Campaign B');
+assert.ok(campaignB);
+assert.equal(campaignB.performanceBand, 'spend_without_sales');
+assert.equal(campaignB.adContributionMicros, -4_000_000);
+
 assert.deepEqual(
   result.analysis.negativeSuggestions.filter((item) => item.matchScope === 'exact').map((item) => item.value).sort(),
   ['free glasses case', 'free glasses sample'],
@@ -128,6 +167,7 @@ assert.deepEqual(reversed.summary, result.summary, 'joint summary must be input-
 assert.deepEqual(reversed.imports, result.imports, 'import receipts must use deterministic content-hash ordering');
 assert.deepEqual(reversed.dataQuality, result.dataQuality, 'date-window diagnostics must be input-order independent');
 assert.deepEqual(reversed.observedIdentity, result.observedIdentity, 'observed identity graph must be input-order independent');
+assert.deepEqual(reversed.hierarchy, result.hierarchy, 'hierarchy profitability must be input-order independent');
 
 await assert.rejects(
   () => analyzeCsvImportBatches([batch1, batch1]),
@@ -162,11 +202,14 @@ try {
   assert.equal(cliResult.summary.batchCount, 2);
   assert.equal(cliResult.summary.factCount, 5);
   assert.equal(cliResult.summary.observedIdentityCount, 3);
+  assert.equal(cliResult.summary.targetingAggregateCount, 3);
   assert.equal(cliResult.summary.overlapPairCount, 0);
   assert.equal(cliResult.summary.dateGapCount, 0);
   assert.equal(cliResult.source.inputSetFingerprint, result.source.inputSetFingerprint);
   assert.equal(cliResult.source.naiveAggregationSafe, true);
   assert.equal(cliResult.dataQuality.qualityState, 'clean_contiguous');
+  assert.equal(cliResult.hierarchy.reliability.state, 'observed');
+  assert.equal(cliResult.hierarchy.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
   assert.equal(cliResult.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
   assert.equal(cliResult.source.amazonMutationAuthorized, false);
 
@@ -191,12 +234,14 @@ try {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-joint-report-analysis-v2-observed-identity-window-quality',
+  contract: 'csv-joint-report-analysis-v2-observed-identity-window-quality-hierarchy',
   batchCount: result.summary.batchCount,
   factCount: result.summary.factCount,
   observedIdentityCount: result.summary.observedIdentityCount,
+  targetingAggregateCount: result.summary.targetingAggregateCount,
   searchTermIdentityLinkCount: result.summary.searchTermIdentityLinkCount,
   windowQuality: result.dataQuality.qualityState,
+  hierarchyReliability: result.hierarchy.reliability.state,
   naiveAggregationSafe: result.source.naiveAggregationSafe,
   inputSetFingerprint: result.source.inputSetFingerprint,
   duplicateContentRejected: true,
