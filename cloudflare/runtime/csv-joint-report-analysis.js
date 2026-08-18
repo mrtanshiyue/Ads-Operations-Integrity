@@ -1,6 +1,7 @@
 import { canonicalJson } from './canonical-json.js';
 import { buildCsvObservedTargetingIdentity } from './csv-observed-targeting-identity.js';
 import { analyzeCsvTermProfitability } from './csv-term-profitability-analysis.js';
+import { analyzeCsvWindowQuality } from './csv-window-quality-analysis.js';
 
 export const CSV_JOINT_ANALYSIS_SCHEMA_VERSION = 'csv-joint-report-analysis-v2';
 
@@ -18,6 +19,7 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
   const imports = normalized
     .map(importReceipt)
     .sort((left, right) => left.contentSha256.localeCompare(right.contentSha256));
+  const dataQuality = analyzeCsvWindowQuality(imports);
   const facts = [];
   for (const batch of normalized) {
     const sourceImportId = `csv-content:${batch.contentSha256}`;
@@ -53,6 +55,9 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       inputSetFingerprint,
       allImportsAccepted: true,
       duplicateContentDetected: false,
+      overlappingDateWindowsDetected: dataQuality.summary.overlapPairCount > 0,
+      dateCoverageGapDetected: dataQuality.summary.gapCount > 0,
+      naiveAggregationSafe: dataQuality.safeForNaiveAggregation,
       canonicalAmazonIdentityResolved: false,
       observedTargetingIdentityAvailable: observedIdentity.summary.identityCount > 0,
       governancePersistenceAllowed: false,
@@ -78,9 +83,17 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       observedResolvedIdCount: observedIdentity.summary.resolvedIdCount,
       ambiguousObservedIdentityCount: observedIdentity.summary.ambiguousIdentityCount,
       searchTermIdentityLinkCount: observedIdentity.summary.searchTermLinkCount,
+      overlapPairCount: dataQuality.summary.overlapPairCount,
+      exactDuplicateWindowCount: dataQuality.summary.exactDuplicateWindowCount,
+      dateGapCount: dataQuality.summary.gapCount,
+      dateGapDayCount: dataQuality.summary.gapDayCount,
+      reportedWindowDayCount: dataQuality.summary.reportedWindowDayCount,
+      uniqueCoveredDayCount: dataQuality.summary.uniqueCoveredDayCount,
+      overlapExcessDayCount: dataQuality.summary.overlapExcessDayCount,
       metrics: analysis.summary.metrics,
     }),
     imports: Object.freeze(imports),
+    dataQuality,
     observedIdentity,
     analysis,
   });

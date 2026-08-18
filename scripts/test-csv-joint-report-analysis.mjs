@@ -65,6 +65,9 @@ assert.equal(result.source.authority, 'non-authoritative');
 assert.equal(result.source.batchCount, 2);
 assert.equal(result.source.allImportsAccepted, true);
 assert.equal(result.source.duplicateContentDetected, false);
+assert.equal(result.source.overlappingDateWindowsDetected, false);
+assert.equal(result.source.dateCoverageGapDetected, false);
+assert.equal(result.source.naiveAggregationSafe, true);
 assert.match(result.source.inputSetFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(result.source.canonicalAmazonIdentityResolved, false);
 assert.equal(result.source.observedTargetingIdentityAvailable, true);
@@ -85,9 +88,25 @@ assert.equal(result.summary.observedIdentityCount, 3);
 assert.equal(result.summary.observedResolvedIdCount, 0);
 assert.equal(result.summary.ambiguousObservedIdentityCount, 0);
 assert.equal(result.summary.searchTermIdentityLinkCount, 3);
+assert.equal(result.summary.overlapPairCount, 0);
+assert.equal(result.summary.exactDuplicateWindowCount, 0);
+assert.equal(result.summary.dateGapCount, 0);
+assert.equal(result.summary.dateGapDayCount, 0);
+assert.equal(result.summary.reportedWindowDayCount, 2);
+assert.equal(result.summary.uniqueCoveredDayCount, 2);
+assert.equal(result.summary.overlapExcessDayCount, 0);
 assert.equal(result.summary.metrics.spendMicros, 14_000_000);
 assert.equal(result.summary.metrics.salesMicros, 20_000_000);
 assert.equal(result.summary.metrics.acos, 0.7);
+assert.equal(result.dataQuality.schemaVersion, 'csv-window-quality-v1');
+assert.equal(result.dataQuality.qualityState, 'clean_contiguous');
+assert.equal(result.dataQuality.safeForNaiveAggregation, true);
+assert.equal(result.dataQuality.contiguousCoverage, true);
+assert.equal(result.dataQuality.requiresHumanReview, false);
+assert.equal(result.dataQuality.authority.authoritative, false);
+assert.equal(result.dataQuality.authority.governancePersistenceAllowed, false);
+assert.equal(result.dataQuality.authority.executionAuthorized, false);
+assert.equal(result.dataQuality.authority.amazonMutationAuthorized, false);
 assert.equal(result.observedIdentity.authority.authoritative, false);
 assert.equal(result.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
 assert.equal(result.observedIdentity.summary.identityCount, 3);
@@ -107,6 +126,7 @@ const reversed = await analyzeCsvImportBatches([batch2, batch1], { rules: { targ
 assert.equal(reversed.source.inputSetFingerprint, result.source.inputSetFingerprint, 'input-set fingerprint must be order independent');
 assert.deepEqual(reversed.summary, result.summary, 'joint summary must be input-order independent');
 assert.deepEqual(reversed.imports, result.imports, 'import receipts must use deterministic content-hash ordering');
+assert.deepEqual(reversed.dataQuality, result.dataQuality, 'date-window diagnostics must be input-order independent');
 assert.deepEqual(reversed.observedIdentity, result.observedIdentity, 'observed identity graph must be input-order independent');
 
 await assert.rejects(
@@ -142,7 +162,11 @@ try {
   assert.equal(cliResult.summary.batchCount, 2);
   assert.equal(cliResult.summary.factCount, 5);
   assert.equal(cliResult.summary.observedIdentityCount, 3);
+  assert.equal(cliResult.summary.overlapPairCount, 0);
+  assert.equal(cliResult.summary.dateGapCount, 0);
   assert.equal(cliResult.source.inputSetFingerprint, result.source.inputSetFingerprint);
+  assert.equal(cliResult.source.naiveAggregationSafe, true);
+  assert.equal(cliResult.dataQuality.qualityState, 'clean_contiguous');
   assert.equal(cliResult.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
   assert.equal(cliResult.source.amazonMutationAuthorized, false);
 
@@ -167,11 +191,13 @@ try {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-joint-report-analysis-v2-observed-identity',
+  contract: 'csv-joint-report-analysis-v2-observed-identity-window-quality',
   batchCount: result.summary.batchCount,
   factCount: result.summary.factCount,
   observedIdentityCount: result.summary.observedIdentityCount,
   searchTermIdentityLinkCount: result.summary.searchTermIdentityLinkCount,
+  windowQuality: result.dataQuality.qualityState,
+  naiveAggregationSafe: result.source.naiveAggregationSafe,
   inputSetFingerprint: result.source.inputSetFingerprint,
   duplicateContentRejected: true,
   inputOrderIndependent: true,
