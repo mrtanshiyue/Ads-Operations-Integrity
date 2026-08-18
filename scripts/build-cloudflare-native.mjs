@@ -16,6 +16,7 @@ const contextAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets',
 const decisionAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-decision-intelligence-v1.js');
 const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-intelligence-v1.js');
 const csvJointAnalysisAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-joint-analysis-v1.js');
+const csvDataQualityCommandCenterAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-data-quality-command-center-v1.js');
 const csvHierarchyQualityAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-hierarchy-quality-v1.js');
 const csvPeriodUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-period-ui-v1.js');
 const csvMonthlyWorkspaceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-monthly-workspace-v1.js');
@@ -41,6 +42,7 @@ const CSV_ANALYSIS_ENGINE_FILES = Object.freeze([
 ]);
 const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.4';
 const CSV_JOINT_ANALYSIS_ASSET_VERSION = '1.0.0';
+const CSV_DATA_QUALITY_COMMAND_CENTER_ASSET_VERSION = '1.0.0';
 const CSV_HIERARCHY_QUALITY_ASSET_VERSION = '1.0.0';
 const CSV_PERIOD_UI_ASSET_VERSION = '1.0.0';
 const CSV_MONTHLY_WORKSPACE_ASSET_VERSION = '1.0.0';
@@ -56,6 +58,8 @@ const csvIntelligenceTag = `<script src="assets/cloudflare-native-csv-intelligen
 const csvIntelligenceTagPattern = /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvJointAnalysisTag = `<script type="module" src="assets/cloudflare-native-csv-joint-analysis-v1.js?v=${CSV_JOINT_ANALYSIS_ASSET_VERSION}"></script>`;
 const csvJointAnalysisTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-joint-analysis-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
+const csvDataQualityCommandCenterTag = `<script type="module" src="assets/cloudflare-native-csv-data-quality-command-center-v1.js?v=${CSV_DATA_QUALITY_COMMAND_CENTER_ASSET_VERSION}"></script>`;
+const csvDataQualityCommandCenterTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-data-quality-command-center-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHierarchyQualityTag = `<script type="module" src="assets/cloudflare-native-csv-hierarchy-quality-v1.js?v=${CSV_HIERARCHY_QUALITY_ASSET_VERSION}"></script>`;
 const csvHierarchyQualityTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-hierarchy-quality-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvPeriodUiTag = `<script type="module" src="assets/cloudflare-native-csv-period-ui-v1.js?v=${CSV_PERIOD_UI_ASSET_VERSION}"></script>`;
@@ -84,6 +88,7 @@ await access(contextAssetPath, constants.R_OK);
 await access(decisionAssetPath, constants.R_OK);
 await access(csvIntelligenceAssetPath, constants.R_OK);
 await access(csvJointAnalysisAssetPath, constants.R_OK);
+await access(csvDataQualityCommandCenterAssetPath, constants.R_OK);
 await access(csvHierarchyQualityAssetPath, constants.R_OK);
 await access(csvPeriodUiAssetPath, constants.R_OK);
 await access(csvMonthlyWorkspaceAssetPath, constants.R_OK);
@@ -99,6 +104,7 @@ let nativeIndex = await readFile(distIndexPath, 'utf8');
 for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvProductUiTag, phase11Tag]) nativeIndex = nativeIndex.replaceAll(tag, '');
 nativeIndex = nativeIndex.replace(csvIntelligenceTagPattern, '');
 nativeIndex = nativeIndex.replace(csvJointAnalysisTagPattern, '');
+nativeIndex = nativeIndex.replace(csvDataQualityCommandCenterTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHierarchyQualityTagPattern, '');
 nativeIndex = nativeIndex.replace(csvPeriodUiTagPattern, '');
 nativeIndex = nativeIndex.replace(csvMonthlyWorkspaceTagPattern, '');
@@ -107,16 +113,17 @@ nativeIndex = nativeIndex.replace(csvAnalysisExportTagPattern, '');
 nativeIndex = nativeIndex.replace(csvLibraryReviewTagPattern, '');
 nativeIndex = nativeIndex.replace(phase9TagPattern, '');
 if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
-nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvHierarchyQualityTag}\n  ${csvPeriodUiTag}\n  ${csvMonthlyWorkspaceTag}\n  ${csvProvenanceAuditTag}\n  ${csvAnalysisExportTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
+nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvDataQualityCommandCenterTag}\n  ${csvHierarchyQualityTag}\n  ${csvPeriodUiTag}\n  ${csvMonthlyWorkspaceTag}\n  ${csvProvenanceAuditTag}\n  ${csvAnalysisExportTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
 for (const [tag, label] of [
   [operatorTag, 'Operator Workspace'], [importsTag, 'Imports console'], [contextTag, 'Operator Context'],
   [decisionTag, 'Decision Intelligence'], [csvIntelligenceTag, 'CSV Intelligence extension'],
-  [csvJointAnalysisTag, 'Joint CSV Analysis extension'], [csvHierarchyQualityTag, 'CSV hierarchy quality extension'],
-  [csvPeriodUiTag, 'CSV period UI extension'], [csvMonthlyWorkspaceTag, 'CSV monthly operating workspace'],
-  [csvProvenanceAuditTag, 'CSV provenance audit extension'], [csvAnalysisExportTag, 'CSV analysis export extension'],
-  [csvLibraryReviewTag, 'CSV Library Review extension'], [csvProductUiTag, 'CSV product UI integration'],
-  [phase9Tag, 'Phase 9 productization extension'], [phase11Tag, 'Phase 11 execution readiness extension'],
+  [csvJointAnalysisTag, 'Joint CSV Analysis extension'], [csvDataQualityCommandCenterTag, 'CSV Data Quality Command Center'],
+  [csvHierarchyQualityTag, 'CSV hierarchy quality extension'], [csvPeriodUiTag, 'CSV period UI extension'],
+  [csvMonthlyWorkspaceTag, 'CSV monthly operating workspace'], [csvProvenanceAuditTag, 'CSV provenance audit extension'],
+  [csvAnalysisExportTag, 'CSV analysis export extension'], [csvLibraryReviewTag, 'CSV Library Review extension'],
+  [csvProductUiTag, 'CSV product UI integration'], [phase9Tag, 'Phase 9 productization extension'],
+  [phase11Tag, 'Phase 11 execution readiness extension'],
 ]) {
   if ((nativeIndex.split(tag).length - 1) !== 1) throw new Error(`${label} must be injected exactly once`);
 }
@@ -125,7 +132,8 @@ if (nativeIndex.indexOf(importsTag) > nativeIndex.indexOf(contextTag)) throw new
 if (nativeIndex.indexOf(contextTag) > nativeIndex.indexOf(decisionTag)) throw new Error('Decision Intelligence must load after Operator Context');
 if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(csvIntelligenceTag)) throw new Error('CSV Intelligence extension must load after Decision Intelligence');
 if (nativeIndex.indexOf(csvIntelligenceTag) > nativeIndex.indexOf(csvJointAnalysisTag)) throw new Error('Joint CSV Analysis must load after CSV Intelligence');
-if (nativeIndex.indexOf(csvJointAnalysisTag) > nativeIndex.indexOf(csvHierarchyQualityTag)) throw new Error('CSV hierarchy quality UI must load after Joint CSV Analysis');
+if (nativeIndex.indexOf(csvJointAnalysisTag) > nativeIndex.indexOf(csvDataQualityCommandCenterTag)) throw new Error('CSV Data Quality Command Center must load after Joint CSV Analysis');
+if (nativeIndex.indexOf(csvDataQualityCommandCenterTag) > nativeIndex.indexOf(csvHierarchyQualityTag)) throw new Error('CSV hierarchy quality UI must load after CSV Data Quality Command Center');
 if (nativeIndex.indexOf(csvHierarchyQualityTag) > nativeIndex.indexOf(csvPeriodUiTag)) throw new Error('CSV period UI must load after CSV hierarchy quality UI');
 if (nativeIndex.indexOf(csvPeriodUiTag) > nativeIndex.indexOf(csvMonthlyWorkspaceTag)) throw new Error('CSV monthly operating workspace must load after CSV period UI');
 if (nativeIndex.indexOf(csvMonthlyWorkspaceTag) > nativeIndex.indexOf(csvProvenanceAuditTag)) throw new Error('CSV provenance audit UI must load after CSV monthly operating workspace');
@@ -146,6 +154,7 @@ await import('./test-csv-joint-analysis-ui-contract.mjs');
 await import('./test-csv-window-quality-diagnostics.mjs');
 await import('./test-csv-hierarchy-profitability.mjs');
 await import('./test-csv-period-over-period.mjs');
+await import('./test-csv-data-quality-command-center-contract.mjs');
 await import('./test-csv-hierarchy-quality-ui-contract.mjs');
 await import('./test-csv-period-ui-contract.mjs');
 await import('./test-csv-monthly-workspace-contract.mjs');
