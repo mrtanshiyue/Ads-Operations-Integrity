@@ -269,7 +269,7 @@ function assertAuthorityFalse(authority) {
 }
 
 async function fixture({ hashChar, month, startDate, endDate, expectedDayCount, marketplace, currencyCode, metrics }) {
-  const contentSha256 = hashChar.repeat(64);
+  const contentSha256 = await sha256Hex(`${month}:${hashChar}:${marketplace}:${currencyCode}`);
   const sourceReceipt = {
     schemaVersion: 'csv-import-v1',
     reportType: 'spSearchTerm',
