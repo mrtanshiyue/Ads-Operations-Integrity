@@ -18,9 +18,10 @@ assert.match(uiSource, /Advisory only/);
 assert.match(uiSource, /Amazon mutation disabled/);
 assert.match(uiSource, /canonical Amazon identity remains unresolved/i);
 assert.match(uiSource, /data-csv-joint-summary/);
-assert.match(uiSource, /data-csv-joint-candidates/);
-assert.match(uiSource, /data-csv-joint-identity/);
-assert.match(uiSource, /data-csv-joint-imports/);
+assert.match(uiSource, /sectionBlock\('Advisory Candidates', suggestionTable\(analysis, currency\), 'candidates'\)/);
+assert.match(uiSource, /sectionBlock\('Observed Targeting Identity', identityTable\(identity\.identities \|\| \[\]\), 'identity'\)/);
+assert.match(uiSource, /sectionBlock\('Source Imports & Provenance', importsTable\(result\.imports \|\| \[\]\), 'imports'\)/);
+assert.match(uiSource, /data-csv-joint-\$\{key\}/);
 
 const forbiddenUiPatterns = [
   /\bfetch\s*\(/,
