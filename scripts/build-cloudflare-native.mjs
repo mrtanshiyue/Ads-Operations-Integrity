@@ -31,6 +31,7 @@ const CSV_ANALYSIS_ENGINE_FILES = Object.freeze([
   'csv-observed-targeting-identity.js',
   'csv-window-quality-analysis.js',
   'csv-hierarchy-profitability-analysis.js',
+  'csv-period-over-period-analysis.js',
   'csv-joint-report-analysis.js',
   'csv-library-review-bridge.js',
 ]);
@@ -59,10 +60,7 @@ const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-read
 await import('./build-cloudflare-native-copy-all.mjs');
 await mkdir(csvAnalysisEngineOutputDir, { recursive: true });
 for (const file of CSV_ANALYSIS_ENGINE_FILES) {
-  await copyFile(
-    path.join(repoRoot, 'cloudflare', 'runtime', file),
-    path.join(csvAnalysisEngineOutputDir, file),
-  );
+  await copyFile(path.join(repoRoot, 'cloudflare', 'runtime', file), path.join(csvAnalysisEngineOutputDir, file));
 }
 await access(operatorAssetPath, constants.R_OK);
 await access(importsAssetPath, constants.R_OK);
@@ -75,14 +73,10 @@ await access(csvLibraryReviewAssetPath, constants.R_OK);
 await access(csvProductUiAssetPath, constants.R_OK);
 await access(phase9AssetPath, constants.R_OK);
 await access(phase11AssetPath, constants.R_OK);
-for (const file of CSV_ANALYSIS_ENGINE_FILES) {
-  await access(path.join(csvAnalysisEngineOutputDir, file), constants.R_OK);
-}
+for (const file of CSV_ANALYSIS_ENGINE_FILES) await access(path.join(csvAnalysisEngineOutputDir, file), constants.R_OK);
 
 let nativeIndex = await readFile(distIndexPath, 'utf8');
-for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvProductUiTag, phase11Tag]) {
-  nativeIndex = nativeIndex.replaceAll(tag, '');
-}
+for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvProductUiTag, phase11Tag]) nativeIndex = nativeIndex.replaceAll(tag, '');
 nativeIndex = nativeIndex.replace(csvIntelligenceTagPattern, '');
 nativeIndex = nativeIndex.replace(csvJointAnalysisTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHierarchyQualityTagPattern, '');
@@ -92,17 +86,11 @@ if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing 
 nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvHierarchyQualityTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
 for (const [tag, label] of [
-  [operatorTag, 'Operator Workspace'],
-  [importsTag, 'Imports console'],
-  [contextTag, 'Operator Context'],
-  [decisionTag, 'Decision Intelligence'],
-  [csvIntelligenceTag, 'CSV Intelligence extension'],
-  [csvJointAnalysisTag, 'Joint CSV Analysis extension'],
-  [csvHierarchyQualityTag, 'CSV hierarchy quality extension'],
-  [csvLibraryReviewTag, 'CSV Library Review extension'],
-  [csvProductUiTag, 'CSV product UI integration'],
-  [phase9Tag, 'Phase 9 productization extension'],
-  [phase11Tag, 'Phase 11 execution readiness extension'],
+  [operatorTag, 'Operator Workspace'], [importsTag, 'Imports console'], [contextTag, 'Operator Context'],
+  [decisionTag, 'Decision Intelligence'], [csvIntelligenceTag, 'CSV Intelligence extension'],
+  [csvJointAnalysisTag, 'Joint CSV Analysis extension'], [csvHierarchyQualityTag, 'CSV hierarchy quality extension'],
+  [csvLibraryReviewTag, 'CSV Library Review extension'], [csvProductUiTag, 'CSV product UI integration'],
+  [phase9Tag, 'Phase 9 productization extension'], [phase11Tag, 'Phase 11 execution readiness extension'],
 ]) {
   if ((nativeIndex.split(tag).length - 1) !== 1) throw new Error(`${label} must be injected exactly once`);
 }
@@ -127,6 +115,7 @@ await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-joint-analysis-ui-contract.mjs');
 await import('./test-csv-window-quality-diagnostics.mjs');
 await import('./test-csv-hierarchy-profitability.mjs');
+await import('./test-csv-period-over-period.mjs');
 await import('./test-csv-hierarchy-quality-ui-contract.mjs');
 await import('./test-csv-library-review-bridge-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');

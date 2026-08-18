@@ -1,6 +1,7 @@
 import { canonicalJson } from './canonical-json.js';
 import { analyzeCsvHierarchyProfitability } from './csv-hierarchy-profitability-analysis.js';
 import { buildCsvObservedTargetingIdentity } from './csv-observed-targeting-identity.js';
+import { analyzeCsvPeriodOverPeriod } from './csv-period-over-period-analysis.js';
 import { analyzeCsvTermProfitability } from './csv-term-profitability-analysis.js';
 import { analyzeCsvWindowQuality } from './csv-window-quality-analysis.js';
 
@@ -33,12 +34,13 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
   }
 
   const analysis = analyzeCsvTermProfitability(facts, options);
-  const [observedIdentity, hierarchy] = await Promise.all([
+  const [observedIdentity, hierarchy, periods] = await Promise.all([
     buildCsvObservedTargetingIdentity(facts),
     Promise.resolve(analyzeCsvHierarchyProfitability(facts, {
       targetAcos: analysis.rules.targetAcos,
       dataQuality,
     })),
+    Promise.resolve(analyzeCsvPeriodOverPeriod(facts, { dataQuality })),
   ]);
   const inputSetFingerprint = await sha256Hex(canonicalJson(imports.map((item) => ({
     schemaVersion: item.schemaVersion,
@@ -66,6 +68,7 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       canonicalAmazonIdentityResolved: false,
       observedTargetingIdentityAvailable: observedIdentity.summary.identityCount > 0,
       hierarchyProfitabilityAvailable: hierarchy.summary.targetingCount > 0,
+      periodOverPeriodAvailable: periods.summary.trailingComparisonCount > 0,
       governancePersistenceAllowed: false,
       executionAuthorized: false,
       amazonMutationAuthorized: false,
@@ -95,6 +98,9 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       ambiguousCampaignAggregateCount: hierarchy.summary.ambiguousCampaignCount,
       ambiguousAdGroupAggregateCount: hierarchy.summary.ambiguousAdGroupCount,
       ambiguousTargetingAggregateCount: hierarchy.summary.ambiguousTargetingCount,
+      trailingPeriodComparisonCount: periods.summary.trailingComparisonCount,
+      monthlySnapshotCount: periods.summary.monthlySnapshotCount,
+      fullyCoveredTrailingComparisonCount: periods.summary.fullyCoveredTrailingComparisonCount,
       overlapPairCount: dataQuality.summary.overlapPairCount,
       exactDuplicateWindowCount: dataQuality.summary.exactDuplicateWindowCount,
       dateGapCount: dataQuality.summary.gapCount,
@@ -108,6 +114,7 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
     dataQuality,
     observedIdentity,
     hierarchy,
+    periods,
     analysis,
   });
 }
