@@ -18,6 +18,7 @@ const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', '
 const csvJointAnalysisAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-joint-analysis-v1.js');
 const csvHierarchyQualityAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-hierarchy-quality-v1.js');
 const csvPeriodUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-period-ui-v1.js');
+const csvAnalysisExportAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-analysis-export-v1.js');
 const csvLibraryReviewAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-library-review-v1.js');
 const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-product-ui-v2.js');
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
@@ -40,6 +41,7 @@ const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.4';
 const CSV_JOINT_ANALYSIS_ASSET_VERSION = '1.0.0';
 const CSV_HIERARCHY_QUALITY_ASSET_VERSION = '1.0.0';
 const CSV_PERIOD_UI_ASSET_VERSION = '1.0.0';
+const CSV_ANALYSIS_EXPORT_ASSET_VERSION = '1.0.0';
 const CSV_LIBRARY_REVIEW_ASSET_VERSION = '1.0.0';
 const PHASE9_ASSET_VERSION = '1.2.1';
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
@@ -54,6 +56,8 @@ const csvHierarchyQualityTag = `<script type="module" src="assets/cloudflare-nat
 const csvHierarchyQualityTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-hierarchy-quality-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvPeriodUiTag = `<script type="module" src="assets/cloudflare-native-csv-period-ui-v1.js?v=${CSV_PERIOD_UI_ASSET_VERSION}"></script>`;
 const csvPeriodUiTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-period-ui-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
+const csvAnalysisExportTag = `<script type="module" src="assets/cloudflare-native-csv-analysis-export-v1.js?v=${CSV_ANALYSIS_EXPORT_ASSET_VERSION}"></script>`;
+const csvAnalysisExportTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-analysis-export-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvLibraryReviewTag = `<script type="module" src="assets/cloudflare-native-csv-library-review-v1.js?v=${CSV_LIBRARY_REVIEW_ASSET_VERSION}"></script>`;
 const csvLibraryReviewTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-library-review-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvProductUiTag = '<script src="assets/cloudflare-native-csv-product-ui-v2.js"></script>';
@@ -74,6 +78,7 @@ await access(csvIntelligenceAssetPath, constants.R_OK);
 await access(csvJointAnalysisAssetPath, constants.R_OK);
 await access(csvHierarchyQualityAssetPath, constants.R_OK);
 await access(csvPeriodUiAssetPath, constants.R_OK);
+await access(csvAnalysisExportAssetPath, constants.R_OK);
 await access(csvLibraryReviewAssetPath, constants.R_OK);
 await access(csvProductUiAssetPath, constants.R_OK);
 await access(phase9AssetPath, constants.R_OK);
@@ -86,18 +91,19 @@ nativeIndex = nativeIndex.replace(csvIntelligenceTagPattern, '');
 nativeIndex = nativeIndex.replace(csvJointAnalysisTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHierarchyQualityTagPattern, '');
 nativeIndex = nativeIndex.replace(csvPeriodUiTagPattern, '');
+nativeIndex = nativeIndex.replace(csvAnalysisExportTagPattern, '');
 nativeIndex = nativeIndex.replace(csvLibraryReviewTagPattern, '');
 nativeIndex = nativeIndex.replace(phase9TagPattern, '');
 if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
-nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvHierarchyQualityTag}\n  ${csvPeriodUiTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
+nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${csvJointAnalysisTag}\n  ${csvHierarchyQualityTag}\n  ${csvPeriodUiTag}\n  ${csvAnalysisExportTag}\n  ${csvLibraryReviewTag}\n  ${csvProductUiTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
 
 for (const [tag, label] of [
   [operatorTag, 'Operator Workspace'], [importsTag, 'Imports console'], [contextTag, 'Operator Context'],
   [decisionTag, 'Decision Intelligence'], [csvIntelligenceTag, 'CSV Intelligence extension'],
   [csvJointAnalysisTag, 'Joint CSV Analysis extension'], [csvHierarchyQualityTag, 'CSV hierarchy quality extension'],
-  [csvPeriodUiTag, 'CSV period UI extension'], [csvLibraryReviewTag, 'CSV Library Review extension'],
-  [csvProductUiTag, 'CSV product UI integration'], [phase9Tag, 'Phase 9 productization extension'],
-  [phase11Tag, 'Phase 11 execution readiness extension'],
+  [csvPeriodUiTag, 'CSV period UI extension'], [csvAnalysisExportTag, 'CSV analysis export extension'],
+  [csvLibraryReviewTag, 'CSV Library Review extension'], [csvProductUiTag, 'CSV product UI integration'],
+  [phase9Tag, 'Phase 9 productization extension'], [phase11Tag, 'Phase 11 execution readiness extension'],
 ]) {
   if ((nativeIndex.split(tag).length - 1) !== 1) throw new Error(`${label} must be injected exactly once`);
 }
@@ -108,7 +114,8 @@ if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(csvIntelligenceTag)) 
 if (nativeIndex.indexOf(csvIntelligenceTag) > nativeIndex.indexOf(csvJointAnalysisTag)) throw new Error('Joint CSV Analysis must load after CSV Intelligence');
 if (nativeIndex.indexOf(csvJointAnalysisTag) > nativeIndex.indexOf(csvHierarchyQualityTag)) throw new Error('CSV hierarchy quality UI must load after Joint CSV Analysis');
 if (nativeIndex.indexOf(csvHierarchyQualityTag) > nativeIndex.indexOf(csvPeriodUiTag)) throw new Error('CSV period UI must load after CSV hierarchy quality UI');
-if (nativeIndex.indexOf(csvPeriodUiTag) > nativeIndex.indexOf(csvLibraryReviewTag)) throw new Error('CSV Library Review must load after CSV period UI');
+if (nativeIndex.indexOf(csvPeriodUiTag) > nativeIndex.indexOf(csvAnalysisExportTag)) throw new Error('CSV analysis export UI must load after CSV period UI');
+if (nativeIndex.indexOf(csvAnalysisExportTag) > nativeIndex.indexOf(csvLibraryReviewTag)) throw new Error('CSV Library Review must load after CSV analysis export UI');
 if (nativeIndex.indexOf(csvLibraryReviewTag) > nativeIndex.indexOf(csvProductUiTag)) throw new Error('CSV product UI integration must load after CSV Library Review');
 if (nativeIndex.indexOf(csvProductUiTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after CSV product UI integration');
 if (nativeIndex.indexOf(phase9Tag) > nativeIndex.indexOf(phase11Tag)) throw new Error('Phase 11 execution readiness extension must load after Phase 9 productization');
@@ -126,6 +133,7 @@ await import('./test-csv-hierarchy-profitability.mjs');
 await import('./test-csv-period-over-period.mjs');
 await import('./test-csv-hierarchy-quality-ui-contract.mjs');
 await import('./test-csv-period-ui-contract.mjs');
+await import('./test-csv-analysis-export-contract.mjs');
 await import('./test-csv-library-review-bridge-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
