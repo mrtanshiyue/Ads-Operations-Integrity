@@ -175,6 +175,7 @@ await import('./test-csv-hierarchy-drilldown-contract.mjs');
 await import('./test-csv-period-ui-contract.mjs');
 await import('./test-csv-monthly-workspace-contract.mjs');
 await import('./test-csv-history-ledger-contract.mjs');
+await import('./test-csv-history-period-comparison-contract.mjs');
 await import('./test-csv-provenance-audit-contract.mjs');
 await import('./test-csv-analysis-export-contract.mjs');
 await import('./test-csv-library-review-bridge-contract.mjs');
