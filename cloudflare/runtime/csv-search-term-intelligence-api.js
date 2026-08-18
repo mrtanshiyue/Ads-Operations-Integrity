@@ -394,7 +394,7 @@ function summarizeFreshness(items) {
 }
 
 async function authorizedStoreRoute(env, userId, storeId, permission) {
-  const allowed = await hasStorePermission(env.CONTROL_DB, userId, storeId, 'analytics.read');
+  const allowed = await hasStorePermission(env.CONTROL_DB, userId, storeId, permission);
   if (!allowed) return { error: 'forbidden', permission, status: 403 };
   const store = await env.CONTROL_DB.prepare(`SELECT store_id,d1_binding_key,status FROM stores WHERE store_id=?1 AND status <> 'disabled' LIMIT 1`).bind(storeId).first();
   if (!store) return { error: 'store_not_found', status: 404 };
