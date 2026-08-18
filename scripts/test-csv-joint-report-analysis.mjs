@@ -44,16 +44,8 @@ const csv2 = [
 ].join('\n');
 
 const [batch1, batch2] = await Promise.all([
-  parseAmazonSearchTermCsv({
-    csvText: csv1,
-    sourceFileName: 'report-2026-08-01.csv',
-    uploadedAt: '2026-08-18T07:30:00.000Z',
-  }),
-  parseAmazonSearchTermCsv({
-    csvText: csv2,
-    sourceFileName: 'report-2026-08-02.csv',
-    uploadedAt: '2026-08-18T07:30:00.000Z',
-  }),
+  parseAmazonSearchTermCsv({ csvText: csv1, sourceFileName: 'report-2026-08-01.csv', uploadedAt: '2026-08-18T07:30:00.000Z' }),
+  parseAmazonSearchTermCsv({ csvText: csv2, sourceFileName: 'report-2026-08-02.csv', uploadedAt: '2026-08-18T07:30:00.000Z' }),
 ]);
 assert.equal(batch1.ok, true, JSON.stringify(batch1.errors));
 assert.equal(batch2.ok, true, JSON.stringify(batch2.errors));
@@ -72,6 +64,7 @@ assert.match(result.source.inputSetFingerprint, /^[a-f0-9]{64}$/);
 assert.equal(result.source.canonicalAmazonIdentityResolved, false);
 assert.equal(result.source.observedTargetingIdentityAvailable, true);
 assert.equal(result.source.hierarchyProfitabilityAvailable, true);
+assert.equal(result.source.periodOverPeriodAvailable, true);
 assert.equal(result.source.governancePersistenceAllowed, false);
 assert.equal(result.source.executionAuthorized, false);
 assert.equal(result.source.amazonMutationAuthorized, false);
@@ -95,6 +88,9 @@ assert.equal(result.summary.targetingAggregateCount, 3);
 assert.equal(result.summary.ambiguousCampaignAggregateCount, 0);
 assert.equal(result.summary.ambiguousAdGroupAggregateCount, 0);
 assert.equal(result.summary.ambiguousTargetingAggregateCount, 0);
+assert.equal(result.summary.trailingPeriodComparisonCount, 5);
+assert.equal(result.summary.monthlySnapshotCount, 1);
+assert.equal(result.summary.fullyCoveredTrailingComparisonCount, 0);
 assert.equal(result.summary.overlapPairCount, 0);
 assert.equal(result.summary.exactDuplicateWindowCount, 0);
 assert.equal(result.summary.dateGapCount, 0);
@@ -152,14 +148,43 @@ assert.ok(campaignB);
 assert.equal(campaignB.performanceBand, 'spend_without_sales');
 assert.equal(campaignB.adContributionMicros, -4_000_000);
 
+assert.equal(result.periods.schemaVersion, 'csv-period-over-period-v1');
+assert.deepEqual(result.periods.observationRange, { startDate: '2026-08-01', endDate: '2026-08-02' });
+assert.equal(result.periods.summary.trailingComparisonCount, 5);
+assert.equal(result.periods.summary.monthlySnapshotCount, 1);
+assert.equal(result.periods.summary.fullyCoveredTrailingComparisonCount, 0);
+assert.equal(result.periods.summary.incompleteTrailingComparisonCount, 5);
+assert.equal(result.periods.summary.blockedTrailingComparisonCount, 0);
+assert.equal(result.periods.authority.authoritative, false);
+assert.equal(result.periods.authority.governancePersistenceAllowed, false);
+assert.equal(result.periods.authority.executionAuthorized, false);
+assert.equal(result.periods.authority.amazonMutationAuthorized, false);
+const seven = result.periods.trailingComparisons.find((item) => item.days === 7);
+assert.ok(seven);
+assert.equal(seven.current.metrics.spendMicros, 14_000_000);
+assert.equal(seven.current.metrics.salesMicros, 20_000_000);
+assert.equal(seven.current.coverage.coveredDayCount, 2);
+assert.equal(seven.current.coverage.expectedDayCount, 7);
+assert.equal(seven.current.coverage.coverageRatio, 0.2857);
+assert.equal(seven.previous.coverage.coverageRatio, 0);
+assert.equal(seven.reliability.state, 'incomplete_coverage');
+assert.equal(seven.reliability.analyticalDecisionUse, 'review_with_partial_coverage');
+assert.equal(seven.persistenceAuthorized, false);
+assert.equal(seven.executionAuthorized, false);
+assert.equal(seven.amazonMutationAuthorized, false);
+const august = result.periods.monthlySnapshots[0];
+assert.equal(august.month, '2026-08');
+assert.equal(august.coverage.coveredDayCount, 2);
+assert.equal(august.coverage.expectedDayCount, 31);
+assert.equal(august.coverage.coverageRatio, 0.0645);
+assert.equal(august.monthComplete, false);
+assert.equal(august.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+
 assert.deepEqual(
   result.analysis.negativeSuggestions.filter((item) => item.matchScope === 'exact').map((item) => item.value).sort(),
   ['free glasses case', 'free glasses sample'],
 );
-assert.equal(
-  result.analysis.negativeSuggestions.find((item) => item.matchScope === 'phrase_review')?.value,
-  'free',
-);
+assert.equal(result.analysis.negativeSuggestions.find((item) => item.matchScope === 'phrase_review')?.value, 'free');
 
 const reversed = await analyzeCsvImportBatches([batch2, batch1], { rules: { targetAcos: 0.35 } });
 assert.equal(reversed.source.inputSetFingerprint, result.source.inputSetFingerprint, 'input-set fingerprint must be order independent');
@@ -168,15 +193,10 @@ assert.deepEqual(reversed.imports, result.imports, 'import receipts must use det
 assert.deepEqual(reversed.dataQuality, result.dataQuality, 'date-window diagnostics must be input-order independent');
 assert.deepEqual(reversed.observedIdentity, result.observedIdentity, 'observed identity graph must be input-order independent');
 assert.deepEqual(reversed.hierarchy, result.hierarchy, 'hierarchy profitability must be input-order independent');
+assert.deepEqual(reversed.periods, result.periods, 'period-over-period analysis must be input-order independent');
 
-await assert.rejects(
-  () => analyzeCsvImportBatches([batch1, batch1]),
-  (error) => error?.code === 'CSV_JOINT_ANALYSIS_DUPLICATE_CONTENT',
-);
-await assert.rejects(
-  () => analyzeCsvImportBatches([{ ...batch1, ok: false }]),
-  (error) => error?.code === 'CSV_JOINT_ANALYSIS_IMPORT_REJECTED',
-);
+await assert.rejects(() => analyzeCsvImportBatches([batch1, batch1]), (error) => error?.code === 'CSV_JOINT_ANALYSIS_DUPLICATE_CONTENT');
+await assert.rejects(() => analyzeCsvImportBatches([{ ...batch1, ok: false }]), (error) => error?.code === 'CSV_JOINT_ANALYSIS_IMPORT_REJECTED');
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'ads-ops-csv-joint-'));
 try {
@@ -184,17 +204,7 @@ try {
   const file2 = path.join(tempDir, 'two.csv');
   await writeFile(file1, csv1, 'utf8');
   await writeFile(file2, csv2, 'utf8');
-
-  const cliRun = spawnSync(process.execPath, [
-    cli,
-    file1,
-    file2,
-    '--target-acos=0.35',
-    '--uploaded-at=2026-08-18T07:30:00.000Z',
-  ], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  const cliRun = spawnSync(process.execPath, [cli, file1, file2, '--target-acos=0.35', '--uploaded-at=2026-08-18T07:30:00.000Z'], { cwd: root, encoding: 'utf8' });
   assert.equal(cliRun.status, 0, cliRun.stderr);
   assert.equal(cliRun.stderr, '');
   const cliResult = JSON.parse(cliRun.stdout);
@@ -203,28 +213,27 @@ try {
   assert.equal(cliResult.summary.factCount, 5);
   assert.equal(cliResult.summary.observedIdentityCount, 3);
   assert.equal(cliResult.summary.targetingAggregateCount, 3);
+  assert.equal(cliResult.summary.trailingPeriodComparisonCount, 5);
+  assert.equal(cliResult.summary.monthlySnapshotCount, 1);
   assert.equal(cliResult.summary.overlapPairCount, 0);
   assert.equal(cliResult.summary.dateGapCount, 0);
   assert.equal(cliResult.source.inputSetFingerprint, result.source.inputSetFingerprint);
   assert.equal(cliResult.source.naiveAggregationSafe, true);
+  assert.equal(cliResult.source.periodOverPeriodAvailable, true);
   assert.equal(cliResult.dataQuality.qualityState, 'clean_contiguous');
   assert.equal(cliResult.hierarchy.reliability.state, 'observed');
   assert.equal(cliResult.hierarchy.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+  assert.equal(cliResult.periods.schemaVersion, 'csv-period-over-period-v1');
+  assert.equal(cliResult.periods.summary.incompleteTrailingComparisonCount, 5);
   assert.equal(cliResult.observedIdentity.authority.canonicalAmazonIdentityResolved, false);
   assert.equal(cliResult.source.amazonMutationAuthorized, false);
 
-  const duplicateRun = spawnSync(process.execPath, [cli, file1, file1], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  const duplicateRun = spawnSync(process.execPath, [cli, file1, file1], { cwd: root, encoding: 'utf8' });
   assert.equal(duplicateRun.status, 1);
   const duplicateError = JSON.parse(duplicateRun.stderr);
   assert.equal(duplicateError.error, 'CSV_JOINT_ANALYSIS_DUPLICATE_CONTENT');
 
-  const helpRun = spawnSync(process.execPath, [cli, '--help'], {
-    cwd: root,
-    encoding: 'utf8',
-  });
+  const helpRun = spawnSync(process.execPath, [cli, '--help'], { cwd: root, encoding: 'utf8' });
   assert.equal(helpRun.status, 0, helpRun.stderr);
   assert.match(helpRun.stdout, /reads local CSV files and writes JSON to stdout only/i);
   assert.match(helpRun.stdout, /does not call Amazon Ads, Cloudflare, D1, R2/i);
@@ -234,14 +243,17 @@ try {
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-joint-report-analysis-v2-observed-identity-window-quality-hierarchy',
+  contract: 'csv-joint-report-analysis-v2-observed-identity-window-quality-hierarchy-periods',
   batchCount: result.summary.batchCount,
   factCount: result.summary.factCount,
   observedIdentityCount: result.summary.observedIdentityCount,
   targetingAggregateCount: result.summary.targetingAggregateCount,
+  trailingPeriodComparisonCount: result.summary.trailingPeriodComparisonCount,
+  monthlySnapshotCount: result.summary.monthlySnapshotCount,
   searchTermIdentityLinkCount: result.summary.searchTermIdentityLinkCount,
   windowQuality: result.dataQuality.qualityState,
   hierarchyReliability: result.hierarchy.reliability.state,
+  sevenDayReliability: seven.reliability.state,
   naiveAggregationSafe: result.source.naiveAggregationSafe,
   inputSetFingerprint: result.source.inputSetFingerprint,
   duplicateContentRejected: true,
