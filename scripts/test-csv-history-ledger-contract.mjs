@@ -12,7 +12,7 @@ const engineSource = await readFile(path.join(distRoot, engineRelative), 'utf8')
 const uiSource = await readFile(path.join(distRoot, uiRelative), 'utf8');
 const indexSource = await readFile(path.join(distRoot, 'index.html'), 'utf8');
 const monthlyTag = '<script type="module" src="assets/cloudflare-native-csv-monthly-workspace-v1.js?v=1.0.0"></script>';
-const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.0.0"></script>';
+const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.1.0"></script>';
 const provenanceTag = '<script type="module" src="assets/cloudflare-native-csv-provenance-audit-v1.js?v=1.0.0"></script>';
 
 assert.equal(indexSource.split(historyTag).length - 1, 1, 'History ledger UI must be injected exactly once');
@@ -22,6 +22,10 @@ assert.match(uiSource, /Historical Local-Data Ledger/);
 assert.match(uiSource, /Explicit local-file ownership/);
 assert.match(uiSource, /Overlap or gaps are recorded, never silently normalized/);
 assert.match(uiSource, /Download updated ledger/);
+assert.match(uiSource, /Historical Monthly Workspace/);
+assert.match(uiSource, /Same-month evidence from multiple snapshots is displayed separately, never cross-snapshot aggregated/);
+assert.match(uiSource, /Ad Contribution = Sales - Ad Spend only; it is not Net Profit/);
+assert.match(uiSource, /crossSnapshotAggregationApplied: false/);
 assert.match(engineSource, /CSV_HISTORY_DUPLICATE_INPUT_SET_FINGERPRINT/);
 assert.match(engineSource, /CSV_HISTORY_DUPLICATE_CONTENT_HASH/);
 assert.match(engineSource, /CSV_HISTORY_SOURCE_RECEIPT_MISMATCH/);
@@ -53,8 +57,12 @@ for (const pattern of [
 }
 
 const mod = await import(`${pathToFileURL(path.join(distRoot, engineRelative)).href}?contract=${Date.now()}`);
+const uiMod = await import(`${pathToFileURL(path.join(distRoot, uiRelative)).href}?contract=${Date.now()}`);
 assert.equal(mod.CSV_HISTORY_LEDGER_SCHEMA_VERSION, 'csv-history-ledger-v1');
 assert.equal(mod.CSV_HISTORY_SNAPSHOT_SCHEMA_VERSION, 'csv-history-snapshot-v1');
+assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.1.0');
+assert.equal(uiMod.CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION, 'csv-history-monthly-workspace-v1');
+assert.equal(typeof uiMod.buildHistoricalMonthlyWorkspace, 'function');
 
 const august = await fixture({ hashChar: 'b', startDate: '2026-08-01', endDate: '2026-08-14', month: '2026-08' });
 const september = await fixture({ hashChar: 'c', startDate: '2026-09-01', endDate: '2026-09-30', month: '2026-09' });
@@ -87,12 +95,40 @@ assert.equal(two.historyWindowEvidence.overlapPairCount, 0);
 assert.equal(two.historyWindowEvidence.gapCount, 1, 'Historical gap must be preserved as evidence');
 assert.notEqual(two.ledgerFingerprint, one.ledgerFingerprint);
 
+const monthlyWorkspace = uiMod.buildHistoricalMonthlyWorkspace(two);
+assert.equal(monthlyWorkspace.schemaVersion, 'csv-history-monthly-workspace-v1');
+assert.equal(monthlyWorkspace.rowCount, 2);
+assert.equal(monthlyWorkspace.distinctMonthCount, 2);
+assert.equal(monthlyWorkspace.multiEvidenceMonthCount, 0);
+assert.equal(monthlyWorkspace.crossSnapshotAggregationApplied, false);
+assert.equal(monthlyWorkspace.normalizationApplied, false);
+assert.equal(monthlyWorkspace.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+assert.deepEqual(monthlyWorkspace.rows.map((item) => item.month), ['2026-08', '2026-09']);
+assert.deepEqual(monthlyWorkspace.rows.map((item) => item.sourceInputSetFingerprint), two.snapshots.map((item) => item.inputSetFingerprint));
+assert.ok(monthlyWorkspace.rows.every((item) => item.adContributionMicros === item.salesMicros - item.spendMicros));
+assert.ok(monthlyWorkspace.rows.every((item) => item.profitabilityBasis === 'sales_minus_ad_spend_only_not_net_profit'));
+assert.ok(monthlyWorkspace.rows.every((item) => item.decisionState === 'partial_coverage_review'));
+assert.equal(monthlyWorkspace.authority.authoritative, false);
+assert.equal(monthlyWorkspace.authority.canonicalAmazonIdentityResolved, false);
+assert.equal(monthlyWorkspace.authority.governancePersistenceAllowed, false);
+assert.equal(monthlyWorkspace.authority.executionAuthorized, false);
+assert.equal(monthlyWorkspace.authority.amazonMutationAuthorized, false);
+
 const overlapping = await fixture({ hashChar: 'd', startDate: '2026-08-10', endDate: '2026-08-20', month: '2026-08' });
 const withOverlap = await mod.mergeCsvHistoryLedger(one, overlapping);
 assert.equal(withOverlap.historyWindowEvidence.overlapPairCount, 1);
 assert.equal(withOverlap.historyWindowEvidence.overlapDetected, true);
 assert.equal(withOverlap.historyWindowEvidence.normalizationApplied, false);
 assert.equal(withOverlap.snapshots.length, 2, 'Overlapping snapshots must remain separate evidence records');
+const sameMonthWorkspace = uiMod.buildHistoricalMonthlyWorkspace(withOverlap);
+assert.equal(sameMonthWorkspace.rowCount, 2);
+assert.equal(sameMonthWorkspace.distinctMonthCount, 1);
+assert.equal(sameMonthWorkspace.multiEvidenceMonthCount, 1);
+assert.equal(sameMonthWorkspace.crossSnapshotAggregationApplied, false);
+assert.ok(sameMonthWorkspace.rows.every((item) => item.sameMonthEvidenceCount === 2));
+assert.ok(sameMonthWorkspace.rows.every((item) => item.sameMonthMultipleSnapshots === true));
+assert.ok(sameMonthWorkspace.rows.every((item) => item.crossSnapshotAggregationApplied === false));
+assert.notEqual(sameMonthWorkspace.rows[0].sourceInputSetFingerprint, sameMonthWorkspace.rows[1].sourceInputSetFingerprint);
 
 await assert.rejects(
   () => mod.mergeCsvHistoryLedger(one, august),
@@ -143,6 +179,28 @@ await assert.rejects(
   'Imported authority escalation must fail closed',
 );
 
+const contributionMismatch = JSON.parse(mod.serializeCsvHistoryLedger(one));
+contributionMismatch.snapshots[0].monthlySnapshots[0].adContributionMicros += 1;
+assert.throws(
+  () => uiMod.buildHistoricalMonthlyWorkspace(contributionMismatch),
+  (error) => error?.code === 'CSV_HISTORY_MONTHLY_CONTRIBUTION_MISMATCH',
+  'Monthly workspace must reject Ad Contribution drift',
+);
+const monthlyEscalation = JSON.parse(mod.serializeCsvHistoryLedger(one));
+monthlyEscalation.authority.executionAuthorized = true;
+assert.throws(
+  () => uiMod.buildHistoricalMonthlyWorkspace(monthlyEscalation),
+  (error) => error?.code === 'CSV_HISTORY_MONTHLY_AUTHORITY_ESCALATION_BLOCKED',
+  'Monthly workspace must reject authority escalation',
+);
+const invalidMonthlySource = JSON.parse(mod.serializeCsvHistoryLedger(one));
+invalidMonthlySource.snapshots[0].inputSetFingerprint = 'x'.repeat(64);
+assert.throws(
+  () => uiMod.buildHistoricalMonthlyWorkspace(invalidMonthlySource),
+  (error) => error?.code === 'CSV_HISTORY_MONTHLY_SOURCE_FINGERPRINT_INVALID',
+  'Monthly workspace must keep every row bound to a valid input-set fingerprint',
+);
+
 console.log(JSON.stringify({
   ok: true,
   contract: 'csv-history-ledger-v1',
@@ -154,6 +212,10 @@ console.log(JSON.stringify({
   batchCountVerified: true,
   overlapPreservedAsEvidence: true,
   gapPreservedAsEvidence: true,
+  historicalMonthlyWorkspace: true,
+  sameMonthEvidenceSeparated: true,
+  crossSnapshotAggregationApplied: false,
+  adContributionBasisVerified: true,
   normalizationApplied: false,
   businessRowDeduplicationApplied: false,
   canonicalAmazonIdentityResolved: false,
