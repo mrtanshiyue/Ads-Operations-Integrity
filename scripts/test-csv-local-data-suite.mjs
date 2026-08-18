@@ -32,6 +32,7 @@ const syntaxTargets = [
   'cloudflare/runtime/csv-imports-api.js',
   'cloudflare/runtime/csv-search-term-intelligence-api.js',
   'cloudflare/runtime/csv-productization-api.js',
+  'cloudflare/runtime/csv-term-profitability-analysis.js',
   'assets/cloudflare-native-imports-console-v1.js',
   'assets/cloudflare-native-csv-intelligence-v1.js',
   'assets/cloudflare-native-csv-product-ui-v2.js',
@@ -41,6 +42,7 @@ const syntaxTargets = [
   'scripts/test-csv-real-data-intelligence-contract.mjs',
   'scripts/test-csv-real-data-intelligence-ui-contract.mjs',
   'scripts/test-csv-product-ui-navigation-contract.mjs',
+  'scripts/test-csv-term-profitability-analysis.mjs',
 ];
 
 for (const target of syntaxTargets) {
@@ -54,6 +56,7 @@ const nodeContracts = [
   'scripts/test-csv-real-data-intelligence-contract.mjs',
   'scripts/test-csv-real-data-intelligence-ui-contract.mjs',
   'scripts/test-csv-product-ui-navigation-contract.mjs',
+  'scripts/test-csv-term-profitability-analysis.mjs',
 ];
 
 for (const contract of nodeContracts) {
@@ -64,7 +67,7 @@ run('python3', ['scripts/test-csv-import-foundation.py'], 'contract: scripts/tes
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-local-data-required-ci-v1',
+  contract: 'csv-local-data-required-ci-v2-profitability-toxicity',
   buildSkipped: skipBuild,
   syntaxTargets: syntaxTargets.length,
   nodeContracts: nodeContracts.length,
