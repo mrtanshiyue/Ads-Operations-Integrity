@@ -79,6 +79,14 @@ jobs:
       - name: Validate foundation regressions
         run: npm run test:cf-foundation
 
+      - name: Validate CSV real-data ingestion foundation
+        run: |
+          node --check cloudflare/runtime/csv-search-term-import.js
+          node --check cloudflare/runtime/csv-search-term-import-repository.js
+          node --check scripts/test-csv-search-term-import.mjs
+          node scripts/test-csv-search-term-import.mjs
+          python3 scripts/test-csv-import-foundation.py
+
       - name: Validate Phase E producer and ingestion regressions
         run: |
           node --check cloudflare/runtime/canonical-json.js
