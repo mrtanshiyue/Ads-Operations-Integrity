@@ -1,7 +1,7 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.3';
+  const VERSION = '1.0.4';
   const STORAGE_SOURCE = 'aoi.decision.source';
   const REQUEST_TIMEOUT_MS = 30000;
   const TIMEOUT_ERROR_CODE = 'CSV_INTELLIGENCE_TIMEOUT';
@@ -105,7 +105,7 @@
     if (status) {
       status.dataset.kind = csv ? 'warn' : '';
       status.textContent = csv
-        ? 'Imported CSV advisory mode. Profile ID is optional and defaults to unscoped imported facts. Recommendations are non-authoritative and cannot be persisted until Amazon entity identity is resolved.'
+        ? 'Imported CSV advisory mode. Profile ID is optional and defaults to unscoped imported facts. Recommendations are non-authoritative and cannot be persisted until canonical Amazon profile/entity identity is verified.'
         : 'Amazon lineage mode. Profile scope is required; execution remains disabled.';
     }
     if (csv) clearCsvResults();
@@ -214,7 +214,7 @@
       ${summaryCard('Stale', freshness.stale || 0)}
     </div>`;
     const rows = (payload.items || []).map((item, index) => csvRow(item, payload, index)).join('');
-    target.innerHTML = `${cards}<div class="cfdi-callout"><strong>Imported real data.</strong> CSV content/import provenance is validated, but Amazon campaign/ad-group/keyword IDs are unresolved. Recommendations are advisory only.</div><div class="cfdi-table-wrap"><table class="cfdi-table"><thead><tr><th>Search term</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Trend</th><th>Decision</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>${rows || '<tr><td colspan="9">No imported CSV facts in this window.</td></tr>'}</tbody></table></div>`;
+    target.innerHTML = `${cards}<div class="cfdi-callout"><strong>Imported real data.</strong> CSV content/import provenance is validated and observed CSV campaign/ad-group/target IDs may be present, but canonical Amazon profile/entity binding is not verified. Recommendations are advisory only.</div><div class="cfdi-table-wrap"><table class="cfdi-table"><thead><tr><th>Search term</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Trend</th><th>Decision</th><th>Confidence</th><th>Evidence</th></tr></thead><tbody>${rows || '<tr><td colspan="9">No imported CSV facts in this window.</td></tr>'}</tbody></table></div>`;
   }
 
   function csvRow(item, payload, index) {
@@ -231,7 +231,7 @@
       <td>${number(m.orders)}</td>
       <td>${percent(m.acos)}</td>
       <td><span>Spend ${signedPercent(trend.spendPct)}</span><small>Orders ${signedPercent(trend.ordersPct)}</small></td>
-      <td><span class="cfdi-pill ${rec ? 'candidate' : ''}">${decision}</span><small>${rec ? 'identity resolution required' : 'advisory only'}</small></td>
+      <td><span class="cfdi-pill ${rec ? 'candidate' : ''}">${decision}</span><small>${rec ? 'canonical identity verification required' : 'advisory only'}</small></td>
       <td><span class="cfdi-confidence">${esc(item.confidence?.band || 'low')} · ${percent(item.confidence?.score)}</span><small>${esc(item.freshness?.state || 'unknown')} · ${evidence.csvProvenanceValid ? 'CSV provenance valid' : 'CSV provenance invalid'}</small></td>
       <td><button type="button" class="cfdi-link" data-csv-evidence-index="${index}">Evidence</button></td>
     </tr>`;
@@ -244,14 +244,14 @@
     const rec = item.recommendation;
     const delta = item.trend?.delta || {};
     drawer.hidden = false;
-    drawer.innerHTML = `<header class="cfdi-drawer-header"><div><span>Imported CSV Evidence</span><strong>${esc(item.entity?.searchTerm || '')}</strong><small>Non-authoritative · Amazon identity unresolved</small></div><button type="button" data-drawer-close aria-label="Close drawer">×</button></header>
+    drawer.innerHTML = `<header class="cfdi-drawer-header"><div><span>Imported CSV Evidence</span><strong>${esc(item.entity?.searchTerm || '')}</strong><small>Non-authoritative · Canonical Amazon identity unverified</small></div><button type="button" data-drawer-close aria-label="Close drawer">×</button></header>
       <div class="cfdi-drawer-body">
         <div class="cfdi-badges"><span class="cfdi-pill warn">Non-authoritative</span><span class="cfdi-pill">CSV provenance ${evidence.csvProvenanceValid ? 'valid' : 'invalid'}</span><span class="cfdi-pill danger">Execution Disabled</span></div>
-        ${section('Decision', `<dl>${kv('Decision', rec ? `${rec.family} · ${rec.actionType}` : item.suppression?.code || 'Observe')}${kv('Confidence', `${item.confidence?.band || 'low'} · ${percent(item.confidence?.score)}`)}${kv('Fingerprint', item.fingerprint || '—')}${kv('Identity resolved', 'no')}</dl>`)}
+        ${section('Decision', `<dl>${kv('Decision', rec ? `${rec.family} · ${rec.actionType}` : item.suppression?.code || 'Observe')}${kv('Confidence', `${item.confidence?.band || 'low'} · ${percent(item.confidence?.score)}`)}${kv('Fingerprint', item.fingerprint || '—')}${kv('Canonical identity verified', 'no')}</dl>`)}
         ${section('Performance', `<dl>${kv('Spend', money(item.metrics?.spendMicros, payload.profile?.currencyCode))}${kv('Sales', money(item.metrics?.salesMicros, payload.profile?.currencyCode))}${kv('Orders', number(item.metrics?.orders))}${kv('ACoS', percent(item.metrics?.acos))}${kv('ROAS', decimal(item.metrics?.roas))}${kv('CVR', percent(item.metrics?.cvr))}</dl>`)}
-        ${section('Imported provenance', `<dl>${kv('Source kind', 'csv_import')}${kv('Import IDs', join(evidence.sourceImportIds))}${kv('Content SHA-256', join(evidence.contentSha256s))}${kv('Fact rows', evidence.factRowCount)}${kv('Latest report', evidence.latestReportDate || item.freshness?.latestReportDate || '—')}${kv('Campaign name', item.entity?.campaignName || '—')}${kv('Ad group name', item.entity?.adGroupName || '—')}${kv('Targeting', item.entity?.targeting || '—')}</dl>`)}
+        ${section('Imported provenance', `<dl>${kv('Source kind', 'csv_import')}${kv('Import IDs', join(evidence.sourceImportIds))}${kv('Content SHA-256', join(evidence.contentSha256s))}${kv('Fact rows', evidence.factRowCount)}${kv('Latest report', evidence.latestReportDate || item.freshness?.latestReportDate || '—')}${kv('Observed advertiser account ID', evidence.advertiserAccountId || '—')}${kv('Observed campaign ID', evidence.campaignId || item.entity?.campaignId || '—')}${kv('Observed ad group ID', evidence.adGroupId || item.entity?.adGroupId || '—')}${kv('Observed targeting ID', evidence.targetingId || item.entity?.targetId || '—')}${kv('CSV targeting identity state', evidence.targetingIdentityState || item.entity?.targetingIdentityState || '—')}${kv('Campaign name', item.entity?.campaignName || '—')}${kv('Ad group name', item.entity?.adGroupName || '—')}${kv('Targeting', item.entity?.targeting || '—')}</dl>`)}
         ${section('Comparable trend', `<dl>${kv('Spend Δ', signedPercent(delta.spendPct))}${kv('Sales Δ', signedPercent(delta.salesPct))}${kv('Orders Δ', signedPercent(delta.ordersPct))}${kv('ACoS Δ', signedPp(delta.acosPp))}</dl>`)}
-        <div class="cfdi-callout"><strong>Governance persistence disabled.</strong> Resolve canonical Amazon profile/campaign/ad-group/keyword or target identity before creating an Optimization Action. No Amazon mutation is authorized.</div>
+        <div class="cfdi-callout"><strong>Governance persistence disabled.</strong> Verify canonical Amazon profile/campaign/ad-group/keyword or target identity before creating an Optimization Action. Observed CSV IDs alone do not authorize persistence or Amazon mutation.</div>
       </div>`;
   }
 
