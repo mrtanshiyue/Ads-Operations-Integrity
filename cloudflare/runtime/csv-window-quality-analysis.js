@@ -20,7 +20,7 @@ export function analyzeCsvWindowQuality(imports) {
   const mergedCoverage = mergeCoverage(validWindows);
   const gaps = buildGaps(mergedCoverage);
   const reportedWindowDayCount = validWindows.reduce((sum, item) => sum + item.windowDayCount, 0);
-  const uniqueCoveredDayCount = mergedCoverage.reduce((sum, item) => sum + daysInclusive(item.startDay, item.endDay), 0);
+  const uniqueCoveredDayCount = mergedCoverage.reduce((sum, item) => sum + item.coveredDayCount, 0);
   const overlapExcessDayCount = Math.max(0, reportedWindowDayCount - uniqueCoveredDayCount);
   const coverageStartDate = mergedCoverage[0]?.startDate || null;
   const coverageEndDate = mergedCoverage[mergedCoverage.length - 1]?.endDate || null;
