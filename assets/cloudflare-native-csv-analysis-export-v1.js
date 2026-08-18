@@ -115,7 +115,7 @@ function mount() {
   root.className = 'cfae';
   root.dataset.csvAnalysisExport = CSV_ANALYSIS_EXPORT_UI_VERSION;
   root.innerHTML = `
-    <div class="cfae-head"><div><b>Local Analysis Export</b><small>Download operator-facing evidence files from the currently selected CSV inputs.</small></div><span>local files only</span></div>
+    <div class="cfae-head"><div><b>Local Analysis Export</b><small>Download operator-facing evidence files from the currently selected CSV inputs. Ad contribution = Sales - Ad Spend only; it is not net profit.</small></div><span>local files only</span></div>
     <div class="cfae-actions">
       <button type="button" data-cfae-kind="json" disabled>Full advisory JSON</button>
       <button type="button" data-cfae-kind="candidates" disabled>Candidate review CSV</button>
