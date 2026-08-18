@@ -52,7 +52,7 @@ assert.doesNotMatch(source, />\s*Send to Amazon\s*</i);
 assert.doesNotMatch(source, /execution-permits/);
 
 const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-readiness-v1.js"></script>';
-const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
+const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js?v=1.2.1"></script>';
 assert.equal(distIndex.split(phase11Tag).length - 1, 1);
 assert.ok(distIndex.indexOf(phase9Tag) >= 0);
 assert.ok(distIndex.indexOf(phase9Tag) < distIndex.indexOf(phase11Tag));
