@@ -13,11 +13,11 @@ const NON_AUTHORITY = Object.freeze({
 
 export function buildCsvProvenanceAudit(result) {
   assertAdvisoryOnly(result);
-  const imports = (result.imports || []).map((item) => Object.freeze({
+  const imports = result.imports.map((item) => Object.freeze({
     schemaVersion: item.schemaVersion || null,
     reportType: item.reportType || null,
     sourceFileName: item.sourceFileName || null,
-    contentSha256: item.contentSha256 || null,
+    contentSha256: String(item.contentSha256).toLowerCase(),
     reportStartDate: item.reportStartDate || null,
     reportEndDate: item.reportEndDate || null,
     rowCount: finiteOrNull(item.rowCount),
@@ -33,10 +33,12 @@ export function buildCsvProvenanceAudit(result) {
     schemaVersion: CSV_PROVENANCE_AUDIT_SCHEMA_VERSION,
     authority: NON_AUTHORITY,
     source: Object.freeze({
-      kind: result.source?.kind || 'csv_import_set',
-      inputSetFingerprint: result.source.inputSetFingerprint,
-      batchCount: finiteOrNull(result.source.batchCount ?? imports.length),
-      contentSha256s: Object.freeze([...(result.source.contentSha256s || [])]),
+      kind: result.source.kind,
+      inputSetFingerprint: String(result.source.inputSetFingerprint).toLowerCase(),
+      batchCount: imports.length,
+      receiptCount: imports.length,
+      contentSha256s: Object.freeze(result.source.contentSha256s.map((value) => String(value).toLowerCase())),
+      receiptHashSetVerified: true,
       reportStartDate: result.range?.startDate || null,
       reportEndDate: result.range?.endDate || null,
     }),
@@ -155,7 +157,7 @@ function render(root, audit) {
   body.innerHTML = `
     <div class="cfpa-grid">
       ${card('Input-set fingerprint', `<code>${esc(audit.source.inputSetFingerprint)}</code>`)}
-      ${card('Report evidence', `${esc(audit.source.reportStartDate || 'unknown')} → ${esc(audit.source.reportEndDate || 'unknown')}<br>${audit.receipts.length} source receipt(s)`)}
+      ${card('Report evidence', `${esc(audit.source.reportStartDate || 'unknown')} → ${esc(audit.source.reportEndDate || 'unknown')}<br>${audit.receipts.length} source receipt(s)<br>receipt/hash set: <b>verified</b>`)}
       ${card('Aggregation safety', `naive aggregation: <b>${q.safeForNaiveAggregation ? 'safe' : 'blocked'}</b><br>contiguous coverage: <b>${q.contiguousCoverage ? 'yes' : 'no'}</b>`)}
       ${card('Quality state', `<b>${esc(q.qualityState || 'unknown')}</b><br>human review: ${q.requiresHumanReview ? 'required' : 'not required'}`)}
     </div>
@@ -182,10 +184,31 @@ function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ 
 
 function assertAdvisoryOnly(result) {
   if (!result || typeof result !== 'object') throw auditError('CSV_PROVENANCE_AUDIT_RESULT_REQUIRED');
+  if (result.source?.kind !== 'csv_import_set') throw auditError('CSV_PROVENANCE_AUDIT_SOURCE_KIND_INVALID');
   if (!/^[a-f0-9]{64}$/i.test(String(result.source?.inputSetFingerprint || ''))) throw auditError('CSV_PROVENANCE_AUDIT_FINGERPRINT_INVALID');
-  for (const receipt of result.imports || []) {
-    if (!/^[a-f0-9]{64}$/i.test(String(receipt?.contentSha256 || ''))) throw auditError('CSV_PROVENANCE_AUDIT_CONTENT_HASH_INVALID');
+  if (!Array.isArray(result.imports) || result.imports.length === 0) throw auditError('CSV_PROVENANCE_AUDIT_IMPORTS_REQUIRED');
+
+  const receiptHashes = result.imports.map((receipt) => {
+    const hash = String(receipt?.contentSha256 || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hash)) throw auditError('CSV_PROVENANCE_AUDIT_CONTENT_HASH_INVALID');
+    return hash;
+  });
+  const sourceHashes = Array.isArray(result.source?.contentSha256s)
+    ? result.source.contentSha256s.map((value) => String(value || '').toLowerCase())
+    : [];
+  if (sourceHashes.some((hash) => !/^[a-f0-9]{64}$/.test(hash))) throw auditError('CSV_PROVENANCE_AUDIT_SOURCE_HASH_SET_INVALID');
+  if (new Set(receiptHashes).size !== receiptHashes.length || new Set(sourceHashes).size !== sourceHashes.length) {
+    throw auditError('CSV_PROVENANCE_AUDIT_DUPLICATE_HASH_EVIDENCE');
   }
+  const sortedReceipts = [...receiptHashes].sort();
+  const sortedSource = [...sourceHashes].sort();
+  if (sortedReceipts.length !== sortedSource.length || sortedReceipts.some((hash, index) => hash !== sortedSource[index])) {
+    throw auditError('CSV_PROVENANCE_AUDIT_SOURCE_RECEIPT_MISMATCH');
+  }
+  if (result.source?.batchCount != null && Number(result.source.batchCount) !== result.imports.length) {
+    throw auditError('CSV_PROVENANCE_AUDIT_BATCH_COUNT_MISMATCH');
+  }
+
   const flags = [
     result.source?.canonicalAmazonIdentityResolved,
     result.source?.governancePersistenceAllowed,
