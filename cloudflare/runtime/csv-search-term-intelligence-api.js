@@ -14,12 +14,14 @@ const MAX_RANGE_DAYS = 93;
 
 // CSV data has durable content/import provenance but not canonical Amazon report/entity lineage.
 // Reuse the same decision thresholds while explicitly allowing advisory evaluation over this
-// non-Amazon lineage. Confidence remains penalized by the core model's lineage factor and
-// governance persistence is force-disabled below.
+// non-Amazon lineage. Confidence remains penalized by the core model's lineage and freshness
+// factors. Historical CSV windows keep their stale label but are not hard-suppressed because
+// CSV recommendations are advisory-only and can never authorize governance persistence/execution.
 const CSV_ADVISORY_RULES = Object.freeze({
   quality: Object.freeze({
     ...DEFAULT_SEARCH_TERM_RULES.quality,
     suppressInvalidLineage: false,
+    suppressStale: false,
     minConfidenceScore: 0.10,
   }),
   observation: DEFAULT_SEARCH_TERM_RULES.observation,
