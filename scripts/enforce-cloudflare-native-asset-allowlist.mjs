@@ -15,6 +15,7 @@ const allowedAssets = new Set([
   'cloudflare-native-audit-console-v1.js',
   'cloudflare-native-data-panel-v1.js',
   'cloudflare-native-decision-intelligence-v1.js',
+  'cloudflare-native-imports-console-v1.js',
   'cloudflare-native-phase9-productization-v1.js',
   'cloudflare-native-phase11-execution-readiness-v1.js',
   'cloudflare-native-keyword-governance-v1.js',
