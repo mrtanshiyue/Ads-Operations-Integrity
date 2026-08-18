@@ -25,6 +25,20 @@ assert.match(reviewUiSource, /negative_keyword_library/);
 assert.match(reviewUiSource, /shortlisted/);
 assert.match(reviewUiSource, /Browser memory only/);
 assert.match(reviewUiSource, /No library write occurred/);
+assert.match(reviewUiSource, /Candidate group/);
+assert.match(reviewUiSource, /Identity confidence/);
+assert.match(reviewUiSource, /Priority ↓/);
+assert.match(reviewUiSource, /Spend ↓/);
+assert.match(reviewUiSource, /Orders ↓/);
+assert.match(reviewUiSource, /ACoS ↓/);
+assert.match(reviewUiSource, /Candidate A–Z/);
+assert.match(reviewUiSource, /Keyword harvest/);
+assert.match(reviewUiSource, /Exact negative/);
+assert.match(reviewUiSource, /Phrase negative review/);
+assert.match(reviewUiSource, /Efficient converting search term/);
+assert.match(reviewUiSource, /Spend without orders/);
+assert.match(reviewUiSource, /Toxic root pattern/);
+assert.match(reviewUiSource, /selectCsvLibraryReviewItems/);
 
 for (const pattern of [
   /\bfetch\s*\(/,
@@ -50,8 +64,14 @@ for (const pattern of [
 
 const jointUi = await import(`${pathToFileURL(path.join(distRoot, 'assets/cloudflare-native-csv-joint-analysis-v1.js')).href}?library-review=${Date.now()}`);
 const bridge = await import(`${pathToFileURL(path.join(distRoot, bridgeRelative)).href}?library-review=${Date.now()}`);
+const reviewUi = await import(`${pathToFileURL(path.join(distRoot, reviewUiRelative)).href}?library-review-ux=${Date.now()}`);
 assert.equal(bridge.CSV_LIBRARY_REVIEW_BRIDGE_SCHEMA_VERSION, 'csv-library-review-bridge-v1');
 assert.equal(typeof bridge.buildCsvLibraryReviewBridge, 'function');
+assert.equal(reviewUi.CSV_LIBRARY_REVIEW_UI_VERSION, '1.0.0');
+assert.equal(typeof reviewUi.selectCsvLibraryReviewItems, 'function');
+assert.equal(reviewUi.rationaleLabel('efficient_converting_search_term'), 'Efficient converting search term');
+assert.equal(reviewUi.rationaleLabel('spend_without_orders'), 'Spend without orders');
+assert.equal(reviewUi.rationaleLabel('toxic_root_pattern'), 'Toxic root pattern');
 
 const header = [
   'Date', 'Advertiser Account Id', 'Profile Id', 'Marketplace', 'Currency',
@@ -100,6 +120,36 @@ assert.ok(queue.items.some((item) => item.destination === 'negative_keyword_libr
 assert.ok(queue.items.filter((item) => item.destination === 'negative_keyword_library').every((item) => item.observedIdentity.confidenceBlocked === true));
 assert.ok(queue.items.filter((item) => item.destination === 'keyword_library').every((item) => item.observedIdentity.confidenceBlocked === false));
 
+const allStates = new Map(queue.items.map((item) => [item.reviewId, 'open']));
+const keywordGroup = reviewUi.selectCsvLibraryReviewItems(queue.items, { candidateGroup: 'keyword_harvest' }, allStates);
+assert.equal(keywordGroup.length, 2);
+assert.ok(keywordGroup.every((item) => item.candidateKind === 'keyword_harvest'));
+const exactNegatives = reviewUi.selectCsvLibraryReviewItems(queue.items, { destination: 'negative_keyword_library', candidateGroup: 'negative_exact', confidence: 'blocked' }, allStates);
+assert.equal(exactNegatives.length, 2);
+assert.ok(exactNegatives.every((item) => item.candidateKind === 'negative_exact' && item.observedIdentity.confidenceBlocked === true));
+const phraseByRationale = reviewUi.selectCsvLibraryReviewItems(queue.items, { search: 'toxic root pattern' }, allStates);
+assert.equal(phraseByRationale.length, 2);
+assert.ok(phraseByRationale.every((item) => item.rationaleCode === 'toxic_root_pattern'));
+const exactByRationale = reviewUi.selectCsvLibraryReviewItems(queue.items, { search: 'spend without orders' }, allStates);
+assert.equal(exactByRationale.length, 2);
+assert.ok(exactByRationale.every((item) => item.rationaleCode === 'spend_without_orders'));
+const observedOnly = reviewUi.selectCsvLibraryReviewItems(queue.items, { confidence: 'observed' }, allStates);
+assert.equal(observedOnly.length, 2);
+assert.ok(observedOnly.every((item) => item.observedIdentity.quality === 'observed_only'));
+const spendSorted = reviewUi.selectCsvLibraryReviewItems(queue.items, { sort: 'spend_desc' }, allStates);
+assert.ok(spendSorted.every((item, index) => index === 0 || Number(spendSorted[index - 1].metrics?.spendMicros || 0) >= Number(item.metrics?.spendMicros || 0)));
+const candidateSorted = reviewUi.selectCsvLibraryReviewItems(queue.items, { sort: 'candidate_asc' }, allStates);
+assert.deepEqual(
+  candidateSorted.map((item) => item.normalizedValue),
+  [...candidateSorted.map((item) => item.normalizedValue)].sort((a, b) => a.localeCompare(b)),
+  'Candidate A-Z sort must be deterministic',
+);
+const shortlistedId = queue.items[0].reviewId;
+const changedStates = new Map(allStates);
+changedStates.set(shortlistedId, 'shortlisted');
+const shortlisted = reviewUi.selectCsvLibraryReviewItems(queue.items, { reviewState: 'shortlisted' }, changedStates);
+assert.deepEqual(shortlisted.map((item) => item.reviewId), [shortlistedId]);
+
 const reversedJoint = await jointUi.analyzeLocalCsvInputs([...inputs].reverse(), options);
 const reversedQueue = await bridge.buildCsvLibraryReviewBridge(reversedJoint);
 assert.equal(reversedQueue.source.inputSetFingerprint, queue.source.inputSetFingerprint);
@@ -121,6 +171,12 @@ console.log(JSON.stringify({
   keywordLibraryCandidateCount: queue.summary.keywordLibraryCandidateCount,
   negativeLibraryCandidateCount: queue.summary.negativeLibraryCandidateCount,
   blockedObservedIdentityCount: queue.summary.blockedObservedIdentityCount,
+  searchFilter: true,
+  candidateGroupFilter: true,
+  identityConfidenceFilter: true,
+  reviewStateFilter: true,
+  deterministicSorts: true,
+  operatorRationaleLabels: true,
   inputSetFingerprint: queue.source.inputSetFingerprint,
 }, null, 2));
 
