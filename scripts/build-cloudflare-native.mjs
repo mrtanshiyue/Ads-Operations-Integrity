@@ -29,6 +29,7 @@ const CSV_ANALYSIS_ENGINE_FILES = Object.freeze([
   'csv-term-profitability-analysis.js',
   'csv-observed-targeting-identity.js',
   'csv-window-quality-analysis.js',
+  'csv-hierarchy-profitability-analysis.js',
   'csv-joint-report-analysis.js',
   'csv-library-review-bridge.js',
 ]);
@@ -117,6 +118,7 @@ await import('./test-decision-intelligence-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-joint-analysis-ui-contract.mjs');
 await import('./test-csv-window-quality-diagnostics.mjs');
+await import('./test-csv-hierarchy-profitability.mjs');
 await import('./test-csv-library-review-bridge-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
