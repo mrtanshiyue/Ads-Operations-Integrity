@@ -33,6 +33,7 @@ const syntaxTargets = [
   'cloudflare/runtime/csv-search-term-intelligence-api.js',
   'cloudflare/runtime/csv-productization-api.js',
   'cloudflare/runtime/csv-term-profitability-analysis.js',
+  'cloudflare/runtime/csv-observed-targeting-identity.js',
   'cloudflare/runtime/csv-joint-report-analysis.js',
   'assets/cloudflare-native-imports-console-v1.js',
   'assets/cloudflare-native-csv-intelligence-v1.js',
@@ -45,6 +46,7 @@ const syntaxTargets = [
   'scripts/test-csv-real-data-intelligence-ui-contract.mjs',
   'scripts/test-csv-product-ui-navigation-contract.mjs',
   'scripts/test-csv-term-profitability-analysis.mjs',
+  'scripts/test-csv-observed-targeting-identity.mjs',
   'scripts/test-csv-joint-report-analysis.mjs',
 ];
 
@@ -60,6 +62,7 @@ const nodeContracts = [
   'scripts/test-csv-real-data-intelligence-ui-contract.mjs',
   'scripts/test-csv-product-ui-navigation-contract.mjs',
   'scripts/test-csv-term-profitability-analysis.mjs',
+  'scripts/test-csv-observed-targeting-identity.mjs',
   'scripts/test-csv-joint-report-analysis.mjs',
 ];
 
@@ -71,7 +74,7 @@ run('python3', ['scripts/test-csv-import-foundation.py'], 'contract: scripts/tes
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-local-data-required-ci-v3-joint-analysis',
+  contract: 'csv-local-data-required-ci-v4-observed-identity',
   buildSkipped: skipBuild,
   syntaxTargets: syntaxTargets.length,
   nodeContracts: nodeContracts.length,

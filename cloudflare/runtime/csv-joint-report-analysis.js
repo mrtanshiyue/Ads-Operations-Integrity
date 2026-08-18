@@ -1,7 +1,8 @@
 import { canonicalJson } from './canonical-json.js';
+import { buildCsvObservedTargetingIdentity } from './csv-observed-targeting-identity.js';
 import { analyzeCsvTermProfitability } from './csv-term-profitability-analysis.js';
 
-export const CSV_JOINT_ANALYSIS_SCHEMA_VERSION = 'csv-joint-report-analysis-v1';
+export const CSV_JOINT_ANALYSIS_SCHEMA_VERSION = 'csv-joint-report-analysis-v2';
 
 export async function analyzeCsvImportBatches(batches, options = {}) {
   if (!Array.isArray(batches) || batches.length === 0) {
@@ -28,7 +29,10 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
     }
   }
 
-  const analysis = analyzeCsvTermProfitability(facts, options);
+  const [analysis, observedIdentity] = await Promise.all([
+    Promise.resolve(analyzeCsvTermProfitability(facts, options)),
+    buildCsvObservedTargetingIdentity(facts),
+  ]);
   const inputSetFingerprint = await sha256Hex(canonicalJson(imports.map((item) => ({
     schemaVersion: item.schemaVersion,
     reportType: item.reportType,
@@ -50,6 +54,7 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       allImportsAccepted: true,
       duplicateContentDetected: false,
       canonicalAmazonIdentityResolved: false,
+      observedTargetingIdentityAvailable: observedIdentity.summary.identityCount > 0,
       governancePersistenceAllowed: false,
       executionAuthorized: false,
       amazonMutationAuthorized: false,
@@ -69,9 +74,14 @@ export async function analyzeCsvImportBatches(batches, options = {}) {
       exactNegativeCandidateCount: analysis.summary.exactNegativeCandidateCount,
       phraseRootReviewCount: analysis.summary.phraseRootReviewCount,
       harvestCandidateCount: analysis.summary.harvestCandidateCount,
+      observedIdentityCount: observedIdentity.summary.identityCount,
+      observedResolvedIdCount: observedIdentity.summary.resolvedIdCount,
+      ambiguousObservedIdentityCount: observedIdentity.summary.ambiguousIdentityCount,
+      searchTermIdentityLinkCount: observedIdentity.summary.searchTermLinkCount,
       metrics: analysis.summary.metrics,
     }),
     imports: Object.freeze(imports),
+    observedIdentity,
     analysis,
   });
 }
