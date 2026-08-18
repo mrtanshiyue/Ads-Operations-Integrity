@@ -14,12 +14,14 @@ const operatorAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets'
 const importsAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-imports-console-v1.js');
 const contextAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-operator-context-v1.js');
 const decisionAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-decision-intelligence-v1.js');
+const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-intelligence-v1.js');
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
 const phase11AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase11-execution-readiness-v1.js');
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
 const importsTag = '<script src="assets/cloudflare-native-imports-console-v1.js"></script>';
 const contextTag = '<script src="assets/cloudflare-native-operator-context-v1.js"></script>';
 const decisionTag = '<script src="assets/cloudflare-native-decision-intelligence-v1.js"></script>';
+const csvIntelligenceTag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js"></script>';
 const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
 const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-readiness-v1.js"></script>';
 
@@ -28,30 +30,33 @@ await access(operatorAssetPath, constants.R_OK);
 await access(importsAssetPath, constants.R_OK);
 await access(contextAssetPath, constants.R_OK);
 await access(decisionAssetPath, constants.R_OK);
+await access(csvIntelligenceAssetPath, constants.R_OK);
 await access(phase9AssetPath, constants.R_OK);
 await access(phase11AssetPath, constants.R_OK);
 
 let nativeIndex = await readFile(distIndexPath, 'utf8');
-nativeIndex = nativeIndex.replaceAll(operatorTag, '');
-nativeIndex = nativeIndex.replaceAll(importsTag, '');
-nativeIndex = nativeIndex.replaceAll(contextTag, '');
-nativeIndex = nativeIndex.replaceAll(decisionTag, '');
-nativeIndex = nativeIndex.replaceAll(phase9Tag, '');
-nativeIndex = nativeIndex.replaceAll(phase11Tag, '');
-if (!/<\/head>/i.test(nativeIndex)) {
-  throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
+for (const tag of [operatorTag, importsTag, contextTag, decisionTag, csvIntelligenceTag, phase9Tag, phase11Tag]) {
+  nativeIndex = nativeIndex.replaceAll(tag, '');
 }
-nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
-if ((nativeIndex.split(operatorTag).length - 1) !== 1) throw new Error('Operator Workspace must be injected exactly once');
-if ((nativeIndex.split(importsTag).length - 1) !== 1) throw new Error('Imports console must be injected exactly once');
-if ((nativeIndex.split(contextTag).length - 1) !== 1) throw new Error('Operator Context must be injected exactly once');
-if ((nativeIndex.split(decisionTag).length - 1) !== 1) throw new Error('Decision Intelligence must be injected exactly once');
-if ((nativeIndex.split(phase9Tag).length - 1) !== 1) throw new Error('Phase 9 productization extension must be injected exactly once');
-if ((nativeIndex.split(phase11Tag).length - 1) !== 1) throw new Error('Phase 11 execution readiness extension must be injected exactly once');
+if (!/<\/head>/i.test(nativeIndex)) throw new Error('Native artifact is missing </head>; cannot inject Operator Workspace');
+nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\n  ${importsTag}\n  ${contextTag}\n  ${decisionTag}\n  ${csvIntelligenceTag}\n  ${phase9Tag}\n  ${phase11Tag}\n</head>`);
+
+for (const [tag, label] of [
+  [operatorTag, 'Operator Workspace'],
+  [importsTag, 'Imports console'],
+  [contextTag, 'Operator Context'],
+  [decisionTag, 'Decision Intelligence'],
+  [csvIntelligenceTag, 'CSV Intelligence extension'],
+  [phase9Tag, 'Phase 9 productization extension'],
+  [phase11Tag, 'Phase 11 execution readiness extension'],
+]) {
+  if ((nativeIndex.split(tag).length - 1) !== 1) throw new Error(`${label} must be injected exactly once`);
+}
 if (nativeIndex.indexOf(operatorTag) > nativeIndex.indexOf(importsTag)) throw new Error('Imports console must load after Operator Workspace');
 if (nativeIndex.indexOf(importsTag) > nativeIndex.indexOf(contextTag)) throw new Error('Operator Context must load after Imports console');
 if (nativeIndex.indexOf(contextTag) > nativeIndex.indexOf(decisionTag)) throw new Error('Decision Intelligence must load after Operator Context');
-if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after Decision Intelligence');
+if (nativeIndex.indexOf(decisionTag) > nativeIndex.indexOf(csvIntelligenceTag)) throw new Error('CSV Intelligence extension must load after Decision Intelligence');
+if (nativeIndex.indexOf(csvIntelligenceTag) > nativeIndex.indexOf(phase9Tag)) throw new Error('Phase 9 productization extension must load after CSV Intelligence');
 if (nativeIndex.indexOf(phase9Tag) > nativeIndex.indexOf(phase11Tag)) throw new Error('Phase 11 execution readiness extension must load after Phase 9 productization');
 await writeFile(distIndexPath, nativeIndex, 'utf8');
 
@@ -60,6 +65,7 @@ await import('./test-operator-workspace-contract.mjs');
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-operator-context-contract.mjs');
 await import('./test-decision-intelligence-contract.mjs');
+await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-phase9-productization-ui-contract.mjs');
 await import('./test-phase11-execution-readiness-ui-contract.mjs');
 await import('./test-phase11-execution-safety.mjs');

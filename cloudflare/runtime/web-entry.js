@@ -20,6 +20,7 @@ import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
 import { handleCsvImportsApiRoute } from './csv-imports-api.js';
+import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
 import { handleSearchTermIntelligenceApiRoute } from './search-term-intelligence-api.js';
 import { handleOptimizationActionsApiRoute } from './optimization-actions-api.js';
 import { enrichRecommendationGovernanceResponse } from './recommendation-governance-layer.js';
@@ -111,6 +112,8 @@ export default {
         if (response) return response;
       }
       if (SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)) {
+        const csvResponse = await handleCsvSearchTermIntelligenceApiRoute({ request, env, actor, url });
+        if (csvResponse) return csvResponse;
         const response = await handleSearchTermIntelligenceApiRoute({ request, env, actor, url });
         if (response) return enrichRecommendationGovernanceResponse({ request, response, env, actor, url, ctx });
       }

@@ -13,6 +13,7 @@ const allowedAssets = new Set([
   'cloudflare-native-access-console-v1.js',
   'cloudflare-native-api-v1.js',
   'cloudflare-native-audit-console-v1.js',
+  'cloudflare-native-csv-intelligence-v1.js',
   'cloudflare-native-data-panel-v1.js',
   'cloudflare-native-decision-intelligence-v1.js',
   'cloudflare-native-imports-console-v1.js',
@@ -65,9 +66,7 @@ for (const relativePath of discovered) {
   removed.push(relativePath);
 }
 
-for (const relativePath of allowedAssets) {
-  await access(path.join(assetsRoot, relativePath), constants.R_OK);
-}
+for (const relativePath of allowedAssets) await access(path.join(assetsRoot, relativePath), constants.R_OK);
 for (const relativePath of forbiddenAssets) {
   try {
     await access(path.join(assetsRoot, relativePath), constants.F_OK);
@@ -79,12 +78,8 @@ for (const relativePath of forbiddenAssets) {
 
 const finalFiles = await collectFiles(assetsRoot);
 const unexpected = finalFiles.filter((relativePath) => !allowedAssets.has(relativePath));
-if (unexpected.length) {
-  throw new Error(`Unexpected Cloudflare Native deployment assets: ${unexpected.join(', ')}`);
-}
-if (finalFiles.length !== allowedAssets.size) {
-  throw new Error(`Cloudflare Native asset count mismatch: expected ${allowedAssets.size}, found ${finalFiles.length}`);
-}
+if (unexpected.length) throw new Error(`Unexpected Cloudflare Native deployment assets: ${unexpected.join(', ')}`);
+if (finalFiles.length !== allowedAssets.size) throw new Error(`Cloudflare Native asset count mismatch: expected ${allowedAssets.size}, found ${finalFiles.length}`);
 
 console.log(JSON.stringify({
   ok: true,
@@ -105,13 +100,9 @@ async function collectFiles(root) {
     for (const entry of entries) {
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       const absolutePath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        await walk(absolutePath, relativePath);
-      } else if (entry.isFile()) {
-        output.push(relativePath);
-      } else {
-        throw new Error(`Unsupported asset filesystem entry: ${relativePath}`);
-      }
+      if (entry.isDirectory()) await walk(absolutePath, relativePath);
+      else if (entry.isFile()) output.push(relativePath);
+      else throw new Error(`Unsupported asset filesystem entry: ${relativePath}`);
     }
   }
 }
