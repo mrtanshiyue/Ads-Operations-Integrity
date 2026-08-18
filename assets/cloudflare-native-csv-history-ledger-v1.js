@@ -8,7 +8,8 @@ import {
   validateCsvHistoryLedger,
 } from './csv-analysis-engine/csv-history-ledger.js';
 
-export const CSV_HISTORY_LEDGER_UI_VERSION = '1.0.0';
+export const CSV_HISTORY_LEDGER_UI_VERSION = '1.1.0';
+export const CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION = 'csv-history-monthly-workspace-v1';
 
 const state = {
   mounted: false,
@@ -17,11 +18,80 @@ const state = {
   importedFileName: null,
 };
 
+export function buildHistoricalMonthlyWorkspace(ledger) {
+  assertLedgerForMonthlyWorkspace(ledger);
+  const rows = [];
+  for (const snapshot of ledger.snapshots) {
+    for (const monthly of snapshot.monthlySnapshots || []) {
+      const metrics = monthly?.metrics || {};
+      const spendMicros = safeInteger(metrics.spendMicros, 'CSV_HISTORY_MONTHLY_SPEND_INVALID');
+      const salesMicros = safeInteger(metrics.salesMicros, 'CSV_HISTORY_MONTHLY_SALES_INVALID');
+      const adContributionMicros = safeInteger(monthly.adContributionMicros, 'CSV_HISTORY_MONTHLY_CONTRIBUTION_INVALID');
+      if (adContributionMicros !== salesMicros - spendMicros) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_CONTRIBUTION_MISMATCH');
+      if (monthly.profitabilityBasis !== 'sales_minus_ad_spend_only_not_net_profit') throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_PROFITABILITY_BASIS_INVALID');
+      const coverageRatio = finiteOrNull(monthly.coverage?.coverageRatio);
+      rows.push(Object.freeze({
+        month: String(monthly.month || monthly.startDate || 'unknown').slice(0, 7),
+        periodStartDate: monthly.startDate || null,
+        periodEndDate: monthly.endDate || null,
+        spendMicros,
+        salesMicros,
+        orders: safeInteger(metrics.orders ?? 0, 'CSV_HISTORY_MONTHLY_ORDERS_INVALID'),
+        acos: finiteOrNull(metrics.acos),
+        roas: finiteOrNull(metrics.roas),
+        adContributionMicros,
+        profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
+        coverageRatio,
+        coverageComplete: monthly.coverage?.complete === true,
+        qualityState: snapshot.qualityState || 'unknown',
+        safeForNaiveAggregation: snapshot.safeForNaiveAggregation === true,
+        contiguousCoverage: snapshot.contiguousCoverage === true,
+        decisionState: monthlyDecisionState(snapshot, monthly),
+        sourceInputSetFingerprint: snapshot.inputSetFingerprint,
+        ledgerFingerprint: ledger.ledgerFingerprint,
+        currencyCode: snapshot.sourceReceipts?.find((item) => item.currencyCode)?.currencyCode || null,
+        canonicalAmazonIdentityResolved: false,
+        governancePersistenceAllowed: false,
+        executionAuthorized: false,
+        amazonMutationAuthorized: false,
+      }));
+    }
+  }
+  rows.sort((left, right) => left.month.localeCompare(right.month) || left.sourceInputSetFingerprint.localeCompare(right.sourceInputSetFingerprint));
+  const counts = new Map();
+  for (const row of rows) counts.set(row.month, (counts.get(row.month) || 0) + 1);
+  const annotatedRows = rows.map((row) => Object.freeze({
+    ...row,
+    sameMonthEvidenceCount: counts.get(row.month),
+    sameMonthMultipleSnapshots: counts.get(row.month) > 1,
+    crossSnapshotAggregationApplied: false,
+  }));
+  return Object.freeze({
+    schemaVersion: CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION,
+    ledgerFingerprint: ledger.ledgerFingerprint,
+    rowCount: annotatedRows.length,
+    distinctMonthCount: counts.size,
+    multiEvidenceMonthCount: [...counts.values()].filter((count) => count > 1).length,
+    crossSnapshotAggregationApplied: false,
+    normalizationApplied: false,
+    profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
+    authority: Object.freeze({
+      authoritative: false,
+      canonicalAmazonIdentityResolved: false,
+      governancePersistenceAllowed: false,
+      executionAuthorized: false,
+      amazonMutationAuthorized: false,
+    }),
+    rows: Object.freeze(annotatedRows),
+  });
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHistoryLedger', {
     value: Object.freeze({
       version: CSV_HISTORY_LEDGER_UI_VERSION,
       schemaVersion: CSV_HISTORY_LEDGER_SCHEMA_VERSION,
+      monthlyWorkspaceSchemaVersion: CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION,
       authority: 'local_file_history_ledger_only',
       buildCsvHistorySnapshot,
       createCsvHistoryLedger,
@@ -29,6 +99,7 @@ if (typeof window !== 'undefined') {
       parseCsvHistoryLedger,
       serializeCsvHistoryLedger,
       validateCsvHistoryLedger,
+      buildHistoricalMonthlyWorkspace,
     }),
     writable: false,
     configurable: false,
@@ -172,6 +243,7 @@ function clearLedger(root) {
 function renderLedger(root, ledger) {
   const body = root.querySelector('[data-cfhl-body]');
   const windowEvidence = ledger.historyWindowEvidence;
+  const monthlyWorkspace = buildHistoricalMonthlyWorkspace(ledger);
   body.innerHTML = `
     <div class="cfhl-grid">
       ${card('Ledger fingerprint', `<code>${esc(ledger.ledgerFingerprint)}</code>`)}
@@ -183,10 +255,26 @@ function renderLedger(root, ledger) {
       <thead><tr><th>Window</th><th>Quality</th><th>Aggregation</th><th>Coverage</th><th>Monthly</th><th>Input fingerprint</th></tr></thead>
       <tbody>${ledger.snapshots.map(snapshotRow).join('')}</tbody>
     </table></div>
+    ${renderMonthlyWorkspace(monthlyWorkspace)}
     <details><summary>Historical overlap / gap evidence</summary><pre>${esc(JSON.stringify(windowEvidence, null, 2))}</pre></details>
     <details><summary>Ledger authority boundary</summary><pre>${esc(JSON.stringify(ledger.authority, null, 2))}</pre></details>`;
   body.hidden = false;
   syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success');
+}
+
+function renderMonthlyWorkspace(workspace) {
+  return `
+    <section class="cfhl-monthly" data-cfhl-monthly-workspace="${CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION}">
+      <div class="cfhl-monthly-head">
+        <div><b>Historical Monthly Workspace</b><small>Each row stays bound to coverage, quality state, and source input fingerprint. Same-month evidence from multiple snapshots is displayed separately, never cross-snapshot aggregated.</small></div>
+        <span>${workspace.distinctMonthCount} month(s) · ${workspace.rowCount} evidence row(s)</span>
+      </div>
+      <div class="cfhl-guard">Ad Contribution = Sales - Ad Spend only; it is not Net Profit. Multi-evidence months: ${workspace.multiEvidenceMonthCount}. Cross-snapshot aggregation: none.</div>
+      <div class="cfhl-table-wrap"><table>
+        <thead><tr><th>Month</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>ROAS</th><th>Ad Contribution</th><th>Coverage</th><th>Decision state</th><th>Source fingerprint</th></tr></thead>
+        <tbody>${workspace.rows.length ? workspace.rows.map(monthlyRow).join('') : '<tr><td colspan="10">No monthly evidence in this ledger.</td></tr>'}</tbody>
+      </table></div>
+    </section>`;
 }
 
 function snapshotRow(item) {
@@ -200,6 +288,45 @@ function snapshotRow(item) {
   </tr>`;
 }
 
+function monthlyRow(item) {
+  const multi = item.sameMonthMultipleSnapshots ? `<br><b>${item.sameMonthEvidenceCount} separate evidence rows</b>` : '';
+  return `<tr>
+    <td><b>${esc(item.month)}</b>${multi}</td>
+    <td>${money(item.spendMicros, item.currencyCode)}</td>
+    <td>${money(item.salesMicros, item.currencyCode)}</td>
+    <td>${item.orders}</td>
+    <td>${percent(item.acos)}</td>
+    <td>${decimal(item.roas)}</td>
+    <td>${money(item.adContributionMicros, item.currencyCode)}</td>
+    <td>${item.coverageRatio == null ? 'unknown' : percent(item.coverageRatio)}<br>${item.coverageComplete ? 'complete' : 'partial'}</td>
+    <td>${esc(item.decisionState)}<br>${esc(item.qualityState)}</td>
+    <td><code>${esc(item.sourceInputSetFingerprint)}</code></td>
+  </tr>`;
+}
+
+function monthlyDecisionState(snapshot, monthly) {
+  if (snapshot.safeForNaiveAggregation !== true) return 'blocked_overlap_or_invalid_window';
+  if (monthly?.reliability?.state === 'blocked_overlap_or_invalid_window') return 'blocked_overlap_or_invalid_window';
+  if (monthly?.coverage?.complete === true && snapshot.contiguousCoverage === true) return 'observed_review_only';
+  return 'partial_coverage_review';
+}
+
+function assertLedgerForMonthlyWorkspace(ledger) {
+  if (!ledger || ledger.schemaVersion !== CSV_HISTORY_LEDGER_SCHEMA_VERSION || !Array.isArray(ledger.snapshots)) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_LEDGER_INVALID');
+  const flags = [ledger.authority?.authoritative, ledger.authority?.canonicalAmazonIdentityResolved, ledger.authority?.governancePersistenceAllowed, ledger.authority?.executionAuthorized, ledger.authority?.amazonMutationAuthorized];
+  if (flags.some((value) => value === true)) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_AUTHORITY_ESCALATION_BLOCKED');
+  if (!/^[a-f0-9]{64}$/i.test(String(ledger.ledgerFingerprint || ''))) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_LEDGER_FINGERPRINT_INVALID');
+  for (const snapshot of ledger.snapshots) {
+    if (!/^[a-f0-9]{64}$/i.test(String(snapshot?.inputSetFingerprint || ''))) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_SOURCE_FINGERPRINT_INVALID');
+  }
+}
+
+function safeInteger(value, code) { const number = Number(value); if (!Number.isSafeInteger(number)) throw monthlyWorkspaceError(code); return number; }
+function finiteOrNull(value) { if (value == null) return null; const number = Number(value); if (!Number.isFinite(number)) throw monthlyWorkspaceError('CSV_HISTORY_MONTHLY_METRIC_INVALID'); return number; }
+function money(micros, currency) { const value = Number(micros || 0) / 1_000_000; try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 2 }).format(value); } catch { return value.toFixed(2); } }
+function percent(value) { return value == null || !Number.isFinite(Number(value)) ? '—' : `${(Number(value) * 100).toFixed(1)}%`; }
+function decimal(value) { return value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2); }
+function monthlyWorkspaceError(code) { const error = new Error(code); error.name = 'CsvHistoryMonthlyWorkspaceError'; error.code = code; return error; }
 function card(label, value) { return `<div class="cfhl-card"><small>${esc(label)}</small><div>${value}</div></div>`; }
 function setBusy(root, busy) { state.busy = busy; syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success'); }
 function syncButtons(root, jointReady) {
@@ -215,6 +342,6 @@ function installStyles() {
   if (document.getElementById('cfhl-style-v1')) return;
   const style = document.createElement('style');
   style.id = 'cfhl-style-v1';
-  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}';
+  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}';
   document.head.appendChild(style);
 }
