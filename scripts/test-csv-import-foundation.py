@@ -31,7 +31,7 @@ def main():
           'csv-import-v1',1,1,0,'unique','validated','{"rowCount":1}','2026-08-18T01:00:00Z'
         ))
         conn.execute('''INSERT INTO csv_search_term_stage(import_id,source_row_ordinal,logical_row_key,canonical_row_json)
-          VALUES('imp-1',0,'rk-1','{"rowKey":"rk-1"}')''')
+          VALUES('imp-1',0,'rk-1','{"rowKey":"rk-1","sourceRowOrdinal":0}')''')
 
         expect_integrity(conn, "UPDATE csv_import_batches SET content_bytes=101 WHERE import_id='imp-1'")
         expect_integrity(conn, '''INSERT INTO csv_import_batches(
@@ -39,10 +39,22 @@ def main():
           content_sha256,content_bytes,schema_version,row_count,accepted_rows,rejected_rows,
           duplicate_status,status,validation_summary_json,uploaded_at
         ) VALUES('imp-2','same.csv','spSearchTerm','2026-08-12','2026-08-12',?,100,'csv-import-v1',1,1,0,'unique','validated','{}','2026-08-18T01:01:00Z')''', ('a'*64,))
-        expect_integrity(conn, "INSERT INTO csv_search_term_stage(import_id,source_row_ordinal,logical_row_key,canonical_row_json) VALUES('imp-1',1,'rk-x','{\"rowKey\":\"wrong\"}')")
+        expect_integrity(conn, "INSERT INTO csv_search_term_stage(import_id,source_row_ordinal,logical_row_key,canonical_row_json) VALUES('imp-1',1,'rk-x','{\"rowKey\":\"wrong\",\"sourceRowOrdinal\":1}')")
+        expect_integrity(conn, "UPDATE csv_search_term_stage SET logical_row_key='rk-2' WHERE import_id='imp-1' AND source_row_ordinal=0")
+        expect_integrity(conn, "DELETE FROM csv_search_term_stage WHERE import_id='imp-1'")
 
         conn.execute("UPDATE csv_import_batches SET status='published', published_at='2026-08-18T01:02:00Z' WHERE import_id='imp-1'")
         expect_integrity(conn, "UPDATE csv_import_batches SET status='rejected' WHERE import_id='imp-1'")
+        expect_integrity(conn, "UPDATE csv_import_batches SET published_at='2026-08-18T01:03:00Z' WHERE import_id='imp-1'")
+
+        conn.execute('''INSERT INTO csv_search_term_daily(
+          row_key,report_date,campaign_name,ad_group_name,targeting,search_term,normalized_search_term,
+          source_import_id,source_row_ordinal
+        ) VALUES('rk-1','2026-08-12','Campaign','Ad Group','reading glasses','reading glasses men','reading glasses men','imp-1',0)''')
+        expect_integrity(conn, "UPDATE csv_search_term_daily SET campaign_name='Other' WHERE row_key='rk-1'")
+        conn.execute("UPDATE csv_search_term_daily SET clicks=3, updated_at='2026-08-18T01:04:00Z' WHERE row_key='rk-1'")
+        conn.execute("DELETE FROM csv_search_term_stage WHERE import_id='imp-1'")
+        assert conn.execute("SELECT COUNT(*) FROM csv_search_term_stage WHERE import_id='imp-1'").fetchone()[0] == 0
         assert not conn.execute('PRAGMA foreign_key_check').fetchall()
         conn.close()
 
