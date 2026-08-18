@@ -37,6 +37,8 @@ for (const required of [
 
 assert.match(source, /MutationObserver\(scheduleNavigationRepair\)/, 'Operator re-render recovery observer missing');
 assert.match(source, /if \(group\.innerHTML !== markup\) group\.innerHTML = markup/, 'Navigation repair must not create a mutation loop');
+assert.match(source, /\[data-csv-import-nav\]\{display:none!important\}/, 'Legacy Imports fallback must be hidden without DOM deletion');
+assert.doesNotMatch(source, /querySelectorAll\('\[data-csv-import-nav\]'\).*remove/, 'CSV product UI must not fight the Imports observer by deleting its fallback node');
 assert.match(source, /CloudflareImportsConsole\?\.open/, 'Imports must open through the existing Native console');
 assert.match(source, /CloudflareDecisionIntelligence\?\.open/, 'CSV Intelligence must open through Decision Intelligence');
 assert.match(source, /\[name="dataSource"\]/, 'CSV Intelligence must select the existing data-source control');
@@ -44,8 +46,8 @@ assert.match(source, /select\.value = 'csv'/, 'CSV Intelligence must force impor
 assert.match(source, /\/advisory-reviews\?/, 'Advisory Review list endpoint missing');
 assert.match(source, /\/advisory-reviews\/\$\{encodeURIComponent\(review\.reviewId\)\}/, 'Advisory Review transition endpoint missing');
 
-for (const state of ['open', 'acknowledged', 'dismissed', 'snoozed']) {
-  assert.ok(source.includes(`'${state}'`), `Advisory Review state missing: ${state}`);
+for (const reviewState of ['open', 'acknowledged', 'dismissed', 'snoozed']) {
+  assert.ok(source.includes(`'${reviewState}'`), `Advisory Review state missing: ${reviewState}`);
 }
 for (const evidenceField of [
   'sourceImportId', 'sourceImportIds', 'contentSha256s', 'reportDate',
@@ -66,7 +68,6 @@ assert.doesNotMatch(source, /Apply to Amazon|Execute on Amazon|Amazon mutation b
 assert.doesNotMatch(source, /optimization-actions(?:\/|\?)/, 'CSV product UI must not persist advisory records into optimization_actions');
 assert.match(source, /credentials: 'same-origin'/, 'CSV product UI must stay inside the authenticated same-origin Access session');
 assert.match(source, /cloudflare-operator-store-change/, 'CSV product UI must follow Operator Workspace store context');
-assert.match(source, /data-csv-import-nav/, 'CSV product UI must remove the obsolete dynamic Imports fallback entry');
 
 console.log(JSON.stringify({
   ok: true,
@@ -76,6 +77,7 @@ console.log(JSON.stringify({
   csvIntelligenceFirstClass: true,
   advisoryReviewFirstClass: true,
   navigationRepairLoopGuard: true,
+  importsObserverContention: false,
   advisoryStates: ['open', 'acknowledged', 'dismissed', 'snoozed'],
   optimizationActionsIsolation: true,
   amazonMutationControls: false,
