@@ -1,9 +1,9 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const STORAGE_SOURCE = 'aoi.decision.source';
-  const state = { mounted: false, payload: null };
+  const state = { mounted: false, payload: null, amazonProfileId: '' };
 
   Object.defineProperty(global, 'CloudflareCsvIntelligence', {
     value: Object.freeze({ version: VERSION, source: () => currentSource() }),
@@ -31,6 +31,8 @@
     const controls = panel.querySelector('.cfdi-controls');
     if (!controls || controls.querySelector('[name="dataSource"]')) return;
 
+    const profile = panel.querySelector('[name="profileId"]');
+    state.amazonProfileId = String(profile?.value || '').trim();
     const label = document.createElement('label');
     label.className = 'cfdi-source-control';
     label.innerHTML = 'Data source<select name="dataSource"><option value="csv">Imported CSV</option><option value="amazon">Amazon lineage</option></select>';
@@ -38,7 +40,9 @@
     const select = label.querySelector('select');
     select.value = localStorage.getItem(STORAGE_SOURCE) || 'csv';
     select.addEventListener('change', () => {
-      localStorage.setItem(STORAGE_SOURCE, select.value);
+      const next = select.value;
+      if (next === 'csv') state.amazonProfileId = String(profile?.value || state.amazonProfileId || '').trim();
+      localStorage.setItem(STORAGE_SOURCE, next);
       state.payload = null;
       applySourceMode();
     });
@@ -74,12 +78,21 @@
     if (!panel) return;
     const csv = currentSource() === 'csv';
     const profile = panel.querySelector('[name="profileId"]');
-    if (profile) profile.placeholder = csv ? 'optional for imported CSV' : 'profile-synth-dev-01';
+    if (profile) {
+      if (csv) {
+        if (profile.value) state.amazonProfileId = String(profile.value).trim();
+        profile.value = '';
+        profile.placeholder = 'optional for imported CSV';
+      } else {
+        profile.value = state.amazonProfileId || localStorage.getItem('aoi.decision.profileId') || '';
+        profile.placeholder = 'profile-synth-dev-01';
+      }
+    }
     const status = panel.querySelector('[data-status]');
     if (status) {
       status.dataset.kind = csv ? 'warn' : '';
       status.textContent = csv
-        ? 'Imported CSV advisory mode. Profile ID is optional. Recommendations are non-authoritative and cannot be persisted until Amazon entity identity is resolved.'
+        ? 'Imported CSV advisory mode. Profile ID is optional and defaults to unscoped imported facts. Recommendations are non-authoritative and cannot be persisted until Amazon entity identity is resolved.'
         : 'Amazon lineage mode. Profile scope is required; execution remains disabled.';
     }
     if (csv) clearCsvResults();
@@ -120,8 +133,7 @@
   }
 
   function renderCsvResults(payload) {
-    const panel = document.getElementById('cfDecisionPanel');
-    const target = panel?.querySelector('[data-results]');
+    const target = document.querySelector('#cfDecisionPanel [data-results]');
     if (!target) return;
     const summary = payload.summary || {};
     const freshness = summary.freshness || {};
