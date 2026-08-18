@@ -1,6 +1,10 @@
 import { CSV_IMPORT_SCHEMA_VERSION, CSV_SEARCH_TERM_REPORT_TYPE } from './csv-search-term-import.js';
 import { canonicalJson } from './canonical-json.js';
 
+const JSON_CHUNK_MAX_ROWS = 500;
+const JSON_CHUNK_MAX_BYTES = 1_000_000;
+const UTF8_ENCODER = new TextEncoder();
+
 export class CsvImportRepositoryError extends Error {
   constructor(code, cause = null) {
     super(code);
@@ -36,11 +40,20 @@ export function createD1CsvSearchTermImportRepository(db) {
         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,0,'unique','validated',?15,?16)
       `).bind(...batch.bindValues));
 
-      for (const row of parsed.rows) {
+      for (const chunkJson of buildJsonChunks(parsed.rows, (row) => ({
+        sourceRowOrdinal:row.sourceRowOrdinal,
+        logicalRowKey:row.logicalRowKey,
+        canonicalRowJson:row.canonicalRowJson,
+      }))) {
         statements.push(db.prepare(`
           INSERT INTO csv_search_term_stage(import_id,source_row_ordinal,logical_row_key,canonical_row_json)
-          VALUES(?1,?2,?3,?4)
-        `).bind(batch.importId, row.sourceRowOrdinal, row.logicalRowKey, row.canonicalRowJson));
+          SELECT
+            ?1,
+            CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
+            json_extract(value,'$.logicalRowKey'),
+            json_extract(value,'$.canonicalRowJson')
+          FROM json_each(?2)
+        `).bind(batch.importId, chunkJson));
       }
 
       statements.push(db.prepare(`
@@ -141,10 +154,21 @@ export function createD1CsvSearchTermImportRepository(db) {
         requiredText(parsed.contentSha256,'CSV_CONTENT_SHA256_REQUIRED'), parsed.contentBytes, CSV_IMPORT_SCHEMA_VERSION,
         parsed.rowCount, parsed.acceptedRows, parsed.rejectedRows, canonicalJson(parsed.validationSummary), uploadedAt,
       )];
-      parsed.errors.forEach((error, index) => statements.push(db.prepare(`
-        INSERT INTO csv_import_errors(import_id,error_ordinal,source_row_ordinal,error_code)
-        VALUES(?1,?2,?3,?4)
-      `).bind(importId,index,error.sourceRowOrdinal,error.errorCode)));
+      for (const chunkJson of buildJsonChunks(parsed.errors, (error, index) => ({
+        errorOrdinal:index,
+        sourceRowOrdinal:error.sourceRowOrdinal,
+        errorCode:error.errorCode,
+      }))) {
+        statements.push(db.prepare(`
+          INSERT INTO csv_import_errors(import_id,error_ordinal,source_row_ordinal,error_code)
+          SELECT
+            ?1,
+            CAST(json_extract(value,'$.errorOrdinal') AS INTEGER),
+            CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
+            json_extract(value,'$.errorCode')
+          FROM json_each(?2)
+        `).bind(importId, chunkJson));
+      }
       try { await db.batch(statements); }
       catch (error) { throw new CsvImportRepositoryError('CSV_IMPORT_REJECTION_DB_BATCH_FAILED', error); }
       return this.loadImport(importId);
@@ -154,6 +178,30 @@ export function createD1CsvSearchTermImportRepository(db) {
       return db.prepare(`SELECT * FROM csv_import_batches WHERE import_id=?1 LIMIT 1`).bind(requiredText(importId,'CSV_IMPORT_ID_REQUIRED')).first();
     },
   });
+}
+
+function buildJsonChunks(items, project) {
+  if (!Array.isArray(items)) throw new CsvImportRepositoryError('CSV_IMPORT_CHUNK_ITEMS_INVALID');
+  if (typeof project !== 'function') throw new CsvImportRepositoryError('CSV_IMPORT_CHUNK_PROJECTOR_INVALID');
+  const chunks = [];
+  let current = [];
+  let currentBytes = 2;
+  for (let index = 0; index < items.length; index += 1) {
+    const projected = project(items[index], index);
+    const encoded = JSON.stringify(projected);
+    const encodedBytes = UTF8_ENCODER.encode(encoded).byteLength;
+    if (encodedBytes + 2 > JSON_CHUNK_MAX_BYTES) throw new CsvImportRepositoryError('CSV_IMPORT_CHUNK_ROW_TOO_LARGE');
+    const separatorBytes = current.length > 0 ? 1 : 0;
+    if (current.length > 0 && (current.length >= JSON_CHUNK_MAX_ROWS || currentBytes + separatorBytes + encodedBytes > JSON_CHUNK_MAX_BYTES)) {
+      chunks.push(JSON.stringify(current));
+      current = [];
+      currentBytes = 2;
+    }
+    current.push(projected);
+    currentBytes += (current.length > 1 ? 1 : 0) + encodedBytes;
+  }
+  if (current.length > 0) chunks.push(JSON.stringify(current));
+  return chunks;
 }
 
 function normalizeBatch(importId, parsed, now) {
