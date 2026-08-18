@@ -17,6 +17,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-joint-analysis-v1.js',
   'cloudflare-native-csv-data-quality-command-center-v1.js',
   'cloudflare-native-csv-hierarchy-quality-v1.js',
+  'cloudflare-native-csv-hierarchy-drilldown-v1.js',
   'cloudflare-native-csv-period-ui-v1.js',
   'cloudflare-native-csv-monthly-workspace-v1.js',
   'cloudflare-native-csv-provenance-audit-v1.js',
