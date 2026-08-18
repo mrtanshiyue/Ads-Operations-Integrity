@@ -80,12 +80,12 @@ assert.equal(queue.authority.canonicalAmazonIdentityResolved, false);
 assert.equal(queue.authority.governancePersistenceAllowed, false);
 assert.equal(queue.authority.executionAuthorized, false);
 assert.equal(queue.authority.amazonMutationAuthorized, false);
-assert.equal(queue.summary.reviewItemCount, 5);
+assert.equal(queue.summary.reviewItemCount, 6);
 assert.equal(queue.summary.keywordLibraryCandidateCount, 2);
-assert.equal(queue.summary.negativeLibraryCandidateCount, 3);
+assert.equal(queue.summary.negativeLibraryCandidateCount, 4);
 assert.equal(queue.summary.exactNegativeCandidateCount, 2);
-assert.equal(queue.summary.phraseNegativeReviewCount, 1);
-assert.equal(queue.summary.blockedObservedIdentityCount, 3);
+assert.equal(queue.summary.phraseNegativeReviewCount, 2);
+assert.equal(queue.summary.blockedObservedIdentityCount, 4);
 assert.equal(queue.source.inputSetFingerprint, joint.source.inputSetFingerprint);
 assert.ok(queue.items.every((item) => item.initialReviewState === 'open'));
 assert.ok(queue.items.every((item) => item.requiresHumanReview === true));
@@ -96,6 +96,7 @@ assert.ok(queue.items.every((item) => item.source.canonicalAmazonIdentityResolve
 assert.ok(queue.items.every((item) => /^csv-library-review:[a-f0-9]{64}$/.test(item.reviewId)));
 assert.ok(queue.items.some((item) => item.destination === 'keyword_library' && item.value === 'reading glasses women' && item.suggestedMatchType === 'EXACT'));
 assert.ok(queue.items.some((item) => item.destination === 'negative_keyword_library' && item.value === 'cheap' && item.candidateKind === 'negative_phrase_root' && item.suggestedMatchType === 'PHRASE'));
+assert.ok(queue.items.some((item) => item.destination === 'negative_keyword_library' && item.value === 'readers' && item.candidateKind === 'negative_phrase_root' && item.suggestedMatchType === 'PHRASE'));
 assert.ok(queue.items.filter((item) => item.destination === 'negative_keyword_library').every((item) => item.observedIdentity.confidenceBlocked === true));
 assert.ok(queue.items.filter((item) => item.destination === 'keyword_library').every((item) => item.observedIdentity.confidenceBlocked === false));
 
