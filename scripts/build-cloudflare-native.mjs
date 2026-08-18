@@ -15,7 +15,7 @@ const importsAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets',
 const contextAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-operator-context-v1.js');
 const decisionAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-decision-intelligence-v1.js');
 const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-intelligence-v1.js');
-const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-product-ui-v1.js');
+const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-product-ui-v2.js');
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
 const phase11AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase11-execution-readiness-v1.js');
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
@@ -23,7 +23,7 @@ const importsTag = '<script src="assets/cloudflare-native-imports-console-v1.js"
 const contextTag = '<script src="assets/cloudflare-native-operator-context-v1.js"></script>';
 const decisionTag = '<script src="assets/cloudflare-native-decision-intelligence-v1.js"></script>';
 const csvIntelligenceTag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js"></script>';
-const csvProductUiTag = '<script src="assets/cloudflare-native-csv-product-ui-v1.js"></script>';
+const csvProductUiTag = '<script src="assets/cloudflare-native-csv-product-ui-v2.js"></script>';
 const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
 const phase11Tag = '<script src="assets/cloudflare-native-phase11-execution-readiness-v1.js"></script>';
 
