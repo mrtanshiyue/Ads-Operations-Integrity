@@ -1,6 +1,6 @@
 import { deriveSearchTermMetrics } from './decision-intelligence.js';
 
-export const CSV_TERM_ANALYSIS_SCHEMA_VERSION = 'csv-term-profitability-analysis-v1';
+export const CSV_TERM_ANALYSIS_SCHEMA_VERSION = 'csv-term-profitability-analysis-v2';
 
 export const DEFAULT_CSV_TERM_ANALYSIS_RULES = Object.freeze({
   targetAcos: 0.35,
@@ -18,6 +18,7 @@ export const DEFAULT_CSV_TERM_ANALYSIS_RULES = Object.freeze({
     minClicks: 12,
     minSpendMicros: 2_000_000,
     maxAcos: 0.70,
+    protectProfitableTerms: true,
   }),
   profitableRoot: Object.freeze({
     minTerms: 2,
@@ -62,6 +63,7 @@ export function analyzeCsvTermProfitability(facts, options = {}) {
   const wasteTerms = terms.filter((item) => item.classification === 'waste');
   const toxicRoots = roots.filter((item) => item.classification === 'toxic');
   const profitableRoots = roots.filter((item) => item.classification === 'profitable');
+  const protectedRoots = roots.filter((item) => item.profitProtectionApplied);
   const negativeSuggestions = [
     ...wasteTerms.map((item) => Object.freeze({
       suggestionType: 'negative_keyword',
@@ -123,6 +125,7 @@ export function analyzeCsvTermProfitability(facts, options = {}) {
       wasteTermCount: wasteTerms.length,
       toxicRootCount: toxicRoots.length,
       profitableRootCount: profitableRoots.length,
+      protectedRootCount: protectedRoots.length,
       exactNegativeCandidateCount: wasteTerms.length,
       phraseRootReviewCount: toxicRoots.length,
       harvestCandidateCount: harvestSuggestions.length,
@@ -132,6 +135,7 @@ export function analyzeCsvTermProfitability(facts, options = {}) {
     wasteTerms: Object.freeze(wasteTerms),
     toxicRoots: Object.freeze(toxicRoots),
     profitableRoots: Object.freeze(profitableRoots),
+    protectedRoots: Object.freeze(protectedRoots),
     negativeSuggestions: Object.freeze(negativeSuggestions),
     harvestSuggestions: Object.freeze(harvestSuggestions),
   });
@@ -165,10 +169,19 @@ function buildRootAggregates(terms) {
     for (const root of new Set(tokenize(term.searchTerm))) {
       let aggregate = roots.get(root);
       if (!aggregate) {
-        aggregate = { root, termCount: 0, searchTerms: new Set(), metrics: zeroMetrics() };
+        aggregate = {
+          root,
+          termCount: 0,
+          profitTermCount: 0,
+          wasteTermCount: 0,
+          searchTerms: new Set(),
+          metrics: zeroMetrics(),
+        };
         roots.set(root, aggregate);
       }
       aggregate.termCount += 1;
+      if (term.classification === 'profit') aggregate.profitTermCount += 1;
+      if (term.classification === 'waste') aggregate.wasteTermCount += 1;
       aggregate.searchTerms.add(term.searchTerm);
       aggregate.metrics = addMetrics(aggregate.metrics, term.metrics);
     }
@@ -204,7 +217,9 @@ function finalizeTermAggregate(aggregate, rules) {
 
 function finalizeRootAggregate(aggregate, rules) {
   const metrics = metricsForAggregate(aggregate.metrics);
-  const toxic = aggregate.termCount >= rules.toxicRoot.minTerms
+  const profitProtectionApplied = rules.toxicRoot.protectProfitableTerms && aggregate.profitTermCount > 0;
+  const toxic = !profitProtectionApplied
+    && aggregate.termCount >= rules.toxicRoot.minTerms
     && metrics.clicks >= rules.toxicRoot.minClicks
     && metrics.spendMicros >= rules.toxicRoot.minSpendMicros
     && (metrics.purchases === 0 || (metrics.acos !== null && metrics.acos >= rules.toxicRoot.maxAcos));
@@ -223,9 +238,12 @@ function finalizeRootAggregate(aggregate, rules) {
   return Object.freeze({
     root: aggregate.root,
     termCount: aggregate.termCount,
+    profitTermCount: aggregate.profitTermCount,
+    wasteTermCount: aggregate.wasteTermCount,
     searchTerms: Object.freeze([...aggregate.searchTerms].sort()),
     classification,
     priorityScore,
+    profitProtectionApplied,
     metrics,
   });
 }
@@ -247,6 +265,7 @@ function normalizeRules(overrides) {
       minClicks: positiveInt(overrides.toxicRoot?.minClicks, DEFAULT_CSV_TERM_ANALYSIS_RULES.toxicRoot.minClicks),
       minSpendMicros: positiveInt(overrides.toxicRoot?.minSpendMicros, DEFAULT_CSV_TERM_ANALYSIS_RULES.toxicRoot.minSpendMicros),
       maxAcos: boundedPositive(overrides.toxicRoot?.maxAcos, DEFAULT_CSV_TERM_ANALYSIS_RULES.toxicRoot.maxAcos),
+      protectProfitableTerms: overrides.toxicRoot?.protectProfitableTerms !== false,
     }),
     profitableRoot: Object.freeze({
       minTerms: positiveInt(overrides.profitableRoot?.minTerms, DEFAULT_CSV_TERM_ANALYSIS_RULES.profitableRoot.minTerms),
