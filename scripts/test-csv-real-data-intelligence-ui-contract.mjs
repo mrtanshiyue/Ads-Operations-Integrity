@@ -14,6 +14,8 @@ assert.match(asset, /CloudflareCsvIntelligence/, 'CSV Intelligence public marker
 assert.match(asset, /name="dataSource"/, 'Decision Intelligence data-source switch missing');
 assert.match(asset, /Imported CSV/, 'Imported CSV source option missing');
 assert.match(asset, /source:\s*'csv'/, 'CSV intelligence request must carry source=csv');
+assert.match(asset, /profile\.value = ''/, 'CSV mode must not silently reuse the persisted Amazon profile scope');
+assert.match(asset, /state\.amazonProfileId/, 'Amazon profile scope must be restorable after leaving CSV mode');
 assert.match(asset, /data-csv-evidence-index/, 'CSV evidence drilldown missing');
 assert.match(asset, /Governance persistence disabled/, 'CSV persistence safety notice missing');
 assert.match(asset, /Amazon identity unresolved/, 'Identity-resolution warning missing');
