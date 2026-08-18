@@ -58,9 +58,9 @@ export function buildCsvMonthlyOperatingWorkspace(result) {
     }),
     summary: Object.freeze({
       monthCount: months.length,
-      fullMonthCount: months.filter((item) => item.monthComplete).length,
-      partialMonthCount: months.filter((item) => !item.monthComplete && item.reliability?.analyticalDecisionUse !== 'blocked').length,
-      blockedMonthCount: months.filter((item) => item.reliability?.analyticalDecisionUse === 'blocked').length,
+      fullMonthCount: months.filter((item) => item.operatingState === 'full_month_review').length,
+      partialMonthCount: months.filter((item) => item.operatingState === 'partial_month_review').length,
+      blockedMonthCount: months.filter((item) => item.operatingState === 'blocked').length,
     }),
     months: Object.freeze(months),
   });
