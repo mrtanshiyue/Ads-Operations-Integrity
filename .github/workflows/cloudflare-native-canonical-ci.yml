@@ -83,8 +83,14 @@ jobs:
         run: |
           node --check cloudflare/runtime/csv-search-term-import.js
           node --check cloudflare/runtime/csv-search-term-import-repository.js
+          node --check cloudflare/runtime/csv-search-term-ingestion.js
+          node --check cloudflare/runtime/csv-imports-api.js
+          node --check assets/cloudflare-native-imports-console-v1.js
           node --check scripts/test-csv-search-term-import.mjs
+          node --check scripts/test-csv-import-workflow-contract.mjs
+          node --check scripts/test-csv-imports-ui-contract.mjs
           node scripts/test-csv-search-term-import.mjs
+          node scripts/test-csv-import-workflow-contract.mjs
           python3 scripts/test-csv-import-foundation.py
 
       - name: Validate Phase E producer and ingestion regressions
