@@ -29,19 +29,21 @@ assert.doesNotMatch(api, /sourceCode\.startsWith\('CSV_'\)/, 'Internal CSV-prefi
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV import API must not open Amazon execution');
 
 // This contract is already executed by the protected canonical CI job. Keep the
-// built CSV operator surfaces inside that same required context instead of
-// allowing syntax-only checks to mask broken runtime/UI assertions.
+// built CSV operator surfaces and local advisory analysis inside that same required
+// context instead of allowing syntax-only or un-gated analytics regressions.
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');
+await import('./test-csv-term-profitability-analysis.mjs');
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-import-workflow-v2-required-ui-contracts',
-  requiredUiContracts: [
+  contract: 'csv-import-workflow-v3-required-local-data-contracts',
+  requiredContracts: [
     'csv-imports-ui-v1',
     'csv-real-data-intelligence-ui-v4-canonical-identity-copy',
     'csv-product-ui-navigation-v3-versioned-load-order',
+    'csv-term-profitability-analysis-v1',
   ],
   amazonLiveApiCalls: false,
   cloudflareWrites: false,
