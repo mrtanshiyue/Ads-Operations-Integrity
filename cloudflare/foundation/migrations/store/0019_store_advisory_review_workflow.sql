@@ -67,6 +67,4 @@ BEGIN
   SELECT RAISE(ABORT, 'ADVISORY_REVIEW_DELETE_FORBIDDEN');
 END;
 
-INSERT INTO d1_migrations(name) VALUES ('0019_store_advisory_review_workflow.sql');
-
 PRAGMA optimize;
