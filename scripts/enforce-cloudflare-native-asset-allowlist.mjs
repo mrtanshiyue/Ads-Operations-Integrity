@@ -25,6 +25,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-history-quarter-over-quarter-comparison-v1.js',
   'cloudflare-native-csv-history-quarter-over-quarter-comparison-receipt-v1.js',
   'cloudflare-native-csv-history-quarter-over-quarter-comparison-receipt-verification-v1.js',
+  'cloudflare-native-csv-history-year-to-date-operating-review-v1.js',
   'cloudflare-native-csv-history-comparison-receipt-v1.js',
   'cloudflare-native-csv-history-comparison-receipt-verification-v1.js',
   'cloudflare-native-csv-history-audit-package-index-verification-v1.js',
