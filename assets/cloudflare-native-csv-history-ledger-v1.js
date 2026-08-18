@@ -8,10 +8,11 @@ import {
   validateCsvHistoryLedger,
 } from './csv-analysis-engine/csv-history-ledger.js';
 
-export const CSV_HISTORY_LEDGER_UI_VERSION = '1.3.0';
+export const CSV_HISTORY_LEDGER_UI_VERSION = '1.4.0';
 export const CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION = 'csv-history-monthly-workspace-v1';
 export const CSV_HISTORY_TREND_SCHEMA_VERSION = 'csv-history-trend-v1';
 export const CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION = 'csv-history-evidence-drilldown-v1';
+export const CSV_HISTORY_PERIOD_COMPARISON_SCHEMA_VERSION = 'csv-history-period-comparison-v1';
 export const CSV_HISTORY_TREND_METRICS = Object.freeze([
   Object.freeze({ key: 'spendMicros', label: 'Spend', unit: 'micros' }),
   Object.freeze({ key: 'salesMicros', label: 'Sales', unit: 'micros' }),
@@ -26,6 +27,8 @@ const state = {
   busy: false,
   ledger: null,
   importedFileName: null,
+  comparisonA: null,
+  comparisonB: null,
 };
 
 export function buildHistoricalMonthlyWorkspace(ledger) {
@@ -197,13 +200,7 @@ export async function buildHistoricalEvidenceDrilldown(ledger, selection) {
   const sourceFileNames = receipts.map((item) => item.sourceFileName);
   const marketplaceCodes = [...new Set(receipts.map((item) => item.marketplace).filter(Boolean))].sort();
   const currencyCodes = [...new Set(receipts.map((item) => item.currencyCode).filter(Boolean))].sort();
-  const authority = {
-    authoritative: false,
-    canonicalAmazonIdentityResolved: false,
-    governancePersistenceAllowed: false,
-    executionAuthorized: false,
-    amazonMutationAuthorized: false,
-  };
+  const authority = noAuthority();
 
   return deepFreezeEvidence({
     schemaVersion: CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION,
@@ -221,6 +218,14 @@ export async function buildHistoricalEvidenceDrilldown(ledger, selection) {
       unit: metric.unit,
       value: metricValue,
       missingValue: metricValue == null,
+    },
+    metrics: {
+      spendMicros: row.spendMicros,
+      salesMicros: row.salesMicros,
+      orders: row.orders,
+      acos: row.acos,
+      roas: row.roas,
+      adContributionMicros: row.adContributionMicros,
     },
     coverage: {
       coverageRatio: row.coverageRatio,
@@ -271,6 +276,84 @@ export async function buildHistoricalEvidenceDrilldown(ledger, selection) {
   });
 }
 
+export async function buildHistoricalPeriodComparison(ledger, periodASelection, periodBSelection) {
+  const validated = await validateCsvHistoryLedger(ledger);
+  const periodA = await buildHistoricalEvidenceDrilldown(validated, periodASelection);
+  const periodB = await buildHistoricalEvidenceDrilldown(validated, periodBSelection);
+  const overlapPairs = validated.historyWindowEvidence?.overlapPairs || [];
+  const participatesInHistoricalOverlap = (fingerprint) => overlapPairs.some((pair) => pair.leftInputSetFingerprint === fingerprint || pair.rightInputSetFingerprint === fingerprint);
+  const periodAWindowDays = inclusiveDayCount(periodA.coverage.periodStartDate, periodA.coverage.periodEndDate);
+  const periodBWindowDays = inclusiveDayCount(periodB.coverage.periodStartDate, periodB.coverage.periodEndDate);
+  const completeCalendarPeriods = periodA.coverage.coverageComplete === true
+    && periodB.coverage.coverageComplete === true
+    && periodA.period.monthlySnapshot?.periodRole === 'calendar_month'
+    && periodB.period.monthlySnapshot?.periodRole === 'calendar_month';
+  const ambiguousA = Number(periodA.observedIdentity.summary?.ambiguousIdentityCount);
+  const ambiguousB = Number(periodB.observedIdentity.summary?.ambiguousIdentityCount);
+  const metricsA = comparisonMetricValues(periodA);
+  const metricsB = comparisonMetricValues(periodB);
+  const metricValuesComplete = CSV_HISTORY_TREND_METRICS.every((metric) => metricsA[metric.key] != null && metricsB[metric.key] != null);
+
+  const checks = {
+    distinctEvidence: !sameEvidenceKey(periodA.evidenceKey, periodB.evidenceKey),
+    sourceFingerprintsDistinct: periodA.source.inputSetFingerprint !== periodB.source.inputSetFingerprint,
+    coverageComplete: periodA.coverage.coverageComplete === true && periodB.coverage.coverageComplete === true,
+    safeForNaiveAggregation: periodA.decision.safeForNaiveAggregation === true && periodB.decision.safeForNaiveAggregation === true,
+    contiguousCoverage: periodA.decision.contiguousCoverage === true && periodB.decision.contiguousCoverage === true,
+    decisionStatesReviewable: periodA.decision.decisionState !== 'blocked_overlap_or_invalid_window' && periodB.decision.decisionState !== 'blocked_overlap_or_invalid_window',
+    qualityStateCompatible: periodA.decision.qualityState !== 'unknown' && periodA.decision.qualityState === periodB.decision.qualityState,
+    historicalOverlapFree: !participatesInHistoricalOverlap(periodA.source.inputSetFingerprint) && !participatesInHistoricalOverlap(periodB.source.inputSetFingerprint),
+    observedIdentityUnambiguous: Number.isSafeInteger(ambiguousA) && Number.isSafeInteger(ambiguousB) && ambiguousA === 0 && ambiguousB === 0,
+    marketplaceCompatible: periodA.source.marketplaceCodes.length === 1 && periodB.source.marketplaceCodes.length === 1 && periodA.source.marketplaceCodes[0] === periodB.source.marketplaceCodes[0],
+    currencyCompatible: periodA.source.currencyCodes.length === 1 && periodB.source.currencyCodes.length === 1 && periodA.source.currencyCodes[0] === periodB.source.currencyCodes[0],
+    reportWindowsKnown: periodAWindowDays != null && periodBWindowDays != null,
+    reportWindowLengthCompatible: periodAWindowDays != null && periodBWindowDays != null && (periodAWindowDays === periodBWindowDays || completeCalendarPeriods),
+    metricValuesComplete,
+  };
+  const reasons = [];
+  for (const [key, allowed] of Object.entries(checks)) if (!allowed) reasons.push(comparisonReason(key));
+  const comparisonAllowed = reasons.length === 0;
+  const metrics = {};
+  for (const metric of CSV_HISTORY_TREND_METRICS) {
+    const valueA = metricsA[metric.key];
+    const valueB = metricsB[metric.key];
+    const delta = comparisonAllowed ? valueB - valueA : null;
+    metrics[metric.key] = {
+      label: metric.label,
+      unit: metric.unit,
+      periodAValue: valueA,
+      periodBValue: valueB,
+      delta,
+      direction: comparisonAllowed ? deltaDirection(delta) : 'withheld_not_comparable',
+      interpretationAllowed: comparisonAllowed,
+    };
+  }
+
+  return deepFreezeEvidence({
+    schemaVersion: CSV_HISTORY_PERIOD_COMPARISON_SCHEMA_VERSION,
+    comparisonAllowed,
+    interpretationAllowed: comparisonAllowed,
+    rawEvidenceOnly: !comparisonAllowed,
+    deltaBasis: 'period_b_minus_period_a',
+    profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
+    periodA: comparisonEvidenceSummary(periodA),
+    periodB: comparisonEvidenceSummary(periodB),
+    comparabilityGate: {
+      checks,
+      reasons,
+      periodAWindowDays,
+      periodBWindowDays,
+      completeCalendarPeriods,
+      historicalOverlapPairCount: overlapPairs.length,
+      canonicalAmazonIdentityResolved: false,
+    },
+    metrics,
+    crossSnapshotAggregationApplied: false,
+    normalizationApplied: false,
+    authority: noAuthority(),
+  });
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHistoryLedger', {
     value: Object.freeze({
@@ -279,6 +362,7 @@ if (typeof window !== 'undefined') {
       monthlyWorkspaceSchemaVersion: CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION,
       trendSchemaVersion: CSV_HISTORY_TREND_SCHEMA_VERSION,
       evidenceDrilldownSchemaVersion: CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION,
+      periodComparisonSchemaVersion: CSV_HISTORY_PERIOD_COMPARISON_SCHEMA_VERSION,
       trendMetrics: CSV_HISTORY_TREND_METRICS,
       authority: 'local_file_history_ledger_only',
       buildCsvHistorySnapshot,
@@ -290,6 +374,7 @@ if (typeof window !== 'undefined') {
       buildHistoricalMonthlyWorkspace,
       buildHistoricalTrend,
       buildHistoricalEvidenceDrilldown,
+      buildHistoricalPeriodComparison,
     }),
     writable: false,
     configurable: false,
@@ -373,6 +458,8 @@ async function importLedger(root, input) {
   } catch (error) {
     state.ledger = null;
     state.importedFileName = null;
+    state.comparisonA = null;
+    state.comparisonB = null;
     root.querySelector('[data-cfhl-body]').hidden = true;
     setStatus(root, `Ledger import blocked: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
@@ -423,6 +510,8 @@ function downloadLedger(root) {
 function clearLedger(root) {
   state.ledger = null;
   state.importedFileName = null;
+  state.comparisonA = null;
+  state.comparisonB = null;
   const input = root.querySelector('[data-cfhl-import]');
   input.value = '';
   root.querySelector('[data-cfhl-body]').hidden = true;
@@ -431,6 +520,8 @@ function clearLedger(root) {
 }
 
 function renderLedger(root, ledger) {
+  state.comparisonA = null;
+  state.comparisonB = null;
   const body = root.querySelector('[data-cfhl-body]');
   const windowEvidence = ledger.historyWindowEvidence;
   const monthlyWorkspace = buildHistoricalMonthlyWorkspace(ledger);
@@ -448,10 +539,12 @@ function renderLedger(root, ledger) {
     ${renderMonthlyWorkspace(monthlyWorkspace)}
     ${renderHistoricalTrendSection(ledger)}
     ${renderSelectedEvidenceShell()}
+    ${renderComparisonShell()}
     <details><summary>Historical overlap / gap evidence</summary><pre>${esc(JSON.stringify(windowEvidence, null, 2))}</pre></details>
     <details><summary>Ledger authority boundary</summary><pre>${esc(JSON.stringify(ledger.authority, null, 2))}</pre></details>`;
   bindTrendControls(body, ledger);
   bindEvidenceNavigation(body, ledger);
+  bindComparisonControls(body, ledger);
   body.hidden = false;
   syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success');
 }
@@ -495,6 +588,17 @@ function renderSelectedEvidenceShell() {
     </section>`;
 }
 
+function renderComparisonShell() {
+  return `
+    <section class="cfhl-comparison" data-cfhl-history-comparison="${CSV_HISTORY_PERIOD_COMPARISON_SCHEMA_VERSION}">
+      <div class="cfhl-monthly-head">
+        <div><b>Historical Period Comparison</b><small>Select an audited evidence point as Period A and another as Period B. Deltas and direction are withheld unless the comparability gate passes.</small></div>
+        <span>comparability-gated</span>
+      </div>
+      <div class="cfhl-comparison-empty">Period A: not selected · Period B: not selected</div>
+    </section>`;
+}
+
 function bindTrendControls(body, ledger) {
   const select = body.querySelector('[data-cfhl-trend-metric]');
   const target = body.querySelector('[data-cfhl-trend-chart]');
@@ -519,6 +623,22 @@ function bindEvidenceNavigation(body, ledger) {
   });
 }
 
+function bindComparisonControls(body, ledger) {
+  body.addEventListener('click', (event) => {
+    const trigger = event.target?.closest?.('[data-cfhl-comparison-slot]');
+    if (!trigger || !body.contains(trigger)) return;
+    const selection = Object.freeze({
+      ledgerFingerprint: trigger.dataset.ledgerFingerprint,
+      sourceInputSetFingerprint: trigger.dataset.inputSetFingerprint,
+      month: trigger.dataset.evidenceMonth,
+    });
+    if (trigger.dataset.cfhlComparisonSlot === 'A') state.comparisonA = selection;
+    else if (trigger.dataset.cfhlComparisonSlot === 'B') state.comparisonB = selection;
+    else return;
+    void renderComparisonState(body, ledger);
+  });
+}
+
 async function selectHistoricalEvidence(body, ledger, trigger) {
   const target = body.querySelector('[data-cfhl-selected-evidence]');
   if (!target) return;
@@ -539,6 +659,28 @@ async function selectHistoricalEvidence(body, ledger, trigger) {
   }
 }
 
+async function renderComparisonState(body, ledger) {
+  const target = body.querySelector('[data-cfhl-history-comparison]');
+  if (!target) return;
+  if (!state.comparisonA || !state.comparisonB) {
+    target.dataset.kind = '';
+    target.innerHTML = `
+      <div class="cfhl-monthly-head"><div><b>Historical Period Comparison</b><small>Deltas remain withheld until both evidence periods are selected and the comparability gate passes.</small></div><span>comparability-gated</span></div>
+      <div class="cfhl-comparison-empty">Period A: ${state.comparisonA ? esc(selectionLabel(state.comparisonA)) : 'not selected'} · Period B: ${state.comparisonB ? esc(selectionLabel(state.comparisonB)) : 'not selected'}</div>`;
+    return;
+  }
+  target.dataset.kind = 'loading';
+  target.innerHTML = '<div class="cfhl-comparison-empty">Validating comparability gate…</div>';
+  try {
+    const comparison = await buildHistoricalPeriodComparison(ledger, state.comparisonA, state.comparisonB);
+    target.dataset.kind = comparison.comparisonAllowed ? 'ok' : 'blocked';
+    target.innerHTML = renderComparisonResult(comparison);
+  } catch (error) {
+    target.dataset.kind = 'bad';
+    target.innerHTML = `<div class="cfhl-comparison-empty">Comparison blocked: ${esc(String(error?.code || error?.message || 'unknown_error'))}</div>`;
+  }
+}
+
 function renderSelectedEvidence(evidence) {
   const currency = evidence.source.currencyCodes[0] || null;
   const metricValue = evidence.metric.missingValue
@@ -552,12 +694,14 @@ function renderSelectedEvidence(evidence) {
     <td>${receipt.acceptedRows}</td>
     <td>${receipt.rejectedRows}</td>
   </tr>`).join('');
+  const selectionAttrs = `data-ledger-fingerprint="${esc(evidence.evidenceKey.ledgerFingerprint)}" data-input-set-fingerprint="${esc(evidence.evidenceKey.sourceInputSetFingerprint)}" data-evidence-month="${esc(evidence.evidenceKey.month)}"`;
   return `
     <div class="cfhl-monthly-head">
       <div><b>Selected Historical Evidence</b><small>This is navigation into immutable evidence, not new analytical authority, canonical Amazon identity, governance state, or an execution target.</small></div>
       <span>${esc(evidence.schemaVersion)}</span>
     </div>
     <div class="cfhl-guard">Evidence key = ledger fingerprint + input-set fingerprint + month. Same-month snapshots remain independently addressable. Ad Contribution = Sales - Ad Spend only; it is not Net Profit.</div>
+    <div class="cfhl-comparison-actions"><button type="button" data-cfhl-comparison-slot="A" ${selectionAttrs}>Use as Period A</button><button type="button" data-cfhl-comparison-slot="B" ${selectionAttrs}>Use as Period B</button></div>
     <div class="cfhl-grid cfhl-evidence-grid">
       ${card('Selected month', `<b>${esc(evidence.selectedMonth)}</b>`)}
       ${card('Metric', `${esc(evidence.metric.label)}<br><b>${esc(metricValue)}</b>`)}
@@ -581,6 +725,31 @@ function renderSelectedEvidence(evidence) {
     <details><summary>Hierarchy</summary><pre>${esc(JSON.stringify(evidence.hierarchy, null, 2))}</pre></details>
     <details><summary>Period evidence</summary><pre>${esc(JSON.stringify(evidence.period, null, 2))}</pre></details>
     <details><summary>Authority boundary</summary><pre>${esc(JSON.stringify(evidence.authority, null, 2))}</pre></details>`;
+}
+
+function renderComparisonResult(comparison) {
+  const currencyA = comparison.periodA.source.currencyCodes[0] || null;
+  const currencyB = comparison.periodB.source.currencyCodes[0] || null;
+  const rows = CSV_HISTORY_TREND_METRICS.map((metric) => {
+    const item = comparison.metrics[metric.key];
+    return `<tr><td>${esc(item.label)}</td><td>${formatComparisonValue(item.periodAValue, item.unit, currencyA)}</td><td>${formatComparisonValue(item.periodBValue, item.unit, currencyB)}</td><td>${item.delta == null ? 'withheld' : formatComparisonValue(item.delta, item.unit, currencyB)}</td><td>${esc(item.direction)}</td></tr>`;
+  }).join('');
+  const gateRows = Object.entries(comparison.comparabilityGate.checks).map(([key, allowed]) => `<tr><td>${esc(key)}</td><td>${allowed ? 'pass' : 'block'}</td></tr>`).join('');
+  const reasons = comparison.comparabilityGate.reasons.length ? comparison.comparabilityGate.reasons.map((item) => `<li>${esc(item)}</li>`).join('') : '<li>all comparability checks passed</li>';
+  return `
+    <div class="cfhl-monthly-head"><div><b>Historical Period Comparison</b><small>${comparison.comparisonAllowed ? 'Comparability gate passed. Deltas are B - A and may be interpreted for analytical review only.' : 'Comparability gate blocked interpretation. Raw evidence remains visible; deltas and increase/decrease conclusions are withheld.'}</small></div><span>${comparison.comparisonAllowed ? 'comparison allowed' : 'raw evidence only'}</span></div>
+    <div class="cfhl-guard">Ad Contribution = Sales - Ad Spend only; it is not Net Profit. Cross-snapshot aggregation: none. Normalization: none. Canonical Amazon identity remains unresolved.</div>
+    <div class="cfhl-grid cfhl-evidence-grid">
+      ${card('Period A', `<b>${esc(comparison.periodA.selectedMonth)}</b><br>${esc(comparison.periodA.decision.decisionState)}`)}
+      ${card('Period B', `<b>${esc(comparison.periodB.selectedMonth)}</b><br>${esc(comparison.periodB.decision.decisionState)}`)}
+      ${card('Coverage A / B', `${comparison.periodA.coverage.coverageComplete ? 'complete' : 'partial'} / ${comparison.periodB.coverage.coverageComplete ? 'complete' : 'partial'}`)}
+      ${card('Window days A / B', `${comparison.comparabilityGate.periodAWindowDays ?? 'unknown'} / ${comparison.comparabilityGate.periodBWindowDays ?? 'unknown'}`)}
+    </div>
+    <div class="cfhl-table-wrap"><table><thead><tr><th>Metric</th><th>Period A</th><th>Period B</th><th>Δ B-A</th><th>Direction</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <details open><summary>Comparability gate</summary><div class="cfhl-table-wrap"><table><thead><tr><th>Check</th><th>State</th></tr></thead><tbody>${gateRows}</tbody></table></div><ul>${reasons}</ul></details>
+    <details><summary>Period A raw evidence</summary><pre>${esc(JSON.stringify(comparison.periodA, null, 2))}</pre></details>
+    <details><summary>Period B raw evidence</summary><pre>${esc(JSON.stringify(comparison.periodB, null, 2))}</pre></details>
+    <details><summary>Comparison authority boundary</summary><pre>${esc(JSON.stringify(comparison.authority, null, 2))}</pre></details>`;
 }
 
 function renderTrendEvidence(trend) {
@@ -665,6 +834,69 @@ function assertLedgerForMonthlyWorkspace(ledger) {
   }
 }
 
+function comparisonMetricValues(evidence) {
+  const values = { ...evidence.metrics };
+  if (values.adContributionMicros !== values.salesMicros - values.spendMicros) throw periodComparisonError('CSV_HISTORY_COMPARISON_CONTRIBUTION_MISMATCH');
+  return values;
+}
+function comparisonEvidenceSummary(evidence) {
+  return {
+    evidenceKey: evidence.evidenceKey,
+    selectedMonth: evidence.selectedMonth,
+    metrics: evidence.metrics,
+    coverage: evidence.coverage,
+    decision: evidence.decision,
+    source: evidence.source,
+    observedIdentity: evidence.observedIdentity,
+    period: evidence.period,
+    authority: evidence.authority,
+  };
+}
+function sameEvidenceKey(left, right) {
+  return left.ledgerFingerprint === right.ledgerFingerprint && left.sourceInputSetFingerprint === right.sourceInputSetFingerprint && left.month === right.month;
+}
+function inclusiveDayCount(startDate, endDate) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(endDate || ''))) return null;
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  const end = Date.parse(`${endDate}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return Math.floor((end - start) / 86400000) + 1;
+}
+function comparisonReason(key) {
+  return ({
+    distinctEvidence: 'same_evidence_selected_twice',
+    sourceFingerprintsDistinct: 'source_fingerprint_reused',
+    coverageComplete: 'incomplete_coverage',
+    safeForNaiveAggregation: 'unsafe_quality_state',
+    contiguousCoverage: 'noncontiguous_coverage',
+    decisionStatesReviewable: 'blocked_decision_state',
+    qualityStateCompatible: 'quality_state_mismatch_or_unknown',
+    historicalOverlapFree: 'historical_overlap_detected',
+    observedIdentityUnambiguous: 'observed_identity_ambiguous_or_unknown',
+    marketplaceCompatible: 'marketplace_mismatch_or_unknown',
+    currencyCompatible: 'currency_mismatch_or_unknown',
+    reportWindowsKnown: 'report_window_unknown',
+    reportWindowLengthCompatible: 'report_window_length_incompatible',
+    metricValuesComplete: 'comparison_metric_missing',
+  })[key] || `comparison_gate_failed_${key}`;
+}
+function deltaDirection(delta) { return delta > 0 ? 'increase' : delta < 0 ? 'decrease' : 'flat'; }
+function selectionLabel(selection) { return `${selection.month} · ${String(selection.sourceInputSetFingerprint || '').slice(0, 12)}`; }
+function formatComparisonValue(value, unit, currency) {
+  if (value == null || !Number.isFinite(Number(value))) return 'missing';
+  if (unit === 'micros') return money(value, currency);
+  if (unit === 'ratio') return decimal(value);
+  return String(value);
+}
+function noAuthority() {
+  return {
+    authoritative: false,
+    canonicalAmazonIdentityResolved: false,
+    governancePersistenceAllowed: false,
+    executionAuthorized: false,
+    amazonMutationAuthorized: false,
+  };
+}
 function selectionHash(value, code) {
   const normalized = String(value || '').toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(normalized)) throw evidenceDrilldownError(code);
@@ -684,6 +916,7 @@ function formatTrendValue(value, unit) { if (value == null) return 'missing'; if
 function monthlyWorkspaceError(code) { const error = new Error(code); error.name = 'CsvHistoryMonthlyWorkspaceError'; error.code = code; return error; }
 function trendError(code) { const error = new Error(code); error.name = 'CsvHistoryTrendError'; error.code = code; return error; }
 function evidenceDrilldownError(code) { const error = new Error(code); error.name = 'CsvHistoryEvidenceDrilldownError'; error.code = code; return error; }
+function periodComparisonError(code) { const error = new Error(code); error.name = 'CsvHistoryPeriodComparisonError'; error.code = code; return error; }
 function card(label, value) { return `<div class="cfhl-card"><small>${esc(label)}</small><div>${value}</div></div>`; }
 function setBusy(root, busy) { state.busy = busy; syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success'); }
 function syncButtons(root, jointReady) {
@@ -699,6 +932,6 @@ function installStyles() {
   if (document.getElementById('cfhl-style-v1')) return;
   const style = document.createElement('style');
   style.id = 'cfhl-style-v1';
-  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button,.cfhl-trend select{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly,.cfhl-trend,.cfhl-evidence{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.cfhl-trend-svg{width:100%;min-width:520px;display:block;margin-top:8px;overflow:visible}.cfhl-trend-axis{stroke:#cbd5e1;stroke-width:1}.cfhl-trend-line{stroke:#475569;stroke-width:2}.cfhl-trend-point{fill:#0f172a}.cfhl-trend-point.partial{fill:#b45309}.cfhl-trend-point.blocked{fill:#b91c1c}.cfhl-trend-label{font-size:10px;text-anchor:middle;fill:#64748b}.cfhl-trend-missing{font-size:18px;text-anchor:middle;fill:#64748b}.cfhl-trend-meta{font-size:12px;color:#475569;margin-top:6px}.cfhl-empty,.cfhl-evidence-empty{padding:12px;color:#64748b}.cfhl [data-cfhl-evidence-nav]{cursor:pointer}.cfhl tr[data-cfhl-evidence-nav]:hover{background:#f8fafc}.cfhl [data-cfhl-evidence-nav]:focus{outline:2px solid #94a3b8;outline-offset:2px}.cfhl-evidence[data-kind="bad"]{border-color:#fecaca}.cfhl-evidence[data-kind="loading"]{opacity:.8}.cfhl-evidence-grid{margin-top:9px}.cfhl-evidence-key{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:start;margin-top:9px;padding:8px;border:1px solid #e2e8f0;border-radius:8px}.cfhl-evidence-key code{overflow-wrap:anywhere}';
+  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button,.cfhl-trend select,.cfhl-comparison-actions button{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button,.cfhl-comparison-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly,.cfhl-trend,.cfhl-evidence,.cfhl-comparison{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.cfhl-trend-svg{width:100%;min-width:520px;display:block;margin-top:8px;overflow:visible}.cfhl-trend-axis{stroke:#cbd5e1;stroke-width:1}.cfhl-trend-line{stroke:#475569;stroke-width:2}.cfhl-trend-point{fill:#0f172a}.cfhl-trend-point.partial{fill:#b45309}.cfhl-trend-point.blocked{fill:#b91c1c}.cfhl-trend-label{font-size:10px;text-anchor:middle;fill:#64748b}.cfhl-trend-missing{font-size:18px;text-anchor:middle;fill:#64748b}.cfhl-trend-meta{font-size:12px;color:#475569;margin-top:6px}.cfhl-empty,.cfhl-evidence-empty,.cfhl-comparison-empty{padding:12px;color:#64748b}.cfhl [data-cfhl-evidence-nav]{cursor:pointer}.cfhl tr[data-cfhl-evidence-nav]:hover{background:#f8fafc}.cfhl [data-cfhl-evidence-nav]:focus{outline:2px solid #94a3b8;outline-offset:2px}.cfhl-evidence[data-kind="bad"],.cfhl-comparison[data-kind="bad"]{border-color:#fecaca}.cfhl-comparison[data-kind="blocked"]{border-color:#fde68a}.cfhl-evidence[data-kind="loading"],.cfhl-comparison[data-kind="loading"]{opacity:.8}.cfhl-evidence-grid{margin-top:9px}.cfhl-evidence-key{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:start;margin-top:9px;padding:8px;border:1px solid #e2e8f0;border-radius:8px}.cfhl-evidence-key code{overflow-wrap:anywhere}.cfhl-comparison-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}.cfhl-comparison ul{margin:8px 0 0 18px;padding:0}';
   document.head.appendChild(style);
 }
