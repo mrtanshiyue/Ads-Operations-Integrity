@@ -12,7 +12,7 @@ const engineSource = await readFile(path.join(distRoot, engineRelative), 'utf8')
 const uiSource = await readFile(path.join(distRoot, uiRelative), 'utf8');
 const indexSource = await readFile(path.join(distRoot, 'index.html'), 'utf8');
 const monthlyTag = '<script type="module" src="assets/cloudflare-native-csv-monthly-workspace-v1.js?v=1.0.0"></script>';
-const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.1.0"></script>';
+const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.2.0"></script>';
 const provenanceTag = '<script type="module" src="assets/cloudflare-native-csv-provenance-audit-v1.js?v=1.0.0"></script>';
 
 assert.equal(indexSource.split(historyTag).length - 1, 1, 'History ledger UI must be injected exactly once');
@@ -25,7 +25,12 @@ assert.match(uiSource, /Download updated ledger/);
 assert.match(uiSource, /Historical Monthly Workspace/);
 assert.match(uiSource, /Same-month evidence from multiple snapshots is displayed separately, never cross-snapshot aggregated/);
 assert.match(uiSource, /Ad Contribution = Sales - Ad Spend only; it is not Net Profit/);
+assert.match(uiSource, /Historical Trend Evidence/);
+assert.match(uiSource, /Partial, blocked, duplicate-month, and missing-value evidence is never hidden or merged/);
+assert.match(uiSource, /Trend normalization: none\. Cross-snapshot aggregation: none/);
 assert.match(uiSource, /crossSnapshotAggregationApplied: false/);
+assert.match(uiSource, /partialPeriodsHidden: false/);
+assert.match(uiSource, /missingValuesHidden: false/);
 assert.match(engineSource, /CSV_HISTORY_DUPLICATE_INPUT_SET_FINGERPRINT/);
 assert.match(engineSource, /CSV_HISTORY_DUPLICATE_CONTENT_HASH/);
 assert.match(engineSource, /CSV_HISTORY_SOURCE_RECEIPT_MISMATCH/);
@@ -60,9 +65,14 @@ const mod = await import(`${pathToFileURL(path.join(distRoot, engineRelative)).h
 const uiMod = await import(`${pathToFileURL(path.join(distRoot, uiRelative)).href}?contract=${Date.now()}`);
 assert.equal(mod.CSV_HISTORY_LEDGER_SCHEMA_VERSION, 'csv-history-ledger-v1');
 assert.equal(mod.CSV_HISTORY_SNAPSHOT_SCHEMA_VERSION, 'csv-history-snapshot-v1');
-assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.1.0');
+assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.2.0');
 assert.equal(uiMod.CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION, 'csv-history-monthly-workspace-v1');
+assert.equal(uiMod.CSV_HISTORY_TREND_SCHEMA_VERSION, 'csv-history-trend-v1');
 assert.equal(typeof uiMod.buildHistoricalMonthlyWorkspace, 'function');
+assert.equal(typeof uiMod.buildHistoricalTrend, 'function');
+assert.deepEqual(uiMod.CSV_HISTORY_TREND_METRICS.map((item) => item.key), [
+  'spendMicros', 'salesMicros', 'orders', 'acos', 'roas', 'adContributionMicros',
+]);
 
 const august = await fixture({ hashChar: 'b', startDate: '2026-08-01', endDate: '2026-08-14', month: '2026-08' });
 const september = await fixture({ hashChar: 'c', startDate: '2026-09-01', endDate: '2026-09-30', month: '2026-09' });
@@ -114,6 +124,49 @@ assert.equal(monthlyWorkspace.authority.governancePersistenceAllowed, false);
 assert.equal(monthlyWorkspace.authority.executionAuthorized, false);
 assert.equal(monthlyWorkspace.authority.amazonMutationAuthorized, false);
 
+const expectedTrendValues = new Map([
+  ['spendMicros', [4000000, 4000000]],
+  ['salesMicros', [10000000, 10000000]],
+  ['orders', [3, 3]],
+  ['acos', [0.4, 0.4]],
+  ['roas', [2.5, 2.5]],
+  ['adContributionMicros', [6000000, 6000000]],
+]);
+for (const [metricKey, expectedValues] of expectedTrendValues) {
+  const trend = uiMod.buildHistoricalTrend(two, metricKey);
+  assert.equal(trend.schemaVersion, 'csv-history-trend-v1');
+  assert.equal(trend.metricKey, metricKey);
+  assert.equal(trend.pointCount, 2);
+  assert.equal(trend.missingValueCount, 0);
+  assert.equal(trend.partialCoveragePointCount, 2, 'Partial historical periods must remain visible in trend evidence');
+  assert.equal(trend.blockedPointCount, 0);
+  assert.equal(trend.crossSnapshotAggregationApplied, false);
+  assert.equal(trend.normalizationApplied, false);
+  assert.equal(trend.partialPeriodsHidden, false);
+  assert.equal(trend.missingValuesHidden, false);
+  assert.equal(trend.coverageBound, true);
+  assert.equal(trend.qualityStateBound, true);
+  assert.equal(trend.sourceFingerprintBound, true);
+  assert.deepEqual(trend.points.map((point) => point.value), expectedValues);
+  assert.deepEqual(trend.points.map((point) => point.month), ['2026-08', '2026-09']);
+  assert.deepEqual(trend.points.map((point) => point.sourceInputSetFingerprint), two.snapshots.map((item) => item.inputSetFingerprint));
+  assert.ok(trend.points.every((point) => point.coverageComplete === false));
+  assert.ok(trend.points.every((point) => point.decisionState === 'partial_coverage_review'));
+  assert.ok(trend.points.every((point) => point.crossSnapshotAggregationApplied === false));
+  assert.equal(trend.authority.authoritative, false);
+  assert.equal(trend.authority.canonicalAmazonIdentityResolved, false);
+  assert.equal(trend.authority.governancePersistenceAllowed, false);
+  assert.equal(trend.authority.executionAuthorized, false);
+  assert.equal(trend.authority.amazonMutationAuthorized, false);
+  if (metricKey === 'adContributionMicros') assert.equal(trend.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+  else assert.equal(trend.profitabilityBasis, null);
+}
+assert.throws(
+  () => uiMod.buildHistoricalTrend(two, 'netProfit'),
+  (error) => error?.code === 'CSV_HISTORY_TREND_METRIC_UNSUPPORTED',
+  'Net Profit is not a supported historical trend metric',
+);
+
 const overlapping = await fixture({ hashChar: 'd', startDate: '2026-08-10', endDate: '2026-08-20', month: '2026-08' });
 const withOverlap = await mod.mergeCsvHistoryLedger(one, overlapping);
 assert.equal(withOverlap.historyWindowEvidence.overlapPairCount, 1);
@@ -129,6 +182,32 @@ assert.ok(sameMonthWorkspace.rows.every((item) => item.sameMonthEvidenceCount ==
 assert.ok(sameMonthWorkspace.rows.every((item) => item.sameMonthMultipleSnapshots === true));
 assert.ok(sameMonthWorkspace.rows.every((item) => item.crossSnapshotAggregationApplied === false));
 assert.notEqual(sameMonthWorkspace.rows[0].sourceInputSetFingerprint, sameMonthWorkspace.rows[1].sourceInputSetFingerprint);
+const sameMonthTrend = uiMod.buildHistoricalTrend(withOverlap, 'salesMicros');
+assert.equal(sameMonthTrend.pointCount, 2);
+assert.equal(sameMonthTrend.multiEvidencePointCount, 2);
+assert.deepEqual(sameMonthTrend.points.map((point) => point.month), ['2026-08', '2026-08']);
+assert.ok(sameMonthTrend.points.every((point) => point.sameMonthEvidenceCount === 2));
+assert.ok(sameMonthTrend.points.every((point) => point.sameMonthMultipleSnapshots === true));
+assert.notEqual(sameMonthTrend.points[0].sourceInputSetFingerprint, sameMonthTrend.points[1].sourceInputSetFingerprint);
+assert.equal(sameMonthTrend.crossSnapshotAggregationApplied, false);
+
+const missingAcos = JSON.parse(oneSerialized);
+missingAcos.snapshots[0].monthlySnapshots[0].metrics.acos = null;
+const missingTrend = uiMod.buildHistoricalTrend(missingAcos, 'acos');
+assert.equal(missingTrend.pointCount, 1);
+assert.equal(missingTrend.missingValueCount, 1);
+assert.equal(missingTrend.missingValuesHidden, false);
+assert.equal(missingTrend.points[0].missingValue, true);
+assert.equal(missingTrend.points[0].value, null);
+assert.match(missingTrend.points[0].sourceInputSetFingerprint, /^[a-f0-9]{64}$/);
+
+const blockedEvidence = JSON.parse(oneSerialized);
+blockedEvidence.snapshots[0].safeForNaiveAggregation = false;
+const blockedTrend = uiMod.buildHistoricalTrend(blockedEvidence, 'spendMicros');
+assert.equal(blockedTrend.pointCount, 1);
+assert.equal(blockedTrend.blockedPointCount, 1);
+assert.equal(blockedTrend.partialPeriodsHidden, false);
+assert.equal(blockedTrend.points[0].decisionState, 'blocked_overlap_or_invalid_window');
 
 await assert.rejects(
   () => mod.mergeCsvHistoryLedger(one, august),
@@ -214,6 +293,13 @@ console.log(JSON.stringify({
   gapPreservedAsEvidence: true,
   historicalMonthlyWorkspace: true,
   sameMonthEvidenceSeparated: true,
+  historicalTrendEvidence: true,
+  supportedTrendMetrics: uiMod.CSV_HISTORY_TREND_METRICS.map((item) => item.key),
+  partialTrendPeriodsHidden: false,
+  missingTrendValuesHidden: false,
+  trendCoverageBound: true,
+  trendQualityStateBound: true,
+  trendSourceFingerprintBound: true,
   crossSnapshotAggregationApplied: false,
   adContributionBasisVerified: true,
   normalizationApplied: false,
