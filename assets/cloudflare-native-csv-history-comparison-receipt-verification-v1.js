@@ -14,6 +14,7 @@ export const CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_SCHEMA_VERSION = 'csv-h
 export const CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_UI_VERSION = '1.0.0';
 export const CSV_HISTORY_AUDIT_PACKAGE_SCHEMA_VERSION = 'csv-history-audit-package-v1';
 export const CSV_HISTORY_AUDIT_PACKAGE_VERIFICATION_SCHEMA_VERSION = 'csv-history-audit-package-verification-v1';
+export const CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_VERSION = 'csv-history-audit-package-index-v1';
 
 const REQUIRED_AUDIT_PATHS = Object.freeze([
   'history-ledger.json',
@@ -35,6 +36,7 @@ const state = {
   receipt: null,
   verification: null,
   auditZipBytes: null,
+  auditIndexZipInputs: [],
   ledgerFileName: null,
   receiptFileName: null,
 };
@@ -211,6 +213,8 @@ export async function validateHistoricalAuditPackageArtifact(artifact) {
     packageFingerprint: manifest.packageFingerprint,
     ledgerFingerprint: validatedLedger.ledgerFingerprint,
     comparisonReceiptFingerprint: validatedReceipt.receiptFingerprint,
+    periodAEvidenceKey: replayedVerification.periodAEvidenceKey,
+    periodBEvidenceKey: replayedVerification.periodBEvidenceKey,
     comparisonAllowed: replayedVerification.comparisonAllowed,
     rawEvidenceOnly: replayedVerification.rawEvidenceOnly,
     authority: noAuthority(),
@@ -260,6 +264,8 @@ export async function verifyHistoricalAuditPackageZip(zipInput, zipBuilder) {
     packageFingerprint: validation.packageFingerprint,
     ledgerFingerprint: validation.ledgerFingerprint,
     comparisonReceiptFingerprint: validation.comparisonReceiptFingerprint,
+    periodAEvidenceKey: validation.periodAEvidenceKey,
+    periodBEvidenceKey: validation.periodBEvidenceKey,
     comparisonAllowed: validation.comparisonAllowed,
     rawEvidenceOnly: validation.rawEvidenceOnly,
     archiveFormat: 'zip_store_utf8',
@@ -272,6 +278,111 @@ export async function verifyHistoricalAuditPackageZip(zipInput, zipBuilder) {
   });
 }
 
+export async function buildHistoricalAuditPackageIndex(zipInputs, zipBuilder) {
+  if (!Array.isArray(zipInputs) || zipInputs.length === 0) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_INPUTS_REQUIRED');
+  if (typeof zipBuilder !== 'function') throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_ZIP_BUILDER_UNAVAILABLE');
+  const packages = [];
+  for (const zipInput of zipInputs) {
+    const bytes = normalizeZipBytes(zipInput);
+    const verified = await verifyHistoricalAuditPackageZip(bytes, zipBuilder);
+    packages.push({
+      packageFingerprint: verified.packageFingerprint,
+      archiveSha256: await sha256Bytes(bytes),
+      ledgerFingerprint: verified.ledgerFingerprint,
+      comparisonReceiptFingerprint: verified.comparisonReceiptFingerprint,
+      periodAEvidenceKey: verified.periodAEvidenceKey,
+      periodBEvidenceKey: verified.periodBEvidenceKey,
+      comparisonAllowed: verified.comparisonAllowed,
+      rawEvidenceOnly: verified.rawEvidenceOnly,
+      verificationSchema: verified.schemaVersion,
+      verificationState: verified.verificationState,
+      archiveFormat: verified.archiveFormat,
+      archiveEntryCount: verified.archiveEntryCount,
+      canonicalZipBytesMatch: verified.canonicalZipBytesMatch,
+      replayedFromPackageContents: verified.replayedFromPackageContents,
+    });
+  }
+  packages.sort((a, b) => a.packageFingerprint.localeCompare(b.packageFingerprint));
+  for (let index = 1; index < packages.length; index += 1) {
+    if (packages[index - 1].packageFingerprint === packages[index].packageFingerprint) {
+      throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_DUPLICATE_PACKAGE_FINGERPRINT');
+    }
+  }
+  const payload = {
+    schemaVersion: CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_VERSION,
+    indexPurpose: 'deterministic_catalog_of_independently_verified_historical_audit_packages',
+    packageCount: packages.length,
+    packages,
+    deterministic: {
+      generatedTimestampIncluded: false,
+      sourceFileNameIncluded: false,
+      selectionOrderAffectsFingerprint: false,
+      packageOrder: 'package_fingerprint_ascending',
+      indexFingerprintBasis: 'canonical_index_without_index_fingerprint',
+    },
+    crossPackageAggregationApplied: false,
+    normalizationApplied: false,
+    deduplicationApplied: false,
+    sameMonthAggregationApplied: false,
+    profitabilityBasis: 'sales_minus_ad_spend_only_not_net_profit',
+    authority: noAuthority(),
+  };
+  const indexFingerprint = await sha256Hex(canonicalJson(payload));
+  const index = deepFreeze({ ...payload, indexFingerprint });
+  await validateHistoricalAuditPackageIndex(index);
+  return index;
+}
+
+export async function validateHistoricalAuditPackageIndex(index) {
+  if (!index || typeof index !== 'object' || Array.isArray(index)) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_INVALID');
+  if (index.schemaVersion !== CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_VERSION) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_UNSUPPORTED');
+  if (index.indexPurpose !== 'deterministic_catalog_of_independently_verified_historical_audit_packages') throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_PURPOSE_INVALID');
+  assertNoAuthority(index.authority, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_AUTHORITY_ESCALATION_BLOCKED');
+  assertSha256(index.indexFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_FINGERPRINT_INVALID');
+  if (index.profitabilityBasis !== 'sales_minus_ad_spend_only_not_net_profit') throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_PROFITABILITY_BASIS_INVALID');
+  if (index.crossPackageAggregationApplied !== false || index.normalizationApplied !== false || index.deduplicationApplied !== false || index.sameMonthAggregationApplied !== false) {
+    throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_TRANSFORMATION_POLICY_INVALID');
+  }
+  const deterministic = index.deterministic;
+  if (!deterministic || deterministic.generatedTimestampIncluded !== false || deterministic.sourceFileNameIncluded !== false || deterministic.selectionOrderAffectsFingerprint !== false || deterministic.packageOrder !== 'package_fingerprint_ascending' || deterministic.indexFingerprintBasis !== 'canonical_index_without_index_fingerprint') {
+    throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_DETERMINISM_POLICY_INVALID');
+  }
+  const packages = Array.isArray(index.packages) ? index.packages : [];
+  if (!packages.length || index.packageCount !== packages.length) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_PACKAGE_COUNT_INVALID');
+  let previousFingerprint = null;
+  const seen = new Set();
+  for (const item of packages) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_ENTRY_INVALID');
+    assertSha256(item.packageFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_PACKAGE_FINGERPRINT_INVALID');
+    assertSha256(item.archiveSha256, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_ARCHIVE_SHA256_INVALID');
+    assertSha256(item.ledgerFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_LEDGER_FINGERPRINT_INVALID');
+    assertSha256(item.comparisonReceiptFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_RECEIPT_FINGERPRINT_INVALID');
+    if (seen.has(item.packageFingerprint)) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_DUPLICATE_PACKAGE_FINGERPRINT');
+    seen.add(item.packageFingerprint);
+    if (previousFingerprint && previousFingerprint.localeCompare(item.packageFingerprint) >= 0) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_ORDER_INVALID');
+    previousFingerprint = item.packageFingerprint;
+    assertAuditEvidenceKey(item.periodAEvidenceKey, item.ledgerFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_PERIOD_A_BINDING_INVALID');
+    assertAuditEvidenceKey(item.periodBEvidenceKey, item.ledgerFingerprint, 'CSV_HISTORY_AUDIT_PACKAGE_INDEX_PERIOD_B_BINDING_INVALID');
+    if (typeof item.comparisonAllowed !== 'boolean' || typeof item.rawEvidenceOnly !== 'boolean' || item.rawEvidenceOnly === item.comparisonAllowed) {
+      throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_COMPARISON_STATE_INVALID');
+    }
+    if (item.verificationSchema !== CSV_HISTORY_AUDIT_PACKAGE_VERIFICATION_SCHEMA_VERSION || item.verificationState !== 'audit_package_zip_verified_locally') {
+      throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_VERIFICATION_STATE_INVALID');
+    }
+    if (item.archiveFormat !== 'zip_store_utf8' || item.archiveEntryCount !== REQUIRED_ARCHIVE_PATHS.length || item.canonicalZipBytesMatch !== true || item.replayedFromPackageContents !== true) {
+      throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_ARCHIVE_STATE_INVALID');
+    }
+  }
+  const { indexFingerprint: _ignored, ...fingerprintPayload } = index;
+  const expectedFingerprint = await sha256Hex(canonicalJson(fingerprintPayload));
+  if (expectedFingerprint !== index.indexFingerprint) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_INDEX_FINGERPRINT_MISMATCH');
+  return deepFreeze(index);
+}
+
+export function serializeHistoricalAuditPackageIndex(index) {
+  return `${JSON.stringify(sortKeysDeep(index), null, 2)}\n`;
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHistoryComparisonReceiptVerification', {
     value: Object.freeze({
@@ -279,12 +390,16 @@ if (typeof window !== 'undefined') {
       schemaVersion: CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_SCHEMA_VERSION,
       auditPackageSchemaVersion: CSV_HISTORY_AUDIT_PACKAGE_SCHEMA_VERSION,
       auditPackageVerificationSchemaVersion: CSV_HISTORY_AUDIT_PACKAGE_VERIFICATION_SCHEMA_VERSION,
+      auditPackageIndexSchemaVersion: CSV_HISTORY_AUDIT_PACKAGE_INDEX_SCHEMA_VERSION,
       authority: 'local_historical_comparison_receipt_verification_only',
       verifyHistoricalComparisonReceiptAgainstLedger,
       buildHistoricalAuditPackage,
       validateHistoricalAuditPackageArtifact,
       buildHistoricalAuditPackageZipFiles,
       verifyHistoricalAuditPackageZip,
+      buildHistoricalAuditPackageIndex,
+      validateHistoricalAuditPackageIndex,
+      serializeHistoricalAuditPackageIndex,
     }),
     writable: false,
     configurable: false,
@@ -330,7 +445,11 @@ function mount() {
       <label>Audit package ZIP <input type="file" accept="application/zip,.zip" data-cfhcv-package-file></label>
       <button type="button" data-cfhcv-package-verify disabled>Verify downloaded audit package</button>
     </div>
-    <div class="cfhcv-status" data-cfhcv-status>Select local evidence or a downloaded audit ZIP. No file contents are persisted remotely or in hidden browser storage.</div>
+    <div class="cfhcv-controls">
+      <label>Audit package ZIPs for index <input type="file" accept="application/zip,.zip" multiple data-cfhcv-index-files></label>
+      <button type="button" data-cfhcv-index-build disabled>Download deterministic package index</button>
+    </div>
+    <div class="cfhcv-status" data-cfhcv-status>Select local evidence, a downloaded audit ZIP, or multiple audit ZIPs for a deterministic catalog. No file contents are persisted remotely or in hidden browser storage.</div>
     <div class="cfhcv-result" data-cfhcv-result hidden></div>`;
 
   const receiptWorkspace = joint.querySelector('[data-csv-history-comparison-receipt]');
@@ -345,6 +464,8 @@ function mount() {
   root.querySelector('[data-cfhcv-package]').addEventListener('click', () => void downloadAuditPackage(root));
   root.querySelector('[data-cfhcv-package-file]').addEventListener('change', (event) => void loadAuditZip(root, event.currentTarget));
   root.querySelector('[data-cfhcv-package-verify]').addEventListener('click', () => void verifyAuditZipFromUi(root));
+  root.querySelector('[data-cfhcv-index-files]').addEventListener('change', (event) => void loadAuditIndexFiles(root, event.currentTarget));
+  root.querySelector('[data-cfhcv-index-build]').addEventListener('click', () => void buildAuditIndexFromUi(root));
   state.mounted = true;
 }
 
@@ -412,6 +533,26 @@ async function loadAuditZip(root, input) {
   }
 }
 
+async function loadAuditIndexFiles(root, input) {
+  const files = [...(input.files || [])];
+  state.auditIndexZipInputs = [];
+  clearResult(root);
+  if (!files.length) return syncControls(root);
+  state.busy = true;
+  syncControls(root);
+  setStatus(root, `Reading ${files.length} audit package ZIP${files.length === 1 ? '' : 's'} locally for index creation…`, 'loading');
+  try {
+    state.auditIndexZipInputs = await Promise.all(files.map(async (file) => new Uint8Array(await file.arrayBuffer())));
+    setStatus(root, `${files.length} local audit package ZIP${files.length === 1 ? '' : 's'} loaded. Each package will be independently replay-verified before index creation.`, 'ok');
+  } catch (error) {
+    state.auditIndexZipInputs = [];
+    setStatus(root, `Audit package index input blocked: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
+  } finally {
+    state.busy = false;
+    syncControls(root);
+  }
+}
+
 async function verifyFromUi(root) {
   if (!state.ledger || !state.receipt || state.busy) return;
   state.busy = true;
@@ -471,6 +612,26 @@ async function verifyAuditZipFromUi(root) {
   }
 }
 
+async function buildAuditIndexFromUi(root) {
+  if (!state.auditIndexZipInputs.length || state.busy) return;
+  state.busy = true;
+  clearResult(root);
+  syncControls(root);
+  setStatus(root, 'Independently verifying selected audit ZIPs and building deterministic local package index…', 'loading');
+  try {
+    const zipBuilder = window.CloudflareCsvAnalysisExport?.buildStoredZip;
+    const index = await buildHistoricalAuditPackageIndex(state.auditIndexZipInputs, zipBuilder);
+    downloadText(`csv-history-audit-package-index-v1-${index.indexFingerprint.slice(0, 12)}.json`, serializeHistoricalAuditPackageIndex(index));
+    renderAuditIndex(root, index);
+    setStatus(root, `Deterministic package index ${index.indexFingerprint.slice(0, 12)} downloaded locally for ${index.packageCount} independently verified package${index.packageCount === 1 ? '' : 's'}.`, 'ok');
+  } catch (error) {
+    setStatus(root, `Audit package index blocked: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
+  } finally {
+    state.busy = false;
+    syncControls(root);
+  }
+}
+
 function renderVerification(root, verification) {
   const result = root.querySelector('[data-cfhcv-result]');
   result.innerHTML = `
@@ -501,13 +662,31 @@ function renderAuditZipVerification(root, verification) {
   result.hidden = false;
 }
 
+function renderAuditIndex(root, index) {
+  const result = root.querySelector('[data-cfhcv-result]');
+  const allowedCount = index.packages.filter((item) => item.comparisonAllowed).length;
+  const blockedCount = index.packageCount - allowedCount;
+  result.innerHTML = `
+    <div class="cfhcv-grid">
+      ${card('Package index', '<b>deterministic local catalog</b>')}
+      ${card('Index fingerprint', `<code>${esc(index.indexFingerprint)}</code>`)}
+      ${card('Verified packages', `<b>${esc(index.packageCount)}</b>`)}
+      ${card('Comparison states', `<b>${esc(allowedCount)} allowed</b><br>${esc(blockedCount)} blocked/raw-only`)}
+    </div>
+    <div class="cfhcv-guard">Package order: fingerprint ascending · source filenames excluded · selection order ignored · cross-package aggregation: none · same-month aggregation: none.</div>
+    <details><summary>Index authority boundary</summary><pre>${esc(JSON.stringify(index.authority, null, 2))}</pre></details>`;
+  result.hidden = false;
+}
+
 function syncControls(root) {
   root.querySelector('[data-cfhcv-ledger]').disabled = state.busy;
   root.querySelector('[data-cfhcv-receipt]').disabled = state.busy;
   root.querySelector('[data-cfhcv-package-file]').disabled = state.busy;
+  root.querySelector('[data-cfhcv-index-files]').disabled = state.busy;
   root.querySelector('[data-cfhcv-verify]').disabled = state.busy || !state.ledger || !state.receipt;
   root.querySelector('[data-cfhcv-package]').disabled = state.busy || !state.verification;
   root.querySelector('[data-cfhcv-package-verify]').disabled = state.busy || !state.auditZipBytes;
+  root.querySelector('[data-cfhcv-index-build]').disabled = state.busy || !state.auditIndexZipInputs.length;
 }
 
 function clearResult(root) {
@@ -599,6 +778,13 @@ function parseDeterministicStoredZipEntries(bytes) {
   return entries;
 }
 
+async function sha256Bytes(bytesInput) {
+  if (!globalThis.crypto?.subtle) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_CRYPTO_UNAVAILABLE');
+  const bytes = normalizeZipBytes(bytesInput);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function sameBytes(leftInput, rightInput) {
   const left = normalizeZipBytes(leftInput);
   const right = normalizeZipBytes(rightInput);
@@ -617,14 +803,24 @@ function assertSha256(value, code) {
   if (!/^[a-f0-9]{64}$/.test(String(value || '').toLowerCase())) throw verificationError(code);
 }
 
+function assertAuditEvidenceKey(key, ledgerFingerprint, code) {
+  if (!key || typeof key !== 'object' || Array.isArray(key)) throw verificationError(code);
+  assertSha256(key.ledgerFingerprint, code);
+  assertSha256(key.sourceInputSetFingerprint, code);
+  if (key.ledgerFingerprint !== ledgerFingerprint || !/^\d{4}-\d{2}$/.test(String(key.month || ''))) throw verificationError(code);
+}
+
 function sameJson(a, b) {
   return canonicalJson(a) === canonicalJson(b);
 }
 
-function assertAuditBoundary(manifest) {
-  const authority = manifest?.authority;
+function assertNoAuthority(authority, code) {
   const flags = [authority?.authoritative, authority?.canonicalAmazonIdentityResolved, authority?.governancePersistenceAllowed, authority?.executionAuthorized, authority?.amazonMutationAuthorized];
-  if (flags.some((value) => value !== false)) throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_AUTHORITY_ESCALATION_BLOCKED');
+  if (flags.some((value) => value !== false)) throw verificationError(code);
+}
+
+function assertAuditBoundary(manifest) {
+  assertNoAuthority(manifest?.authority, 'CSV_HISTORY_AUDIT_PACKAGE_AUTHORITY_ESCALATION_BLOCKED');
   if (manifest?.packagePurpose !== 'portable_immutable_local_historical_audit_material') throw verificationError('CSV_HISTORY_AUDIT_PACKAGE_PURPOSE_INVALID');
 }
 
@@ -653,6 +849,18 @@ function verificationError(code) {
 
 function downloadBytes(name, bytes) {
   const blob = new Blob([bytes], { type: 'application/zip' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(name, text) {
+  const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
