@@ -21,6 +21,7 @@ import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
 import { handleCsvImportsApiRoute } from './csv-imports-api.js';
 import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
+import { handleCsvProductizationApiRoute } from './csv-productization-api.js';
 import { handleSearchTermIntelligenceApiRoute } from './search-term-intelligence-api.js';
 import { handleOptimizationActionsApiRoute } from './optimization-actions-api.js';
 import { enrichRecommendationGovernanceResponse } from './recommendation-governance-layer.js';
@@ -50,6 +51,7 @@ const ACCESS_GOVERNANCE_ROUTE_PATTERNS = [
 const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|keywords|targets|search-terms|search-terms-daily)$/;
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const CSV_IMPORTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/imports(?:\/[^/]+(?:\/errors)?)?$/;
+const CSV_ADVISORY_REVIEWS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/advisory-reviews(?:\/[^/]+)?$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
 const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert|execution-permits))?)?$/;
@@ -76,6 +78,7 @@ export default {
       || STORE_ROUTE_PATTERN.test(url.pathname)
       || SYNC_ROUTE_PATTERN.test(url.pathname)
       || CSV_IMPORTS_ROUTE_PATTERN.test(url.pathname)
+      || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname)
       || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)
       || OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname)
@@ -99,6 +102,12 @@ export default {
     await touchLastSeen(env.CONTROL_DB, actor.user_id);
 
     try {
+      if (CSV_IMPORTS_ROUTE_PATTERN.test(url.pathname)
+          || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(url.pathname)
+          || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)) {
+        const productizationResponse = await handleCsvProductizationApiRoute({ request, env, actor, url, ctx });
+        if (productizationResponse) return productizationResponse;
+      }
       if (SYNC_ROUTE_PATTERN.test(url.pathname)) {
         const response = await handleSyncApiRoute({ request, env, actor, url });
         if (response) return response;
