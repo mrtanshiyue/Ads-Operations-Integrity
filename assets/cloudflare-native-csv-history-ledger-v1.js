@@ -8,8 +8,17 @@ import {
   validateCsvHistoryLedger,
 } from './csv-analysis-engine/csv-history-ledger.js';
 
-export const CSV_HISTORY_LEDGER_UI_VERSION = '1.1.0';
+export const CSV_HISTORY_LEDGER_UI_VERSION = '1.2.0';
 export const CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION = 'csv-history-monthly-workspace-v1';
+export const CSV_HISTORY_TREND_SCHEMA_VERSION = 'csv-history-trend-v1';
+export const CSV_HISTORY_TREND_METRICS = Object.freeze([
+  Object.freeze({ key: 'spendMicros', label: 'Spend', unit: 'micros' }),
+  Object.freeze({ key: 'salesMicros', label: 'Sales', unit: 'micros' }),
+  Object.freeze({ key: 'orders', label: 'Orders', unit: 'count' }),
+  Object.freeze({ key: 'acos', label: 'ACoS', unit: 'ratio' }),
+  Object.freeze({ key: 'roas', label: 'ROAS', unit: 'ratio' }),
+  Object.freeze({ key: 'adContributionMicros', label: 'Ad Contribution', unit: 'micros' }),
+]);
 
 const state = {
   mounted: false,
@@ -86,12 +95,69 @@ export function buildHistoricalMonthlyWorkspace(ledger) {
   });
 }
 
+export function buildHistoricalTrend(ledger, metricKey = 'adContributionMicros') {
+  const metric = CSV_HISTORY_TREND_METRICS.find((item) => item.key === metricKey);
+  if (!metric) throw trendError('CSV_HISTORY_TREND_METRIC_UNSUPPORTED');
+  const workspace = buildHistoricalMonthlyWorkspace(ledger);
+  const points = workspace.rows.map((row, evidenceIndex) => {
+    const rawValue = row[metric.key];
+    const value = rawValue == null ? null : Number(rawValue);
+    if (value != null && !Number.isFinite(value)) throw trendError('CSV_HISTORY_TREND_VALUE_INVALID');
+    return Object.freeze({
+      evidenceIndex,
+      month: row.month,
+      value,
+      missingValue: value == null,
+      metricKey: metric.key,
+      metricLabel: metric.label,
+      metricUnit: metric.unit,
+      coverageRatio: row.coverageRatio,
+      coverageComplete: row.coverageComplete,
+      qualityState: row.qualityState,
+      decisionState: row.decisionState,
+      sourceInputSetFingerprint: row.sourceInputSetFingerprint,
+      ledgerFingerprint: row.ledgerFingerprint,
+      sameMonthEvidenceCount: row.sameMonthEvidenceCount,
+      sameMonthMultipleSnapshots: row.sameMonthMultipleSnapshots,
+      crossSnapshotAggregationApplied: false,
+      canonicalAmazonIdentityResolved: false,
+      governancePersistenceAllowed: false,
+      executionAuthorized: false,
+      amazonMutationAuthorized: false,
+    });
+  });
+  return Object.freeze({
+    schemaVersion: CSV_HISTORY_TREND_SCHEMA_VERSION,
+    ledgerFingerprint: workspace.ledgerFingerprint,
+    metricKey: metric.key,
+    metricLabel: metric.label,
+    metricUnit: metric.unit,
+    pointCount: points.length,
+    missingValueCount: points.filter((point) => point.missingValue).length,
+    partialCoveragePointCount: points.filter((point) => !point.coverageComplete).length,
+    blockedPointCount: points.filter((point) => point.decisionState === 'blocked_overlap_or_invalid_window').length,
+    multiEvidencePointCount: points.filter((point) => point.sameMonthMultipleSnapshots).length,
+    crossSnapshotAggregationApplied: false,
+    normalizationApplied: false,
+    partialPeriodsHidden: false,
+    missingValuesHidden: false,
+    coverageBound: true,
+    qualityStateBound: true,
+    sourceFingerprintBound: true,
+    profitabilityBasis: metric.key === 'adContributionMicros' ? 'sales_minus_ad_spend_only_not_net_profit' : null,
+    authority: workspace.authority,
+    points: Object.freeze(points),
+  });
+}
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHistoryLedger', {
     value: Object.freeze({
       version: CSV_HISTORY_LEDGER_UI_VERSION,
       schemaVersion: CSV_HISTORY_LEDGER_SCHEMA_VERSION,
       monthlyWorkspaceSchemaVersion: CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION,
+      trendSchemaVersion: CSV_HISTORY_TREND_SCHEMA_VERSION,
+      trendMetrics: CSV_HISTORY_TREND_METRICS,
       authority: 'local_file_history_ledger_only',
       buildCsvHistorySnapshot,
       createCsvHistoryLedger,
@@ -100,6 +166,7 @@ if (typeof window !== 'undefined') {
       serializeCsvHistoryLedger,
       validateCsvHistoryLedger,
       buildHistoricalMonthlyWorkspace,
+      buildHistoricalTrend,
     }),
     writable: false,
     configurable: false,
@@ -256,8 +323,10 @@ function renderLedger(root, ledger) {
       <tbody>${ledger.snapshots.map(snapshotRow).join('')}</tbody>
     </table></div>
     ${renderMonthlyWorkspace(monthlyWorkspace)}
+    ${renderHistoricalTrendSection(ledger)}
     <details><summary>Historical overlap / gap evidence</summary><pre>${esc(JSON.stringify(windowEvidence, null, 2))}</pre></details>
     <details><summary>Ledger authority boundary</summary><pre>${esc(JSON.stringify(ledger.authority, null, 2))}</pre></details>`;
+  bindTrendControls(body, ledger);
   body.hidden = false;
   syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success');
 }
@@ -275,6 +344,65 @@ function renderMonthlyWorkspace(workspace) {
         <tbody>${workspace.rows.length ? workspace.rows.map(monthlyRow).join('') : '<tr><td colspan="10">No monthly evidence in this ledger.</td></tr>'}</tbody>
       </table></div>
     </section>`;
+}
+
+function renderHistoricalTrendSection(ledger) {
+  const trend = buildHistoricalTrend(ledger, 'adContributionMicros');
+  return `
+    <section class="cfhl-trend" data-cfhl-history-trend="${CSV_HISTORY_TREND_SCHEMA_VERSION}">
+      <div class="cfhl-monthly-head">
+        <div><b>Historical Trend Evidence</b><small>Every plotted point remains bound to coverage, quality state, and source input fingerprint. Partial, blocked, duplicate-month, and missing-value evidence is never hidden or merged.</small></div>
+        <label>Metric <select data-cfhl-trend-metric>${CSV_HISTORY_TREND_METRICS.map((item) => `<option value="${esc(item.key)}"${item.key === trend.metricKey ? ' selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>
+      </div>
+      <div class="cfhl-guard">Ad Contribution uses Sales - Ad Spend only and is not Net Profit. Trend normalization: none. Cross-snapshot aggregation: none.</div>
+      <div data-cfhl-trend-chart>${renderTrendEvidence(trend)}</div>
+    </section>`;
+}
+
+function bindTrendControls(body, ledger) {
+  const select = body.querySelector('[data-cfhl-trend-metric]');
+  const target = body.querySelector('[data-cfhl-trend-chart]');
+  if (!select || !target) return;
+  select.addEventListener('change', () => {
+    target.innerHTML = renderTrendEvidence(buildHistoricalTrend(ledger, select.value));
+  });
+}
+
+function renderTrendEvidence(trend) {
+  const visiblePoints = trend.points.filter((point) => !point.missingValue);
+  const values = visiblePoints.map((point) => point.value);
+  const minValue = values.length ? Math.min(...values) : 0;
+  const maxValue = values.length ? Math.max(...values) : 0;
+  const width = 760;
+  const height = 190;
+  const padX = 36;
+  const padTop = 18;
+  const padBottom = 38;
+  const drawableHeight = height - padTop - padBottom;
+  const span = maxValue - minValue || 1;
+  const xAt = (index) => trend.points.length <= 1 ? width / 2 : padX + index * ((width - padX * 2) / (trend.points.length - 1));
+  const yAt = (value) => padTop + (maxValue - value) * (drawableHeight / span);
+  const segments = [];
+  for (let index = 1; index < trend.points.length; index += 1) {
+    const left = trend.points[index - 1];
+    const right = trend.points[index];
+    if (left.missingValue || right.missingValue) continue;
+    segments.push(`<line x1="${xAt(index - 1).toFixed(2)}" y1="${yAt(left.value).toFixed(2)}" x2="${xAt(index).toFixed(2)}" y2="${yAt(right.value).toFixed(2)}" class="cfhl-trend-line"/>`);
+  }
+  const marks = trend.points.map((point, index) => {
+    const x = xAt(index);
+    const title = `${point.month} · ${formatTrendValue(point.value, trend.metricUnit)} · coverage ${point.coverageRatio == null ? 'unknown' : percent(point.coverageRatio)} · ${point.qualityState} · ${point.decisionState} · ${point.sourceInputSetFingerprint}`;
+    if (point.missingValue) {
+      return `<g><text x="${x.toFixed(2)}" y="${(padTop + drawableHeight / 2).toFixed(2)}" class="cfhl-trend-missing">×<title>${esc(title)}</title></text><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
+    }
+    const y = yAt(point.value);
+    const status = point.decisionState === 'blocked_overlap_or_invalid_window' ? ' blocked' : (!point.coverageComplete ? ' partial' : '');
+    return `<g><circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5" class="cfhl-trend-point${status}"><title>${esc(title)}</title></circle><text x="${x.toFixed(2)}" y="${height - 10}" class="cfhl-trend-label">${esc(point.month)}</text></g>`;
+  }).join('');
+  const chart = trend.points.length
+    ? `<svg class="cfhl-trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(trend.metricLabel)} historical evidence trend"><line x1="${padX}" y1="${padTop + drawableHeight}" x2="${width - padX}" y2="${padTop + drawableHeight}" class="cfhl-trend-axis"/>${segments.join('')}${marks}</svg>`
+    : '<div class="cfhl-empty">No monthly evidence points are available.</div>';
+  return `${chart}<div class="cfhl-trend-meta"><b>${esc(trend.metricLabel)}</b> · points ${trend.pointCount} · partial ${trend.partialCoveragePointCount} · blocked ${trend.blockedPointCount} · missing ${trend.missingValueCount} · multi-evidence ${trend.multiEvidencePointCount}. Every point remains in the evidence sequence.</div>`;
 }
 
 function snapshotRow(item) {
@@ -326,7 +454,9 @@ function finiteOrNull(value) { if (value == null) return null; const number = Nu
 function money(micros, currency) { const value = Number(micros || 0) / 1_000_000; try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD', maximumFractionDigits: 2 }).format(value); } catch { return value.toFixed(2); } }
 function percent(value) { return value == null || !Number.isFinite(Number(value)) ? '—' : `${(Number(value) * 100).toFixed(1)}%`; }
 function decimal(value) { return value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toFixed(2); }
+function formatTrendValue(value, unit) { if (value == null) return 'missing'; if (unit === 'micros') return money(value, 'USD'); if (unit === 'ratio') return decimal(value); return String(value); }
 function monthlyWorkspaceError(code) { const error = new Error(code); error.name = 'CsvHistoryMonthlyWorkspaceError'; error.code = code; return error; }
+function trendError(code) { const error = new Error(code); error.name = 'CsvHistoryTrendError'; error.code = code; return error; }
 function card(label, value) { return `<div class="cfhl-card"><small>${esc(label)}</small><div>${value}</div></div>`; }
 function setBusy(root, busy) { state.busy = busy; syncButtons(root, document.querySelector('[data-csv-joint-status]')?.dataset.kind === 'success'); }
 function syncButtons(root, jointReady) {
@@ -342,6 +472,6 @@ function installStyles() {
   if (document.getElementById('cfhl-style-v1')) return;
   const style = document.createElement('style');
   style.id = 'cfhl-style-v1';
-  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}';
+  style.textContent = '.cfhl{margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0}.cfhl-head,.cfhl-monthly-head{display:flex;justify-content:space-between;gap:12px}.cfhl-head small,.cfhl-monthly-head small{display:block;color:#64748b;max-width:780px}.cfhl-head>span,.cfhl-monthly-head>span{font-size:11px;font-weight:800}.cfhl-guard{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc;color:#475569}.cfhl-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:9px}.cfhl-actions label,.cfhl-actions button,.cfhl-trend select{border:1px solid #cbd5e1;border-radius:7px;padding:7px 9px;background:#fff;font:inherit;font-weight:700}.cfhl-actions input{max-width:220px}.cfhl-actions button{cursor:pointer}.cfhl-actions button:disabled{opacity:.45;cursor:not-allowed}.cfhl-status{margin-top:8px;padding:8px;border-radius:7px;background:#f8fafc}.cfhl-status[data-kind="bad"]{color:#b91c1c}.cfhl-status[data-kind="ok"]{color:#047857}.cfhl-body{margin-top:10px}.cfhl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.cfhl-card{padding:9px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;overflow-wrap:anywhere}.cfhl-card small{display:block;color:#64748b}.cfhl-table-wrap{overflow:auto;margin-top:9px}.cfhl table{width:100%;border-collapse:collapse;font-size:12px}.cfhl th,.cfhl td{text-align:left;vertical-align:top;padding:7px;border-bottom:1px solid #e2e8f0}.cfhl code{font-size:11px;word-break:break-all}.cfhl details{margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;padding:8px}.cfhl summary{cursor:pointer;font-weight:700}.cfhl pre{max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:8px;border-radius:6px}.cfhl-monthly,.cfhl-trend{margin-top:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}.cfhl-trend-svg{width:100%;min-width:520px;display:block;margin-top:8px;overflow:visible}.cfhl-trend-axis{stroke:#cbd5e1;stroke-width:1}.cfhl-trend-line{stroke:#475569;stroke-width:2}.cfhl-trend-point{fill:#0f172a}.cfhl-trend-point.partial{fill:#b45309}.cfhl-trend-point.blocked{fill:#b91c1c}.cfhl-trend-label{font-size:10px;text-anchor:middle;fill:#64748b}.cfhl-trend-missing{font-size:18px;text-anchor:middle;fill:#64748b}.cfhl-trend-meta{font-size:12px;color:#475569;margin-top:6px}.cfhl-empty{padding:12px;color:#64748b}';
   document.head.appendChild(style);
 }
