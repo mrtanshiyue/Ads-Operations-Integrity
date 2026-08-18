@@ -83,8 +83,9 @@ assert.doesNotMatch(source, /advertising-api\.amazon\.com/);
 assert.doesNotMatch(source, /\/apply['"`]/);
 assert.doesNotMatch(source, /\/revert['"`]/);
 
-const tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js"></script>';
+const tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js?v=1.2.1"></script>';
 assert.equal(distIndex.split(tag).length - 1, 1);
+assert.doesNotMatch(distIndex, /<script src="assets\/cloudflare-native-phase9-productization-v1\.js"><\/script>/);
 const decisionTag = '<script src="assets/cloudflare-native-decision-intelligence-v1.js"></script>';
 assert.ok(distIndex.indexOf(decisionTag) >= 0);
 assert.ok(distIndex.indexOf(decisionTag) < distIndex.indexOf(tag));
@@ -99,6 +100,7 @@ console.log(JSON.stringify({
   suppressionReasonVisible: true,
   loadedResultFiltering: true,
   mutationObserverFilterRefreshIdempotent: true,
+  cacheBustedAsset: true,
   requestMode: 'read-only',
   execution: 'disabled',
 }, null, 2));
