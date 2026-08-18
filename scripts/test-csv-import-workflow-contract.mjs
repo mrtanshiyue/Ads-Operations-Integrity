@@ -18,10 +18,14 @@ assert.match(api, /createD1CsvSearchTermImportRepository/, 'Canonical CSV D1 rep
 assert.match(api, /ingestSearchTermCsvOnce/, 'Canonical CSV ingestion orchestrator missing');
 assert.match(api, /request\.text\(\)/, 'Upload must consume raw CSV instead of JSON wrapping');
 assert.match(api, /MAX_CSV_BYTES = 10 \* 1024 \* 1024/, '10 MB boundary missing');
+assert.match(api, /resource === 'search-terms'/, 'Search Term upload resource missing');
 assert.match(api, /csv_import\.published/, 'Published import audit event missing');
 assert.match(api, /csv_import\.duplicate/, 'Duplicate import audit event missing');
 assert.match(api, /csv_import\.rejected/, 'Rejected import audit event missing');
-assert.match(api, /\/imports\/search-terms/, 'Search Term upload resource missing');
+assert.match(api, /CSV_IMPORT_PARSE_FAILED/, 'Parser failures must be classified explicitly');
+assert.match(api, /return json\(request, \{ error: 'csv_import_failed' \}, 500\)/, 'Internal import failures must fail closed as 500');
+assert.match(api, /safeParserErrorCode/, 'Parser error responses must be allowlisted');
+assert.doesNotMatch(api, /sourceCode\.startsWith\('CSV_'\)/, 'Internal CSV-prefixed repository errors must not be downgraded to 400');
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV import API must not open Amazon execution');
 
 console.log(JSON.stringify({ ok: true, contract: 'csv-import-workflow-v1' }));
