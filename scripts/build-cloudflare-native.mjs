@@ -18,7 +18,7 @@ const csvIntelligenceAssetPath = path.join(repoRoot, 'dist-cloudflare-native', '
 const csvProductUiAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-product-ui-v2.js');
 const phase9AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase9-productization-v1.js');
 const phase11AssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-phase11-execution-readiness-v1.js');
-const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.3';
+const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.4';
 const PHASE9_ASSET_VERSION = '1.2.1';
 const operatorTag = '<script src="assets/cloudflare-native-operator-workspace-v1.js"></script>';
 const importsTag = '<script src="assets/cloudflare-native-imports-console-v1.js"></script>';
