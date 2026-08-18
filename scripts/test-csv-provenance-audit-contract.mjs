@@ -25,9 +25,15 @@ assert.match(uiSource, /Overlap evidence/);
 assert.match(uiSource, /Gap evidence/);
 assert.match(uiSource, /Merged coverage/);
 assert.match(uiSource, /Full local audit JSON/);
+assert.match(uiSource, /receipt\/hash set: <b>verified<\/b>/i);
 assert.match(uiSource, /local_operator_audit_only/);
 assert.match(uiSource, /CSV_PROVENANCE_AUDIT_AUTHORITY_ESCALATION_BLOCKED/);
 assert.match(uiSource, /CSV_PROVENANCE_AUDIT_CONTENT_HASH_INVALID/);
+assert.match(uiSource, /CSV_PROVENANCE_AUDIT_SOURCE_KIND_INVALID/);
+assert.match(uiSource, /CSV_PROVENANCE_AUDIT_IMPORTS_REQUIRED/);
+assert.match(uiSource, /CSV_PROVENANCE_AUDIT_SOURCE_RECEIPT_MISMATCH/);
+assert.match(uiSource, /CSV_PROVENANCE_AUDIT_BATCH_COUNT_MISMATCH/);
+assert.match(uiSource, /CSV_PROVENANCE_AUDIT_DUPLICATE_HASH_EVIDENCE/);
 
 for (const pattern of [
   /\bfetch\s*\(/,
@@ -62,6 +68,9 @@ assert.equal(audit.authority.executionAuthorized, false);
 assert.equal(audit.authority.amazonMutationAuthorized, false);
 assert.equal(audit.source.inputSetFingerprint, result.source.inputSetFingerprint);
 assert.deepEqual(audit.source.contentSha256s, result.source.contentSha256s);
+assert.equal(audit.source.batchCount, 2);
+assert.equal(audit.source.receiptCount, 2);
+assert.equal(audit.source.receiptHashSetVerified, true);
 assert.equal(audit.receipts.length, 2);
 assert.equal(audit.receipts[0].sourceFileName, 'week-1.csv');
 assert.equal(audit.receipts[0].contentSha256, 'b'.repeat(64));
@@ -83,12 +92,45 @@ assert.throws(
   (error) => error?.code === 'CSV_PROVENANCE_AUDIT_CONTENT_HASH_INVALID',
   'Audit builder must reject invalid source receipt hashes',
 );
+assert.throws(
+  () => mod.buildCsvProvenanceAudit({ ...result, source: { ...result.source, kind: 'amazon_api' } }),
+  (error) => error?.code === 'CSV_PROVENANCE_AUDIT_SOURCE_KIND_INVALID',
+  'Audit builder must reject non-CSV source kinds',
+);
+assert.throws(
+  () => mod.buildCsvProvenanceAudit({ ...result, imports: [] }),
+  (error) => error?.code === 'CSV_PROVENANCE_AUDIT_IMPORTS_REQUIRED',
+  'Audit builder must require at least one source receipt',
+);
+assert.throws(
+  () => mod.buildCsvProvenanceAudit({ ...result, source: { ...result.source, contentSha256s: ['d'.repeat(64), result.source.contentSha256s[1]] } }),
+  (error) => error?.code === 'CSV_PROVENANCE_AUDIT_SOURCE_RECEIPT_MISMATCH',
+  'Audit builder must reject source/receipt hash drift',
+);
+assert.throws(
+  () => mod.buildCsvProvenanceAudit({ ...result, source: { ...result.source, batchCount: 3 } }),
+  (error) => error?.code === 'CSV_PROVENANCE_AUDIT_BATCH_COUNT_MISMATCH',
+  'Audit builder must reject batch-count drift',
+);
+assert.throws(
+  () => mod.buildCsvProvenanceAudit({
+    ...result,
+    source: { ...result.source, contentSha256s: [result.source.contentSha256s[0], result.source.contentSha256s[0]] },
+    imports: [result.imports[0], { ...result.imports[1], contentSha256: result.imports[0].contentSha256 }],
+  }),
+  (error) => error?.code === 'CSV_PROVENANCE_AUDIT_DUPLICATE_HASH_EVIDENCE',
+  'Audit builder must reject duplicate hash evidence',
+);
 
 console.log(JSON.stringify({
   ok: true,
   contract: 'csv-provenance-audit-v1',
   sourceReceipts: true,
   fingerprintEvidence: true,
+  receiptHashSetVerified: true,
+  sourceReceiptMismatchBlocked: true,
+  batchCountMismatchBlocked: true,
+  duplicateHashEvidenceBlocked: true,
   overlapAndGapEvidence: true,
   observedIdentityNonCanonical: true,
   authorityEscalationBlocked: true,
