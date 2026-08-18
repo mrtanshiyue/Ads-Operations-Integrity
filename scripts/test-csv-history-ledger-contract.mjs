@@ -12,7 +12,7 @@ const engineSource = await readFile(path.join(distRoot, engineRelative), 'utf8')
 const uiSource = await readFile(path.join(distRoot, uiRelative), 'utf8');
 const indexSource = await readFile(path.join(distRoot, 'index.html'), 'utf8');
 const monthlyTag = '<script type="module" src="assets/cloudflare-native-csv-monthly-workspace-v1.js?v=1.0.0"></script>';
-const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.3.0"></script>';
+const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.4.0"></script>';
 const provenanceTag = '<script type="module" src="assets/cloudflare-native-csv-provenance-audit-v1.js?v=1.0.0"></script>';
 
 assert.equal(indexSource.split(historyTag).length - 1, 1, 'History ledger UI must be injected exactly once');
@@ -69,7 +69,7 @@ const mod = await import(`${pathToFileURL(path.join(distRoot, engineRelative)).h
 const uiMod = await import(`${pathToFileURL(path.join(distRoot, uiRelative)).href}?contract=${Date.now()}`);
 assert.equal(mod.CSV_HISTORY_LEDGER_SCHEMA_VERSION, 'csv-history-ledger-v1');
 assert.equal(mod.CSV_HISTORY_SNAPSHOT_SCHEMA_VERSION, 'csv-history-snapshot-v1');
-assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.3.0');
+assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.4.0');
 assert.equal(uiMod.CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION, 'csv-history-monthly-workspace-v1');
 assert.equal(uiMod.CSV_HISTORY_TREND_SCHEMA_VERSION, 'csv-history-trend-v1');
 assert.equal(uiMod.CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION, 'csv-history-evidence-drilldown-v1');
