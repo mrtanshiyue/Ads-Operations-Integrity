@@ -12,7 +12,7 @@ const engineSource = await readFile(path.join(distRoot, engineRelative), 'utf8')
 const uiSource = await readFile(path.join(distRoot, uiRelative), 'utf8');
 const indexSource = await readFile(path.join(distRoot, 'index.html'), 'utf8');
 const monthlyTag = '<script type="module" src="assets/cloudflare-native-csv-monthly-workspace-v1.js?v=1.0.0"></script>';
-const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.2.0"></script>';
+const historyTag = '<script type="module" src="assets/cloudflare-native-csv-history-ledger-v1.js?v=1.3.0"></script>';
 const provenanceTag = '<script type="module" src="assets/cloudflare-native-csv-provenance-audit-v1.js?v=1.0.0"></script>';
 
 assert.equal(indexSource.split(historyTag).length - 1, 1, 'History ledger UI must be injected exactly once');
@@ -28,6 +28,10 @@ assert.match(uiSource, /Ad Contribution = Sales - Ad Spend only; it is not Net P
 assert.match(uiSource, /Historical Trend Evidence/);
 assert.match(uiSource, /Partial, blocked, duplicate-month, and missing-value evidence is never hidden or merged/);
 assert.match(uiSource, /Trend normalization: none\. Cross-snapshot aggregation: none/);
+assert.match(uiSource, /Selected Historical Evidence/);
+assert.match(uiSource, /ledger fingerprint \+ input-set fingerprint \+ month/i);
+assert.match(uiSource, /navigation into immutable evidence/i);
+assert.match(uiSource, /data-cfhl-evidence-nav/);
 assert.match(uiSource, /crossSnapshotAggregationApplied: false/);
 assert.match(uiSource, /partialPeriodsHidden: false/);
 assert.match(uiSource, /missingValuesHidden: false/);
@@ -65,11 +69,13 @@ const mod = await import(`${pathToFileURL(path.join(distRoot, engineRelative)).h
 const uiMod = await import(`${pathToFileURL(path.join(distRoot, uiRelative)).href}?contract=${Date.now()}`);
 assert.equal(mod.CSV_HISTORY_LEDGER_SCHEMA_VERSION, 'csv-history-ledger-v1');
 assert.equal(mod.CSV_HISTORY_SNAPSHOT_SCHEMA_VERSION, 'csv-history-snapshot-v1');
-assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.2.0');
+assert.equal(uiMod.CSV_HISTORY_LEDGER_UI_VERSION, '1.3.0');
 assert.equal(uiMod.CSV_HISTORY_MONTHLY_WORKSPACE_SCHEMA_VERSION, 'csv-history-monthly-workspace-v1');
 assert.equal(uiMod.CSV_HISTORY_TREND_SCHEMA_VERSION, 'csv-history-trend-v1');
+assert.equal(uiMod.CSV_HISTORY_EVIDENCE_DRILLDOWN_SCHEMA_VERSION, 'csv-history-evidence-drilldown-v1');
 assert.equal(typeof uiMod.buildHistoricalMonthlyWorkspace, 'function');
 assert.equal(typeof uiMod.buildHistoricalTrend, 'function');
+assert.equal(typeof uiMod.buildHistoricalEvidenceDrilldown, 'function');
 assert.deepEqual(uiMod.CSV_HISTORY_TREND_METRICS.map((item) => item.key), [
   'spendMicros', 'salesMicros', 'orders', 'acos', 'roas', 'adContributionMicros',
 ]);
@@ -167,6 +173,67 @@ assert.throws(
   'Net Profit is not a supported historical trend metric',
 );
 
+const firstMonthlyRow = monthlyWorkspace.rows[0];
+const monthlyEvidence = await uiMod.buildHistoricalEvidenceDrilldown(two, {
+  ledgerFingerprint: firstMonthlyRow.ledgerFingerprint,
+  sourceInputSetFingerprint: firstMonthlyRow.sourceInputSetFingerprint,
+  month: firstMonthlyRow.month,
+});
+assert.equal(monthlyEvidence.schemaVersion, 'csv-history-evidence-drilldown-v1');
+assert.equal(monthlyEvidence.navigationOnly, true);
+assert.equal(monthlyEvidence.analyticalAuthorityCreated, false);
+assert.deepEqual(monthlyEvidence.evidenceKey, {
+  ledgerFingerprint: two.ledgerFingerprint,
+  sourceInputSetFingerprint: firstMonthlyRow.sourceInputSetFingerprint,
+  month: '2026-08',
+});
+assert.equal(monthlyEvidence.selectedMonth, '2026-08');
+assert.equal(monthlyEvidence.metric.key, 'adContributionMicros');
+assert.equal(monthlyEvidence.metric.value, 6000000);
+assert.equal(monthlyEvidence.coverage.coverageComplete, false);
+assert.equal(monthlyEvidence.decision.qualityState, 'single_window');
+assert.equal(monthlyEvidence.decision.decisionState, 'partial_coverage_review');
+assert.equal(monthlyEvidence.decision.safeForNaiveAggregation, true);
+assert.equal(monthlyEvidence.decision.contiguousCoverage, true);
+assert.equal(monthlyEvidence.source.inputSetFingerprint, firstMonthlyRow.sourceInputSetFingerprint);
+assert.deepEqual(monthlyEvidence.source.contentSha256s, ['b'.repeat(64)]);
+assert.deepEqual(monthlyEvidence.source.sourceFileNames, ['2026-08.csv']);
+assert.equal(monthlyEvidence.source.sourceReceiptCount, 1);
+assert.equal(monthlyEvidence.source.rowCount, 10);
+assert.equal(monthlyEvidence.source.acceptedRows, 10);
+assert.equal(monthlyEvidence.source.rejectedRows, 0);
+assert.equal(monthlyEvidence.source.sourceReceipts[0].contentSha256, 'b'.repeat(64));
+assert.equal(monthlyEvidence.observedIdentity.summary.identityCount, 3);
+assert.equal(monthlyEvidence.observedIdentity.summary.ambiguousIdentityCount, 0);
+assert.equal(monthlyEvidence.observedIdentity.canonicalAmazonIdentityResolved, false);
+assert.equal(monthlyEvidence.hierarchy.summary.campaignCount, 1);
+assert.equal(monthlyEvidence.hierarchy.summary.adGroupCount, 1);
+assert.equal(monthlyEvidence.hierarchy.summary.targetingCount, 2);
+assert.equal(monthlyEvidence.period.monthlySnapshot.month, '2026-08');
+assert.equal(monthlyEvidence.profitabilityBasis, 'sales_minus_ad_spend_only_not_net_profit');
+assert.equal(monthlyEvidence.crossSnapshotAggregationApplied, false);
+assert.equal(monthlyEvidence.normalizationApplied, false);
+assert.equal(monthlyEvidence.authority.authoritative, false);
+assert.equal(monthlyEvidence.authority.canonicalAmazonIdentityResolved, false);
+assert.equal(monthlyEvidence.authority.governancePersistenceAllowed, false);
+assert.equal(monthlyEvidence.authority.executionAuthorized, false);
+assert.equal(monthlyEvidence.authority.amazonMutationAuthorized, false);
+assert.equal(Object.isFrozen(monthlyEvidence), true);
+
+const salesTrend = uiMod.buildHistoricalTrend(two, 'salesMicros');
+const firstTrendPoint = salesTrend.points[0];
+const trendEvidence = await uiMod.buildHistoricalEvidenceDrilldown(two, {
+  ledgerFingerprint: firstTrendPoint.ledgerFingerprint,
+  sourceInputSetFingerprint: firstTrendPoint.sourceInputSetFingerprint,
+  month: firstTrendPoint.month,
+  metricKey: firstTrendPoint.metricKey,
+});
+assert.deepEqual(trendEvidence.evidenceKey, monthlyEvidence.evidenceKey, 'Monthly row and trend point must resolve the same deterministic evidence key');
+assert.equal(trendEvidence.metric.key, 'salesMicros');
+assert.equal(trendEvidence.metric.value, 10000000);
+assert.equal(trendEvidence.period.monthlySnapshot.month, monthlyEvidence.period.monthlySnapshot.month);
+assert.equal(trendEvidence.source.sourceReceipts[0].contentSha256, monthlyEvidence.source.sourceReceipts[0].contentSha256);
+
 const overlapping = await fixture({ hashChar: 'd', startDate: '2026-08-10', endDate: '2026-08-20', month: '2026-08' });
 const withOverlap = await mod.mergeCsvHistoryLedger(one, overlapping);
 assert.equal(withOverlap.historyWindowEvidence.overlapPairCount, 1);
@@ -190,6 +257,118 @@ assert.ok(sameMonthTrend.points.every((point) => point.sameMonthEvidenceCount ==
 assert.ok(sameMonthTrend.points.every((point) => point.sameMonthMultipleSnapshots === true));
 assert.notEqual(sameMonthTrend.points[0].sourceInputSetFingerprint, sameMonthTrend.points[1].sourceInputSetFingerprint);
 assert.equal(sameMonthTrend.crossSnapshotAggregationApplied, false);
+
+const sameMonthEvidence = [];
+for (const row of sameMonthWorkspace.rows) {
+  sameMonthEvidence.push(await uiMod.buildHistoricalEvidenceDrilldown(withOverlap, {
+    ledgerFingerprint: row.ledgerFingerprint,
+    sourceInputSetFingerprint: row.sourceInputSetFingerprint,
+    month: row.month,
+    metricKey: 'salesMicros',
+  }));
+}
+assert.equal(sameMonthEvidence.length, 2);
+assert.notEqual(sameMonthEvidence[0].evidenceKey.sourceInputSetFingerprint, sameMonthEvidence[1].evidenceKey.sourceInputSetFingerprint);
+assert.notEqual(sameMonthEvidence[0].source.contentSha256s[0], sameMonthEvidence[1].source.contentSha256s[0], 'Same-month snapshots must drill down to separate immutable source hashes');
+assert.ok(sameMonthEvidence.every((item) => item.selectedMonth === '2026-08'));
+assert.ok(sameMonthEvidence.every((item) => item.decision.sameMonthEvidenceCount === 2));
+
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(two, {
+    ledgerFingerprint: 'f'.repeat(64),
+    sourceInputSetFingerprint: firstMonthlyRow.sourceInputSetFingerprint,
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_LEDGER_FINGERPRINT_UNKNOWN',
+  'Unknown ledger fingerprints must fail closed',
+);
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(two, {
+    ledgerFingerprint: two.ledgerFingerprint,
+    sourceInputSetFingerprint: 'e'.repeat(64),
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_INPUT_SET_FINGERPRINT_UNKNOWN',
+  'Unknown input-set fingerprints must fail closed',
+);
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(two, {
+    ledgerFingerprint: two.ledgerFingerprint,
+    sourceInputSetFingerprint: firstMonthlyRow.sourceInputSetFingerprint,
+    month: '2026-10',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_MONTH_NOT_IN_SNAPSHOT',
+  'A month outside the selected snapshot must fail closed',
+);
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(two, {
+    ledgerFingerprint: two.ledgerFingerprint,
+    sourceInputSetFingerprint: firstMonthlyRow.sourceInputSetFingerprint,
+    month: '2026-08',
+    metricKey: 'netProfit',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_METRIC_UNSUPPORTED',
+  'Net Profit must not become a drilldown metric',
+);
+
+const duplicateMonthResult = structuredClone(august);
+duplicateMonthResult.periods.monthlySnapshots.push(structuredClone(duplicateMonthResult.periods.monthlySnapshots[0]));
+const duplicateMonthLedger = await mod.createCsvHistoryLedger(duplicateMonthResult);
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(duplicateMonthLedger, {
+    ledgerFingerprint: duplicateMonthLedger.ledgerFingerprint,
+    sourceInputSetFingerprint: duplicateMonthLedger.snapshots[0].inputSetFingerprint,
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_SELECTION_AMBIGUOUS',
+  'Duplicate month evidence inside one snapshot must fail closed as an ambiguous selection key',
+);
+
+const nonCsvResult = structuredClone(august);
+nonCsvResult.imports[0].sourceFileName = '2026-08.json';
+const nonCsvLedger = await mod.createCsvHistoryLedger(nonCsvResult);
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(nonCsvLedger, {
+    ledgerFingerprint: nonCsvLedger.ledgerFingerprint,
+    sourceInputSetFingerprint: nonCsvLedger.snapshots[0].inputSetFingerprint,
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_EVIDENCE_SOURCE_FILE_INVALID',
+  'Non-CSV source filenames must fail closed in evidence navigation',
+);
+
+const evidenceInvalidHash = JSON.parse(oneSerialized);
+evidenceInvalidHash.snapshots[0].contentSha256s = ['x'.repeat(64)];
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(evidenceInvalidHash, {
+    ledgerFingerprint: one.ledgerFingerprint,
+    sourceInputSetFingerprint: one.snapshots[0].inputSetFingerprint,
+    month: '2026-08',
+  }),
+  'Invalid historical source hashes must fail closed before navigation',
+);
+const evidenceReceiptMismatch = JSON.parse(oneSerialized);
+evidenceReceiptMismatch.snapshots[0].contentSha256s = ['e'.repeat(64)];
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(evidenceReceiptMismatch, {
+    ledgerFingerprint: one.ledgerFingerprint,
+    sourceInputSetFingerprint: one.snapshots[0].inputSetFingerprint,
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_SOURCE_RECEIPT_MISMATCH',
+  'Receipt/hash mismatch must fail closed before navigation',
+);
+const evidenceEscalation = JSON.parse(oneSerialized);
+evidenceEscalation.authority.executionAuthorized = true;
+await assert.rejects(
+  () => uiMod.buildHistoricalEvidenceDrilldown(evidenceEscalation, {
+    ledgerFingerprint: one.ledgerFingerprint,
+    sourceInputSetFingerprint: one.snapshots[0].inputSetFingerprint,
+    month: '2026-08',
+  }),
+  (error) => error?.code === 'CSV_HISTORY_AUTHORITY_ESCALATION_BLOCKED',
+  'Authority escalation must fail closed before navigation',
+);
 
 const missingAcos = JSON.parse(oneSerialized);
 missingAcos.snapshots[0].monthlySnapshots[0].metrics.acos = null;
@@ -294,6 +473,11 @@ console.log(JSON.stringify({
   historicalMonthlyWorkspace: true,
   sameMonthEvidenceSeparated: true,
   historicalTrendEvidence: true,
+  historicalEvidenceDrilldown: true,
+  evidenceNavigationOnly: true,
+  deterministicEvidenceKey: ['ledgerFingerprint', 'sourceInputSetFingerprint', 'month'],
+  sameMonthDrilldownSeparated: true,
+  sourceReceiptDrilldownVerified: true,
   supportedTrendMetrics: uiMod.CSV_HISTORY_TREND_METRICS.map((item) => item.key),
   partialTrendPeriodsHidden: false,
   missingTrendValuesHidden: false,
