@@ -35,17 +35,19 @@ await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');
 await import('./test-csv-term-profitability-analysis.mjs');
+await import('./test-csv-observed-targeting-identity.mjs');
 await import('./test-csv-joint-report-analysis.mjs');
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-import-workflow-v4-required-joint-analysis',
+  contract: 'csv-import-workflow-v5-required-observed-identity',
   requiredContracts: [
     'csv-imports-ui-v1',
     'csv-real-data-intelligence-ui-v4-canonical-identity-copy',
     'csv-product-ui-navigation-v3-versioned-load-order',
     'csv-term-profitability-analysis-v2-profit-root-protection',
-    'csv-joint-report-analysis-v1',
+    'csv-observed-targeting-identity-v1',
+    'csv-joint-report-analysis-v2-observed-identity',
   ],
   amazonLiveApiCalls: false,
   cloudflareWrites: false,
