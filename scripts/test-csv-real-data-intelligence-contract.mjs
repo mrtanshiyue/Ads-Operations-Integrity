@@ -20,6 +20,8 @@ assert.match(api, /FROM csv_search_term_daily/, 'CSV intelligence must read cano
 assert.match(api, /csv_import_batches/, 'CSV intelligence must validate import provenance');
 assert.match(api, /sourceKind: 'csv_import'/, 'CSV source kind must be explicit');
 assert.match(api, /csvProvenanceValid/, 'CSV provenance validity must be surfaced');
+assert.match(api, /suppressStale:\s*false/, 'Historical CSV advisory analysis must keep stale evidence without hard-suppressing candidates');
+assert.match(api, /confidenceFactor:\s*state === 'fresh' \? 1 : \(state === 'aging' \? 0\.8 : 0\.5\)/, 'Historical CSV freshness must still penalize recommendation confidence');
 assert.match(api, /governancePersistenceAllowed: false/, 'CSV recommendations must not be persistable');
 assert.match(api, /identityResolutionRequired: true/, 'CSV recommendations must require Amazon identity resolution');
 assert.match(api, /authoritative: false/, 'CSV authority must remain non-authoritative');
