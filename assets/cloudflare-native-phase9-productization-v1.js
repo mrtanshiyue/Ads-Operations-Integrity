@@ -1,7 +1,7 @@
 (function initPhase9Productization(global) {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   const HEALTH_SELECTOR = '[data-phase9-governance-health]';
   const SUPPRESSION_REASONS = Object.freeze({
     invalid_lineage: 'Source report lineage is incomplete or invalid, so the row cannot become a governance candidate.',
@@ -160,7 +160,10 @@
       if (matches) visible += 1;
     }
     const result = view.querySelector('[data-phase9-intelligence-filter-result]');
-    if (result) result.textContent = `${visible} of ${rows.filter((row) => !row.querySelector('td[colspan]')).length} loaded rows visible.`;
+    if (result) {
+      const nextText = `${visible} of ${rows.filter((row) => !row.querySelector('td[colspan]')).length} loaded rows visible.`;
+      if (result.textContent !== nextText) result.textContent = nextText;
+    }
   }
 
   function applyActionFilters() {
@@ -181,7 +184,10 @@
       if (matches) visible += 1;
     }
     const result = view.querySelector('[data-phase9-action-filter-result]');
-    if (result) result.textContent = `${visible} of ${rows.filter((row) => !row.querySelector('td[colspan]')).length} queue rows visible.`;
+    if (result) {
+      const nextText = `${visible} of ${rows.filter((row) => !row.querySelector('td[colspan]')).length} queue rows visible.`;
+      if (result.textContent !== nextText) result.textContent = nextText;
+    }
   }
 
   function resetClientFilters() {
