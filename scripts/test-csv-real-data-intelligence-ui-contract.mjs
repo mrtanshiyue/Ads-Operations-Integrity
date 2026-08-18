@@ -7,10 +7,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist-cloudflare-native');
 const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const asset = await readFile(path.join(dist, 'assets', 'cloudflare-native-csv-intelligence-v1.js'), 'utf8');
-const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js"></script>';
+const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.3"></script>';
 
-assert.equal(index.split(tag).length - 1, 1, 'CSV Intelligence extension must be injected exactly once');
+assert.equal(index.split(tag).length - 1, 1, 'CSV Intelligence extension must be injected exactly once with cache-busting version');
+assert.doesNotMatch(index, /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js"><\/script>/, 'Unversioned CSV Intelligence script tag must not survive the canonical build');
 assert.match(asset, /CloudflareCsvIntelligence/, 'CSV Intelligence public marker missing');
+assert.match(asset, /VERSION\s*=\s*'1\.0\.3'/, 'CSV Intelligence runtime version must advance after watchdog hardening');
+assert.match(asset, /csvIntelligenceVersion = VERSION/, 'Runtime version must be exposed on the decision panel for authenticated acceptance diagnostics');
 assert.match(asset, /name="dataSource"/, 'Decision Intelligence data-source switch missing');
 assert.match(asset, /Imported CSV/, 'Imported CSV source option missing');
 assert.match(asset, /source:\s*'csv'/, 'CSV intelligence request must carry source=csv');
@@ -21,8 +24,12 @@ assert.match(asset, /Governance persistence disabled/, 'CSV persistence safety n
 assert.match(asset, /Amazon identity unresolved/, 'Identity-resolution warning missing');
 
 assert.match(asset, /REQUEST_TIMEOUT_MS\s*=\s*30000/, 'CSV intelligence must bound pending requests');
+assert.match(asset, /TIMEOUT_ERROR_CODE\s*=\s*'CSV_INTELLIGENCE_TIMEOUT'/, 'CSV intelligence must classify watchdog timeouts deterministically');
 assert.match(asset, /new AbortController\(\)/, 'CSV intelligence must support request cancellation');
 assert.match(asset, /signal:\s*controller\.signal/, 'CSV intelligence fetch must receive the abort signal');
+assert.match(asset, /Promise\.race\(\[/, 'CSV intelligence must use an independent watchdog race rather than rely only on fetch abort rejection');
+assert.match(asset, /timeoutPromise/, 'CSV intelligence must maintain an explicit watchdog promise');
+assert.match(asset, /reject\(error\)/, 'Watchdog timeout must independently reject the pending UI operation');
 assert.match(asset, /state\.requestController/, 'CSV intelligence must track its active request');
 assert.match(asset, /state\.requestId/, 'CSV intelligence must reject stale responses');
 assert.match(asset, /if \(state\.requestController\) return/, 'CSV intelligence must prevent duplicate concurrent runs');
@@ -39,8 +46,11 @@ assert.doesNotMatch(asset, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-pe
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-real-data-intelligence-ui-v2-stall-recovery',
+  contract: 'csv-real-data-intelligence-ui-v3-independent-watchdog',
+  runtimeVersion: '1.0.3',
   requestTimeoutMs: 30000,
+  independentWatchdog: true,
+  cacheBustedAsset: true,
   duplicateRunsBlocked: true,
   staleResponsesRejected: true,
   amazonMutationControls: false,

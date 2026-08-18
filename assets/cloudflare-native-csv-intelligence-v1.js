@@ -1,9 +1,10 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.2';
+  const VERSION = '1.0.3';
   const STORAGE_SOURCE = 'aoi.decision.source';
   const REQUEST_TIMEOUT_MS = 30000;
+  const TIMEOUT_ERROR_CODE = 'CSV_INTELLIGENCE_TIMEOUT';
   const state = {
     mounted: false,
     payload: null,
@@ -36,6 +37,7 @@
       return;
     }
     state.mounted = true;
+    panel.dataset.csvIntelligenceVersion = VERSION;
     const controls = panel.querySelector('.cfdi-controls');
     if (!controls || controls.querySelector('[name="dataSource"]')) return;
 
@@ -131,21 +133,30 @@
     const controller = new AbortController();
     state.requestController = controller;
     state.timedOutRequestId = 0;
-    const timeoutId = global.setTimeout(() => {
-      if (state.requestId !== requestId || state.requestController !== controller) return;
-      state.timedOutRequestId = requestId;
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
+    let timeoutId = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = global.setTimeout(() => {
+        if (state.requestId !== requestId || state.requestController !== controller) return;
+        state.timedOutRequestId = requestId;
+        controller.abort();
+        const error = new Error('Imported CSV intelligence timed out after 30 seconds. No data was changed. Retry once; if it repeats, the server-side query needs investigation.');
+        error.code = TIMEOUT_ERROR_CODE;
+        reject(error);
+      }, REQUEST_TIMEOUT_MS);
+    });
 
     setRunPending(panel, true);
     setStatus('Computing advisory intelligence over imported CSV facts…', 'loading');
     closeDrawer();
 
     try {
-      const payload = await requestJson(
-        `/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence?${params}`,
-        { signal: controller.signal },
-      );
+      const payload = await Promise.race([
+        requestJson(
+          `/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence?${params}`,
+          { signal: controller.signal },
+        ),
+        timeoutPromise,
+      ]);
       if (requestId !== state.requestId) return;
       state.payload = payload;
       renderCsvResults(payload);
@@ -156,13 +167,15 @@
       if (requestId !== state.requestId) return;
       state.payload = null;
       clearCsvResults();
-      if (controller.signal.aborted && state.timedOutRequestId === requestId) {
+      const timedOut = error?.code === TIMEOUT_ERROR_CODE
+        || (controller.signal.aborted && state.timedOutRequestId === requestId);
+      if (timedOut) {
         setStatus('Imported CSV intelligence timed out after 30 seconds. No data was changed. Retry once; if it repeats, the server-side query needs investigation.', 'error');
       } else if (!controller.signal.aborted) {
         setStatus(error.message || 'Imported CSV intelligence request failed.', 'error');
       }
     } finally {
-      global.clearTimeout(timeoutId);
+      if (timeoutId !== null) global.clearTimeout(timeoutId);
       if (requestId === state.requestId) {
         state.requestController = null;
         state.timedOutRequestId = 0;
