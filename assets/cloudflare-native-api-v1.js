@@ -102,6 +102,7 @@
     analyticsProducts: (params) => request(query('/api/v1/analytics/products', params)),
     analyticsKeywords: (params) => request(query('/api/v1/analytics/keywords', params)),
     analyticsDataHealth: (params) => request(query('/api/v1/analytics/data-health', params)),
+    csvAnalytics: (storeId, dimension, params) => request(query(`/api/v1/stores/${encodeURIComponent(storeId)}/csv-analytics/${encodeURIComponent(dimension)}`, params)),
     auditEvents: (params) => request(query('/api/v1/audit/events', params)),
 
     startSync: (storeId, body, idempotencyKey) => request(`/api/v1/stores/${encodeURIComponent(storeId)}/sync`, {
@@ -118,4 +119,12 @@
     configurable: false,
     enumerable: true,
   });
+
+  if (global.document && !global.document.querySelector('script[data-cf-csv-analytics-dashboard]')) {
+    const script = global.document.createElement('script');
+    script.src = 'assets/cloudflare-native-csv-analytics-dashboard-v1.js';
+    script.dataset.cfCsvAnalyticsDashboard = '1';
+    script.defer = true;
+    global.document.head.appendChild(script);
+  }
 })(window);
