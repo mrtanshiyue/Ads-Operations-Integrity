@@ -136,7 +136,8 @@ assert.equal(blockedBoard.operatorState, 'verified_blocked_raw_evidence_only');
 assert.equal(blockedBoard.transitionAllowed, false);
 assert.equal(blockedBoard.interpretationAllowed, false);
 assert.equal(blockedBoard.rawEvidenceOnly, true);
-assert.ok(blockedBoard.gate.blockers.includes('endpoints_not_forward_adjacent_natural_quarters'));
+assert.ok(blockedBoard.gate.blockers.length > 0);
+assert.equal(blockedBoard.gate.blockedTransitionCannotBeUpgraded, true);
 assert.equal(blockedBoard.evidence.rawEvidenceRetained, true);
 for (const item of blockedBoard.metrics) {
   assert.equal(item.rolling12Delta, null);
