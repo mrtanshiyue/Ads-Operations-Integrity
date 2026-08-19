@@ -17,6 +17,7 @@ import { handleAccessGovernanceApiRoute } from './access-governance-api.js';
 import { handleUserLifecycleApiRoute } from './user-lifecycle-api.js';
 import { handleGlobalRoleGovernanceApiRoute } from './global-role-governance-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
+import { handleCsvAnalyticsApiRoute } from './csv-analytics-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
 import { handleCsvImportsApiRoute } from './csv-imports-api.js';
@@ -52,6 +53,7 @@ const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|key
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const CSV_IMPORTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/imports(?:\/[^/]+(?:\/errors)?)?$/;
 const CSV_ADVISORY_REVIEWS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/advisory-reviews(?:\/[^/]+)?$/;
+const CSV_ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/csv-analytics\/(overview|daily|campaign|ad-group|ad_group|targeting|search-term|search_term|match-type|match_type)$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
 const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert|execution-permits))?)?$/;
@@ -84,6 +86,7 @@ export default {
       || SYNC_ROUTE_PATTERN.test(url.pathname)
       || CSV_IMPORTS_ROUTE_PATTERN.test(url.pathname)
       || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(url.pathname)
+      || CSV_ANALYTICS_ROUTE_PATTERN.test(url.pathname)
       || ANALYTICS_ROUTE_PATTERN.test(url.pathname)
       || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)
       || OPTIMIZATION_ACTIONS_ROUTE_PATTERN.test(url.pathname)
@@ -203,6 +206,10 @@ export default {
         const response = await handleStoreApiRoute({ request, env, actor, url });
         if (response) return response;
       }
+      if (CSV_ANALYTICS_ROUTE_PATTERN.test(url.pathname)) {
+        const response = await handleCsvAnalyticsApiRoute({ request, env, actor, url });
+        if (response) return response;
+      }
       if (ANALYTICS_ROUTE_PATTERN.test(url.pathname)) {
         if (url.pathname === '/api/v1/analytics/data-health') {
           const response = await handleDataHealthApiRoute({ request, env, actor, url });
@@ -252,6 +259,7 @@ export function isDevReadOnlyAccessBypassRoute(pathname) {
     || STORE_ROUTE_PATTERN.test(pathname)
     || CSV_IMPORTS_ROUTE_PATTERN.test(pathname)
     || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(pathname)
+    || CSV_ANALYTICS_ROUTE_PATTERN.test(pathname)
     || ANALYTICS_ROUTE_PATTERN.test(pathname)
     || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(pathname)
     || GOVERNANCE_HEALTH_ROUTE_PATTERN.test(pathname);
