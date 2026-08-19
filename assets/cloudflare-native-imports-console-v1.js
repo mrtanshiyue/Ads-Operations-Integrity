@@ -1,8 +1,9 @@
 (function initCloudflareNativeImportsConsole(global) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const MAX_BYTES = 10 * 1024 * 1024;
+  const GOVERNED_PROVENANCE = new Set(['exact_source_object', 'reconciled_exact_source']);
   const state = {
     mounted: false,
     open: false,
@@ -294,12 +295,15 @@
   function historyMarkup() {
     if (state.loading) return empty(t('正在读取导入历史…', 'Loading import history…'));
     if (!state.items.length) return empty(t('还没有 CSV 导入记录。', 'No CSV imports yet.'));
-    return `<div class="cfImportsSectionHead"><div><h3>${e(t('导入历史', 'Import history'))}</h3><p>${state.items.length} ${e(t('条最近记录', 'recent records'))}</p></div></div><div class="cfImportsHistoryList">${state.items.map((item) => `
+    return `<div class="cfImportsSectionHead"><div><h3>${e(t('导入历史', 'Import history'))}</h3><p>${state.items.length} ${e(t('条最近记录', 'recent records'))}</p></div></div><div class="cfImportsHistoryList">${state.items.map((item) => {
+      const authority = normalizeAuthority(item.importAuthority);
+      return `
       <button type="button" class="cfImportsHistoryRow${item.importId === state.selectedImportId ? ' active' : ''}" data-import-id="${e(item.importId)}">
         <span class="cfImportsStatus ${e(item.status)}">${e(item.status)}</span>
-        <span class="cfImportsHistoryMain"><strong>${e(item.sourceFileName || item.importId)}</strong><small>${e(item.reportStartDate)} → ${e(item.reportEndDate)} · ${Number(item.rowCount || 0).toLocaleString()} rows</small></span>
+        <span class="cfImportsHistoryMain"><strong>${e(item.sourceFileName || item.importId)}</strong><small>${e(item.reportStartDate)} → ${e(item.reportEndDate)} · ${Number(item.rowCount || 0).toLocaleString()} rows</small><span class="cfImportsAuthorityInline">${authorityBadge('data', authority.dataClass)}${authorityBadge('provenance', authority.provenanceClass)}${gateBadge('A', authority.analyticsAllowed, t('分析', 'Analytics'))}${gateBadge('R', authority.recommendationAllowed, t('建议', 'Recommendation'))}${gateBadge('V', authority.reviewAllowed, t('审核', 'Review'))}</span></span>
         <span class="cfImportsHistoryTime">${e(formatDateTime(item.uploadedAt))}</span>
-      </button>`).join('')}</div>`;
+      </button>`;
+    }).join('')}</div>`;
   }
 
   function detailMarkup() {
@@ -308,11 +312,13 @@
     if (!batch) return empty(t('正在读取详情…', 'Loading details…'));
     const facts = state.detail?.publishedFacts || {};
     const summary = batch.validationSummary || {};
+    const authority = normalizeAuthority(batch.importAuthority);
     const errorCodes = Object.entries(summary.errorCodes || {}).map(([code, count]) => `<span>${e(code)} × ${Number(count)}</span>`).join('');
     const errors = state.errors.length
       ? `<div class="cfImportsErrors">${state.errors.map((item) => `<div><code>${e(item.errorCode)}</code><span>${item.sourceRowOrdinal == null ? e(t('批次', 'batch')) : `${e(t('行', 'row'))} ${Number(item.sourceRowOrdinal) + 2}`}</span></div>`).join('')}</div>`
       : `<div class="cfImportsOkLine">${e(t('没有持久化校验错误。', 'No persisted validation errors.'))}</div>`;
     return `<div class="cfImportsSectionHead"><div><h3>${e(t('导入详情', 'Import detail'))}</h3><p>${e(batch.importId)}</p></div><span class="cfImportsStatus ${e(batch.status)}">${e(batch.status)}</span></div>
+      ${authorityMarkup(authority)}
       <dl class="cfImportsFacts">
         <div><dt>${e(t('文件', 'File'))}</dt><dd>${e(batch.sourceFileName)}</dd></div>
         <div><dt>${e(t('报告范围', 'Report range'))}</dt><dd>${e(batch.reportStartDate)} → ${e(batch.reportEndDate)}</dd></div>
@@ -321,6 +327,82 @@
         <div><dt>SHA-256</dt><dd><code>${e(String(batch.contentSha256 || '').slice(0, 16))}…</code></dd></div>
         <div><dt>${e(t('上传时间', 'Uploaded'))}</dt><dd>${e(formatDateTime(batch.uploadedAt))}</dd></div>
       </dl>${errorCodes ? `<div class="cfImportsErrorCodes">${errorCodes}</div>` : ''}${errors}`;
+  }
+
+  function normalizeAuthority(input) {
+    const value = input && typeof input === 'object' ? input : {};
+    const classified = value.classified === true;
+    const dataClass = String(value.dataClass || 'unclassified');
+    const provenanceClass = String(value.provenanceClass || 'unknown');
+    const analyticsAllowed = value.analyticsAllowed === true && dataClass === 'business';
+    const governed = analyticsAllowed && GOVERNED_PROVENANCE.has(provenanceClass);
+    return Object.freeze({
+      classified,
+      dataClass,
+      provenanceClass,
+      authorityVersion: Number.isFinite(Number(value.authorityVersion)) ? Number(value.authorityVersion) : null,
+      analyticsAllowed,
+      recommendationAllowed: value.recommendationAllowed === true && governed,
+      reviewAllowed: value.reviewAllowed === true && governed,
+      reason: String(value.reason || ''),
+      updatedAt: value.updatedAt || null,
+    });
+  }
+
+  function authorityMarkup(authority) {
+    return `<section class="cfImportsAuthority" aria-label="Import authority">
+      <div class="cfImportsAuthorityHead"><div><strong>${e(t('数据权威状态', 'Data authority'))}</strong><small>${e(t('分类与来源证明分离；缺失权威时 fail closed', 'Classification and provenance are separate; missing authority fails closed'))}</small></div><span class="cfImportsAuthorityVersion">v${authority.authorityVersion ?? '—'}</span></div>
+      <dl class="cfImportsAuthorityFacts">
+        <div><dt>${e(t('数据分类', 'Data class'))}</dt><dd>${authorityBadge('data', authority.dataClass)}</dd></div>
+        <div><dt>${e(t('来源证明', 'Provenance'))}</dt><dd>${authorityBadge('provenance', authority.provenanceClass)}</dd></div>
+      </dl>
+      <div class="cfImportsGateGrid">${gateCard(t('经营分析', 'Analytics'), authority.analyticsAllowed)}${gateCard(t('建议', 'Recommendation'), authority.recommendationAllowed)}${gateCard(t('治理审核', 'Review'), authority.reviewAllowed)}</div>
+      <p class="cfImportsAuthorityExplain">${e(authorityExplanation(authority))}</p>
+      ${authority.reason ? `<p class="cfImportsAuthorityReason"><strong>${e(t('审计原因', 'Audit reason'))}</strong> · ${e(authority.reason)}${authority.updatedAt ? ` · ${e(formatDateTime(authority.updatedAt))}` : ''}</p>` : ''}
+    </section>`;
+  }
+
+  function authorityExplanation(authority) {
+    if (!authority.classified || authority.dataClass === 'unclassified') {
+      return t('未分类或缺少权威记录：默认 fail closed，不进入经营分析、建议或审核。', 'Unclassified or missing authority: fail closed by default; excluded from business analytics, recommendations, and review.');
+    }
+    if (authority.dataClass === 'acceptance') {
+      return t('Acceptance 数据仅用于验收/验证；即使拥有 exact source bytes，也不会进入经营分析、建议或审核。', 'Acceptance data is validation-only; even with exact source bytes it is excluded from business analytics, recommendations, and review.');
+    }
+    if (authority.dataClass === 'business' && authority.provenanceClass === 'legacy_batch_only') {
+      return t('业务数据可进入经营分析；建议与审核继续阻断，直到来源证明完成 exact/reconciled reconciliation。', 'Business analytics is allowed; recommendations and review remain blocked until provenance is exact or reconciled.');
+    }
+    if (authority.dataClass === 'business' && GOVERNED_PROVENANCE.has(authority.provenanceClass)) {
+      return t('业务数据与来源证明均满足治理门槛：经营分析、建议与审核可用；这不代表允许向 Amazon 执行写入。', 'Business data and provenance satisfy governed gates: analytics, recommendations, and review are allowed; this does not authorize Amazon execution.');
+    }
+    return t('当前分类/来源组合不满足治理条件：按 fail closed 处理。', 'The current classification/provenance combination does not satisfy governed authority; fail closed.');
+  }
+
+  function authorityBadge(kind, value) {
+    const normalized = String(value || (kind === 'data' ? 'unclassified' : 'unknown'));
+    const label = prettyAuthorityValue(normalized);
+    return `<span class="cfImportsAuthorityChip ${e(kind)} ${e(normalized)}">${e(label)}</span>`;
+  }
+
+  function prettyAuthorityValue(value) {
+    const labels = {
+      unclassified: t('未分类', 'unclassified'),
+      business: t('业务', 'business'),
+      acceptance: t('验收', 'acceptance'),
+      legacy_batch_only: t('旧批次', 'legacy batch'),
+      exact_source_object: t('精确源对象', 'exact source'),
+      reconciled_exact_source: t('已对账精确源', 'reconciled source'),
+      unknown: t('未知', 'unknown'),
+    };
+    return labels[value] || value;
+  }
+
+  function gateBadge(shortLabel, allowed, longLabel) {
+    return `<span class="cfImportsGateMini ${allowed ? 'allowed' : 'blocked'}" title="${e(longLabel)}: ${e(allowed ? t('允许', 'allowed') : t('阻断', 'blocked'))}">${e(shortLabel)} ${allowed ? '✓' : '×'}</span>`;
+  }
+
+  function gateCard(label, allowed) {
+    return `<div class="cfImportsGateCard ${allowed ? 'allowed' : 'blocked'}"><span>${e(label)}</span><strong>${e(allowed ? t('允许', 'Allowed') : t('阻断', 'Blocked'))}</strong></div>`;
   }
 
   function empty(text) { return `<div class="cfImportsEmpty">${e(text)}</div>`; }
@@ -377,7 +459,7 @@
     const style = global.document.createElement('style');
     style.id = 'cfImportsStyles';
     style.textContent = `
-      .cfImportsPanel[hidden]{display:none!important}.cfImportsPanel{position:fixed;inset:0;z-index:2147483000;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827}.cfImportsBackdrop{position:absolute;inset:0;background:rgba(15,23,42,.48);backdrop-filter:blur(3px)}.cfImportsDialog{position:absolute;inset:4vh 4vw;background:#f8fafc;border:1px solid rgba(148,163,184,.35);border-radius:18px;box-shadow:0 30px 80px rgba(15,23,42,.32);overflow:auto}.cfImportsBody{padding:22px}.cfImportsTopline{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.cfImportsTopline>div:first-child{display:flex;align-items:baseline;gap:12px}.cfImportsTopline strong{font-size:22px}.cfImportsTopline span{font-size:12px;color:#64748b}.cfImportsTopActions{display:flex;gap:8px}.cfImportsTopActions button,.cfImportsPrimary{border:1px solid #cbd5e1;background:white;border-radius:10px;padding:9px 13px;cursor:pointer;font:inherit}.cfImportsPrimary{background:#0f172a;color:white;border-color:#0f172a;font-weight:700}.cfImportsTopActions button:disabled,.cfImportsPrimary:disabled{opacity:.45;cursor:not-allowed}.cfImportsCard{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}.cfImportsUpload{margin-bottom:14px}.cfImportsSectionHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.cfImportsSectionHead h3{font-size:15px;margin:0 0 3px}.cfImportsSectionHead p{font-size:11px;color:#64748b;margin:0}.cfImportsPermission{font-size:10px;text-transform:uppercase;letter-spacing:.08em;border:1px solid #e2e8f0;border-radius:999px;padding:5px 8px;color:#475569}.cfImportsFile{display:flex;align-items:center;gap:10px;border:1px dashed #cbd5e1;border-radius:12px;padding:13px;margin-bottom:12px;background:#f8fafc}.cfImportsFile input{max-width:240px}.cfImportsFile span{font-size:12px;font-weight:700}.cfImportsFile small{margin-left:auto;color:#64748b}.cfImportsFields{display:grid;grid-template-columns:120px 120px minmax(180px,1fr) auto;gap:10px;align-items:end}.cfImportsFields label{font-size:10px;color:#64748b;display:grid;gap:5px}.cfImportsFields input{border:1px solid #cbd5e1;border-radius:9px;padding:9px;font:inherit;color:#0f172a;background:white}.cfImportsGrid{display:grid;grid-template-columns:minmax(360px,.9fr) minmax(420px,1.1fr);gap:14px}.cfImportsHistoryList{display:grid;gap:6px;max-height:54vh;overflow:auto}.cfImportsHistoryRow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;border:1px solid #e2e8f0;background:white;border-radius:10px;padding:10px;cursor:pointer}.cfImportsHistoryRow:hover,.cfImportsHistoryRow.active{border-color:#94a3b8;background:#f8fafc}.cfImportsHistoryMain{display:grid;gap:3px;min-width:0}.cfImportsHistoryMain strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cfImportsHistoryMain small,.cfImportsHistoryTime{font-size:10px;color:#64748b}.cfImportsStatus{font-size:9px;font-weight:800;text-transform:uppercase;border-radius:999px;padding:5px 7px;background:#e2e8f0;color:#334155}.cfImportsStatus.published{background:#dcfce7;color:#166534}.cfImportsStatus.rejected{background:#fee2e2;color:#991b1b}.cfImportsStatus.validated{background:#fef3c7;color:#92400e}.cfImportsFacts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.cfImportsFacts>div{border:1px solid #e2e8f0;border-radius:9px;padding:9px}.cfImportsFacts dt{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:4px}.cfImportsFacts dd{margin:0;font-size:11px;word-break:break-word}.cfImportsErrors{margin-top:12px;display:grid;gap:5px;max-height:180px;overflow:auto}.cfImportsErrors>div{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #f1f5f9;padding-top:6px;font-size:10px}.cfImportsErrors span{color:#64748b}.cfImportsErrorCodes{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.cfImportsErrorCodes span{font-size:9px;border:1px solid #fecaca;background:#fff1f2;color:#9f1239;border-radius:999px;padding:4px 7px}.cfImportsOkLine,.cfImportsEmpty{font-size:11px;color:#64748b;padding:18px 4px;text-align:center}.cfImportsMessage{margin-bottom:12px;border-radius:10px;padding:10px 12px;font-size:11px;border:1px solid #e2e8f0;background:white}.cfImportsMessage.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}.cfImportsMessage.warn{border-color:#fde68a;background:#fffbeb;color:#92400e}.cfImportsMessage.bad{border-color:#fecaca;background:#fff1f2;color:#991b1b}.cfImportsMessage.loading{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}@media(max-width:980px){.cfImportsDialog{inset:2vh 2vw}.cfImportsGrid{grid-template-columns:1fr}.cfImportsFields{grid-template-columns:1fr 1fr}.cfImportsPrimary{grid-column:1/-1}.cfImportsHistoryList{max-height:32vh}}`;
+      .cfImportsPanel[hidden]{display:none!important}.cfImportsPanel{position:fixed;inset:0;z-index:2147483000;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#111827}.cfImportsBackdrop{position:absolute;inset:0;background:rgba(15,23,42,.48);backdrop-filter:blur(3px)}.cfImportsDialog{position:absolute;inset:4vh 4vw;background:#f8fafc;border:1px solid rgba(148,163,184,.35);border-radius:18px;box-shadow:0 30px 80px rgba(15,23,42,.32);overflow:auto}.cfImportsBody{padding:22px}.cfImportsTopline{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.cfImportsTopline>div:first-child{display:flex;align-items:baseline;gap:12px}.cfImportsTopline strong{font-size:22px}.cfImportsTopline span{font-size:12px;color:#64748b}.cfImportsTopActions{display:flex;gap:8px}.cfImportsTopActions button,.cfImportsPrimary{border:1px solid #cbd5e1;background:white;border-radius:10px;padding:9px 13px;cursor:pointer;font:inherit}.cfImportsPrimary{background:#0f172a;color:white;border-color:#0f172a;font-weight:700}.cfImportsTopActions button:disabled,.cfImportsPrimary:disabled{opacity:.45;cursor:not-allowed}.cfImportsCard{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(15,23,42,.03)}.cfImportsUpload{margin-bottom:14px}.cfImportsSectionHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.cfImportsSectionHead h3{font-size:15px;margin:0 0 3px}.cfImportsSectionHead p{font-size:11px;color:#64748b;margin:0}.cfImportsPermission{font-size:10px;text-transform:uppercase;letter-spacing:.08em;border:1px solid #e2e8f0;border-radius:999px;padding:5px 8px;color:#475569}.cfImportsFile{display:flex;align-items:center;gap:10px;border:1px dashed #cbd5e1;border-radius:12px;padding:13px;margin-bottom:12px;background:#f8fafc}.cfImportsFile input{max-width:240px}.cfImportsFile span{font-size:12px;font-weight:700}.cfImportsFile small{margin-left:auto;color:#64748b}.cfImportsFields{display:grid;grid-template-columns:120px 120px minmax(180px,1fr) auto;gap:10px;align-items:end}.cfImportsFields label{font-size:10px;color:#64748b;display:grid;gap:5px}.cfImportsFields input{border:1px solid #cbd5e1;border-radius:9px;padding:9px;font:inherit;color:#0f172a;background:white}.cfImportsGrid{display:grid;grid-template-columns:minmax(420px,.95fr) minmax(480px,1.05fr);gap:14px}.cfImportsHistoryList{display:grid;gap:6px;max-height:54vh;overflow:auto}.cfImportsHistoryRow{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;width:100%;text-align:left;border:1px solid #e2e8f0;background:white;border-radius:10px;padding:10px;cursor:pointer}.cfImportsHistoryRow:hover,.cfImportsHistoryRow.active{border-color:#94a3b8;background:#f8fafc}.cfImportsHistoryMain{display:grid;gap:5px;min-width:0}.cfImportsHistoryMain strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cfImportsHistoryMain small,.cfImportsHistoryTime{font-size:10px;color:#64748b}.cfImportsStatus{font-size:9px;font-weight:800;text-transform:uppercase;border-radius:999px;padding:5px 7px;background:#e2e8f0;color:#334155}.cfImportsStatus.published{background:#dcfce7;color:#166534}.cfImportsStatus.rejected{background:#fee2e2;color:#991b1b}.cfImportsStatus.validated{background:#fef3c7;color:#92400e}.cfImportsAuthorityInline{display:flex;flex-wrap:wrap;gap:4px;align-items:center}.cfImportsAuthorityChip,.cfImportsGateMini{display:inline-flex;align-items:center;white-space:nowrap;border-radius:999px;padding:3px 6px;font-size:9px;font-weight:700;border:1px solid #e2e8f0;background:#f8fafc;color:#475569}.cfImportsAuthorityChip.data.business{background:#ecfeff;border-color:#a5f3fc;color:#155e75}.cfImportsAuthorityChip.data.acceptance{background:#f5f3ff;border-color:#ddd6fe;color:#5b21b6}.cfImportsAuthorityChip.provenance.exact_source_object,.cfImportsAuthorityChip.provenance.reconciled_exact_source{background:#ecfdf5;border-color:#a7f3d0;color:#065f46}.cfImportsAuthorityChip.provenance.legacy_batch_only{background:#fff7ed;border-color:#fed7aa;color:#9a3412}.cfImportsGateMini.allowed{background:#f0fdf4;border-color:#bbf7d0;color:#166534}.cfImportsGateMini.blocked{background:#f8fafc;border-color:#e2e8f0;color:#64748b}.cfImportsAuthority{margin:0 0 12px;border:1px solid #dbeafe;background:#f8fbff;border-radius:12px;padding:12px}.cfImportsAuthorityHead{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.cfImportsAuthorityHead>div{display:grid;gap:3px}.cfImportsAuthorityHead strong{font-size:12px}.cfImportsAuthorityHead small{font-size:10px;color:#64748b}.cfImportsAuthorityVersion{font-size:9px;font-weight:800;color:#475569;border:1px solid #cbd5e1;border-radius:999px;padding:4px 7px;background:white}.cfImportsAuthorityFacts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 8px}.cfImportsAuthorityFacts>div{display:flex;justify-content:space-between;gap:8px;align-items:center;background:white;border:1px solid #e2e8f0;border-radius:9px;padding:8px}.cfImportsAuthorityFacts dt{font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em}.cfImportsAuthorityFacts dd{margin:0}.cfImportsGateGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.cfImportsGateCard{display:grid;gap:3px;border-radius:9px;padding:8px;border:1px solid #e2e8f0;background:white}.cfImportsGateCard span{font-size:9px;color:#64748b}.cfImportsGateCard strong{font-size:11px}.cfImportsGateCard.allowed{border-color:#bbf7d0;background:#f0fdf4;color:#166534}.cfImportsGateCard.blocked{background:#f8fafc;color:#475569}.cfImportsAuthorityExplain{font-size:10px;line-height:1.55;color:#334155;margin:9px 0 0}.cfImportsAuthorityReason{font-size:9px;line-height:1.45;color:#64748b;margin:6px 0 0}.cfImportsFacts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0}.cfImportsFacts>div{border:1px solid #e2e8f0;border-radius:9px;padding:9px}.cfImportsFacts dt{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;margin-bottom:4px}.cfImportsFacts dd{margin:0;font-size:11px;word-break:break-word}.cfImportsErrors{margin-top:12px;display:grid;gap:5px;max-height:180px;overflow:auto}.cfImportsErrors>div{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #f1f5f9;padding-top:6px;font-size:10px}.cfImportsErrors span{color:#64748b}.cfImportsErrorCodes{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}.cfImportsErrorCodes span{font-size:9px;border:1px solid #fecaca;background:#fff1f2;color:#9f1239;border-radius:999px;padding:4px 7px}.cfImportsOkLine,.cfImportsEmpty{font-size:11px;color:#64748b;padding:18px 4px;text-align:center}.cfImportsMessage{margin-bottom:12px;border-radius:10px;padding:10px 12px;font-size:11px;border:1px solid #e2e8f0;background:white}.cfImportsMessage.ok{border-color:#bbf7d0;background:#f0fdf4;color:#166534}.cfImportsMessage.warn{border-color:#fde68a;background:#fffbeb;color:#92400e}.cfImportsMessage.bad{border-color:#fecaca;background:#fff1f2;color:#991b1b}.cfImportsMessage.loading{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}@media(max-width:980px){.cfImportsDialog{inset:2vh 2vw}.cfImportsGrid{grid-template-columns:1fr}.cfImportsFields{grid-template-columns:1fr 1fr}.cfImportsPrimary{grid-column:1/-1}.cfImportsHistoryList{max-height:32vh}}`;
     global.document.head.appendChild(style);
   }
 })(window);
