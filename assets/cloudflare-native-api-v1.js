@@ -120,10 +120,14 @@
     enumerable: true,
   });
 
-  if (global.document && !global.document.querySelector('script[data-cf-csv-analytics-dashboard]')) {
+  loadReadOnlyAnalyticsAsset('assets/cloudflare-native-csv-analytics-dashboard-v1.js', 'cfCsvAnalyticsDashboard');
+  loadReadOnlyAnalyticsAsset('assets/cloudflare-native-csv-analytics-drilldown-v1.js', 'cfCsvAnalyticsDrilldown');
+
+  function loadReadOnlyAnalyticsAsset(src, datasetKey) {
+    if (!global.document || global.document.querySelector(`script[data-${datasetKey.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}]`)) return;
     const script = global.document.createElement('script');
-    script.src = 'assets/cloudflare-native-csv-analytics-dashboard-v1.js';
-    script.dataset.cfCsvAnalyticsDashboard = '1';
+    script.src = src;
+    script.dataset[datasetKey] = '1';
     script.defer = true;
     global.document.head.appendChild(script);
   }
