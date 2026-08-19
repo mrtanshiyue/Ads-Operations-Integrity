@@ -47,7 +47,14 @@ function assertChronologyItem(item, index) {
     throw new Error(`items[${index}] is missing receiptFingerprint`);
   }
 
-  return { board, previousWindowKey, currentWindowKey, receiptFingerprint };
+  return {
+    board,
+    previousWindowKey,
+    currentWindowKey,
+    receiptFingerprint,
+    previousLedgerFingerprint: normalizeText(board.previousLedgerFingerprint),
+    currentLedgerFingerprint: normalizeText(board.currentLedgerFingerprint),
+  };
 }
 
 function isVerifiedAllowedBoard(board) {
@@ -76,7 +83,14 @@ function projectMetric(metric, chronologyAllowed) {
 }
 
 function projectItem(asserted, index, chronologyAllowed) {
-  const { board, previousWindowKey, currentWindowKey, receiptFingerprint } = asserted;
+  const {
+    board,
+    previousWindowKey,
+    currentWindowKey,
+    receiptFingerprint,
+    previousLedgerFingerprint,
+    currentLedgerFingerprint,
+  } = asserted;
   const itemAllowed = chronologyAllowed && isVerifiedAllowedBoard(board);
   const metrics = Array.isArray(board.metrics) ? board.metrics.map((metric) => projectMetric(metric, itemAllowed)) : [];
 
@@ -91,8 +105,8 @@ function projectItem(asserted, index, chronologyAllowed) {
     transitionAllowed: board.transitionAllowed === true,
     interpretationAllowed: itemAllowed,
     rawEvidenceOnly: !itemAllowed,
-    previousLedgerFingerprint: normalizeText(board.previousLedgerFingerprint),
-    currentLedgerFingerprint: normalizeText(board.currentLedgerFingerprint),
+    previousLedgerFingerprint,
+    currentLedgerFingerprint,
     decomposition: {
       outgoingQuarterKey: normalizeText(board.decomposition?.outgoingQuarterKey),
       incomingQuarterKey: normalizeText(board.decomposition?.incomingQuarterKey),
@@ -120,6 +134,9 @@ export function projectHistoricalRolling12VerifiedTransitionChronology(items) {
     if (!isVerifiedAllowedBoard(current.board)) {
       blockers.push({ index, code: 'transition_not_verified_allowed' });
     }
+    if (!current.previousLedgerFingerprint || !current.currentLedgerFingerprint) {
+      blockers.push({ index, code: 'missing_ledger_fingerprint' });
+    }
     if (index > 0) {
       const previous = asserted[index - 1];
       if (previous.currentWindowKey !== current.previousWindowKey) {
@@ -128,6 +145,18 @@ export function projectHistoricalRolling12VerifiedTransitionChronology(items) {
           code: 'non_adjacent_transition_sequence',
           expectedPreviousWindowKey: previous.currentWindowKey,
           actualPreviousWindowKey: current.previousWindowKey,
+        });
+      }
+      if (
+        previous.currentLedgerFingerprint
+        && current.previousLedgerFingerprint
+        && previous.currentLedgerFingerprint !== current.previousLedgerFingerprint
+      ) {
+        blockers.push({
+          index,
+          code: 'non_contiguous_ledger_evidence',
+          expectedPreviousLedgerFingerprint: previous.currentLedgerFingerprint,
+          actualPreviousLedgerFingerprint: current.previousLedgerFingerprint,
         });
       }
     }
