@@ -62,8 +62,8 @@
         "SYNC_TRIGGER_ENABLED": "false",
         "PHASE5_SINGLE_RUN_PERMIT_ID": "",
         "PHASE5_SINGLE_RUN_REPORT_DATE": "",
-        "TEAM_DOMAIN": "https://REPLACE_ME.cloudflareaccess.com",
-        "ACCESS_AUD": "REPLACE_ME"
+        "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
+        "ACCESS_AUD": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8"
       },
       "version_metadata": {
         "binding": "CF_VERSION_METADATA"
@@ -72,31 +72,31 @@
         {
           "binding": "CONTROL_DB",
           "database_name": "ads-ops-control-prod",
-          "database_id": "REPLACE_PROD_CONTROL_D1_ID",
+          "database_id": "2122248c-1fd4-4ccd-b611-9f9d2f3decbf",
           "migrations_dir": "../foundation/migrations/control"
         },
         {
           "binding": "STORE_01_DB",
-          "database_name": "ads-ops-store-01-prod",
-          "database_id": "REPLACE_PROD_STORE_01_D1_ID",
+          "database_name": "ads-ops-store-prod-01",
+          "database_id": "2e53bbad-5680-431c-bcf7-68e89b231ea1",
           "migrations_dir": "../foundation/migrations/store"
         },
         {
           "binding": "STORE_02_DB",
-          "database_name": "ads-ops-store-02-prod",
-          "database_id": "REPLACE_PROD_STORE_02_D1_ID",
+          "database_name": "ads-ops-store-prod-02",
+          "database_id": "a5d8e5b0-8d29-48a7-b200-6aa14a2fb997",
           "migrations_dir": "../foundation/migrations/store"
         },
         {
           "binding": "STORE_03_DB",
-          "database_name": "ads-ops-store-03-prod",
-          "database_id": "REPLACE_PROD_STORE_03_D1_ID",
+          "database_name": "ads-ops-store-prod-03",
+          "database_id": "d47867d7-f5ca-4ddc-a4af-87bf14325e22",
           "migrations_dir": "../foundation/migrations/store"
         },
         {
           "binding": "STORE_04_DB",
-          "database_name": "ads-ops-store-04-prod",
-          "database_id": "REPLACE_PROD_STORE_04_D1_ID",
+          "database_name": "ads-ops-store-prod-04",
+          "database_id": "c38ac43e-e62d-4387-b84d-2d080ce9a00b",
           "migrations_dir": "../foundation/migrations/store"
         }
       ],

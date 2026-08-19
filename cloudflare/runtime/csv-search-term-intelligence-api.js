@@ -12,11 +12,9 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const MAX_RANGE_DAYS = 93;
 
-// CSV data has durable content/import provenance but not canonical Amazon report/entity lineage.
-// Reuse the same decision thresholds while explicitly allowing advisory evaluation over this
-// non-Amazon lineage. Confidence remains penalized by the core model's lineage and freshness
-// factors. Historical CSV windows keep their stale label but are not hard-suppressed because
-// CSV recommendations are advisory-only and can never authorize governance persistence/execution.
+// CSV analytics is admitted only from imports explicitly classified as business data.
+// Recommendation evaluation is stricter: every contributing current-window import must also
+// carry exact/reconciled source provenance. CSV remains non-authoritative for Amazon mutation.
 const CSV_ADVISORY_RULES = Object.freeze({
   quality: Object.freeze({
     ...DEFAULT_SEARCH_TERM_RULES.quality,
@@ -127,8 +125,8 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
         recommendation: null,
         fingerprint: null,
         suppression: Object.freeze({
-          code: 'invalid_csv_provenance',
-          reason: 'CSV advisory recommendation suppressed because import provenance is incomplete or inconsistent.',
+          code: 'csv_import_authority_not_governed',
+          reason: 'CSV recommendation suppressed because one or more business imports lack exact or reconciled source provenance.',
           governancePersistenceAllowed: false,
         }),
       });
@@ -153,6 +151,8 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
       evidence: Object.freeze({
         ...preview.decision.evidence,
         sourceKind: 'csv_import',
+        dataClass: 'business',
+        provenanceClasses: csvEvidence.provenanceClasses,
         csvProvenanceValid: csvEvidence.provenanceValid,
         sourceImportIds: csvEvidence.sourceImportIds,
         contentSha256s: csvEvidence.contentSha256s,
@@ -165,6 +165,9 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
         authoritative: false,
         mode: 'non_authoritative',
         label: 'non-authoritative',
+        dataClass: 'business',
+        provenanceClasses: csvEvidence.provenanceClasses,
+        recommendationGoverned: csvEvidence.provenanceValid,
         reasons: Object.freeze([...new Set([...(preview.authority?.reasons || []), 'csv_source_not_amazon_authority', 'amazon_entity_identity_unresolved'])]),
         amazonMutationAuthorized: false,
       }),
@@ -182,11 +185,13 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
   return json(request, {
     schemaVersion: SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION,
     modelVersion: SEARCH_TERM_MODEL_VERSION,
-    ruleVersion: `${SEARCH_TERM_RULE_VERSION}+csv-advisory-v1`,
+    ruleVersion: `${SEARCH_TERM_RULE_VERSION}+csv-authority-v2`,
     source: Object.freeze({
       kind: 'csv_import',
       schemaVersion: 'csv-import-v1',
       authority: 'non-authoritative',
+      dataClassGate: 'business',
+      recommendationProvenanceGate: ['exact_source_object', 'reconciled_exact_source'],
       amazonEntityIdentityResolved: false,
       governancePersistenceAllowed: false,
       amazonMutationAuthorized: false,
@@ -217,7 +222,9 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
     rules: CSV_ADVISORY_RULES,
     summary: {
       itemCount: items.length,
+      businessDataOnly: true,
       recommendationCandidateCount: candidateCount,
+      governedProvenanceItemCount: provenanceValidCount,
       csvProvenanceValidItemCount: provenanceValidCount,
       authoritativeRecommendationCount: 0,
       governancePersistenceAllowed: false,
@@ -272,12 +279,15 @@ async function queryCsvSearchTermIntelligence(db, input) {
                    OR LENGTH(b.content_sha256) <> 64
                    OR f.report_date < b.report_start_date
                    OR f.report_date > b.report_end_date
+                   OR a.provenance_class NOT IN ('exact_source_object','reconciled_exact_source')
                  ) THEN 1 ELSE 0 END) AS invalid_provenance_count,
         GROUP_CONCAT(DISTINCT CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.source_import_id END) AS source_import_ids,
         GROUP_CONCAT(DISTINCT CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN b.content_sha256 END) AS content_sha256s,
+        GROUP_CONCAT(DISTINCT CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN a.provenance_class END) AS provenance_classes,
         MAX(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.report_date END) AS latest_report_date,
         MAX(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.updated_at END) AS fact_updated_at
       FROM csv_search_term_daily f
+      JOIN csv_import_authority a ON a.import_id=f.source_import_id AND a.data_class='business'
       LEFT JOIN csv_import_batches b ON b.import_id=f.source_import_id
       WHERE f.report_date BETWEEN ?1 AND ?4
         AND (?5 IS NULL OR f.profile_id=?5)
@@ -307,11 +317,14 @@ async function queryCsvSearchTermIntelligence(db, input) {
 function csvEvidenceFromRow(row) {
   const sourceImportIds = splitCsv(row.source_import_ids);
   const contentSha256s = splitCsv(row.content_sha256s).map((value) => value.toLowerCase());
+  const provenanceClasses = splitCsv(row.provenance_classes);
   const invalidProvenanceCount = Number(row.invalid_provenance_count || 0);
   const provenanceValid = Number(row.fact_row_count || 0) > 0
     && invalidProvenanceCount === 0
     && sourceImportIds.length > 0
     && contentSha256s.length > 0
+    && provenanceClasses.length > 0
+    && provenanceClasses.every((value) => ['exact_source_object', 'reconciled_exact_source'].includes(value))
     && contentSha256s.every((value) => /^[a-f0-9]{64}$/.test(value));
   return Object.freeze({
     provenanceValid,
@@ -319,6 +332,7 @@ function csvEvidenceFromRow(row) {
     invalidProvenanceCount,
     sourceImportIds: Object.freeze(sourceImportIds),
     contentSha256s: Object.freeze(contentSha256s),
+    provenanceClasses: Object.freeze(provenanceClasses),
     latestReportDate: row.latest_report_date || null,
     factUpdatedAt: row.fact_updated_at || null,
   });

@@ -18,6 +18,7 @@ const deploymentReceipt = await text('scripts/deployment-integrity-receipt.mjs')
 const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
+const productionStatus = await text('docs/architecture/PRODUCTION_PLATFORM_STATUS.md');
 const gate24Receipt = JSON.parse(await text('docs/architecture/PHASE2_GATE24_DEPLOYMENT_RECEIPT.json'));
 const previewHardeningReceipt = JSON.parse(await text('docs/architecture/PHASE2_PREVIEW_HARDENING_DEPLOYMENT_RECEIPT.json'));
 
@@ -158,23 +159,40 @@ assert.equal(previewHardeningReceipt.buildOutcome, 'success');
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
 
-// Production remains explicitly non-ready; placeholders cannot be erased by Phase 2 governance work.
-for (const placeholder of [
+// Historical Phase 2 production freeze remains immutable evidence, while the current production
+// resource contract supersedes it for deployable topology.
+assert.match(phase2Definition, /Production remains out of scope/i);
+assert.match(productionStatus, /supersedes the historical Phase 2 statement that Production was out of scope/i);
+assert.match(productionStatus, /runtime verification/i);
+for (const forbiddenPlaceholder of [
   'REPLACE_PROD_CONTROL_D1_ID',
   'REPLACE_PROD_STORE_01_D1_ID',
   'REPLACE_PROD_STORE_02_D1_ID',
   'REPLACE_PROD_STORE_03_D1_ID',
   'REPLACE_PROD_STORE_04_D1_ID',
 ]) {
-  assert.match(nativeWrangler, new RegExp(placeholder));
+  assert.doesNotMatch(nativeWrangler, new RegExp(forbiddenPlaceholder));
+  assert.doesNotMatch(syncWrangler, new RegExp(forbiddenPlaceholder));
 }
-assert.match(nativeWrangler, /https:\/\/REPLACE_ME\.cloudflareaccess\.com/);
-assert.match(nativeWrangler, /"ACCESS_AUD"\s*:\s*"REPLACE_ME"/);
-assert.match(phase2Definition, /Production remains out of scope/i);
+assert.doesNotMatch(nativeWrangler, /https:\/\/REPLACE_ME\.cloudflareaccess\.com/);
+assert.doesNotMatch(nativeWrangler, /"ACCESS_AUD"\s*:\s*"REPLACE_ME"/);
+assert.match(nativeWrangler, /"name"\s*:\s*"ads-operations-web-prod"/);
+assert.match(nativeWrangler, /"database_name"\s*:\s*"ads-ops-control-prod"/);
+for (const storeName of ['ads-ops-store-prod-01','ads-ops-store-prod-02','ads-ops-store-prod-03','ads-ops-store-prod-04']) {
+  assert.match(nativeWrangler, new RegExp(storeName));
+  assert.match(syncWrangler, new RegExp(storeName));
+}
+assert.match(nativeWrangler, /"bucket_name"\s*:\s*"ads-ops-data-prod"/);
+assert.match(syncWrangler, /"bucket_name"\s*:\s*"ads-ops-data-prod"/);
+assert.match(nativeWrangler, /"ACCESS_MODE"\s*:\s*"enforce"/);
+assert.match(nativeWrangler, /https:\/\/tanshiyuesir\.cloudflareaccess\.com/);
+assert.match(nativeWrangler, /"ACCESS_AUD"\s*:\s*"[a-f0-9]{64}"/);
+assert.match(productionStatus, /SYNC_TRIGGER_ENABLED=false/);
+assert.match(productionStatus, /AMAZON_ADS_ENABLED=false/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-post-hardening-v7',
+  contract: 'deployment-integrity-production-ready-v8',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   canonicalCiPerformsLiveCloudflareMutation: false,
@@ -193,5 +211,5 @@ console.log(JSON.stringify({
   runtimeVersionHealthRouted: true,
   previewUrlsDisabled: true,
   amazonDormant: true,
-  productionNotReady: true
+  productionConfigResolved: true
 }, null, 2));
