@@ -48,6 +48,7 @@ export function createSettlementImportSourceObjectStore({ bucket } = {}) {
     async persist(descriptor) {
       assertDescriptor(descriptor);
       let object;
+      let reusedExisting = false;
       try {
         object = await putRawObject({
           key:descriptor.objectKey,
@@ -58,7 +59,11 @@ export function createSettlementImportSourceObjectStore({ bucket } = {}) {
           },
         });
       } catch (error) {
-        throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_PERSIST_FAILED', error);
+        if (!isCreateConditionFailure(error)) {
+          throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_PERSIST_FAILED', error);
+        }
+        object = await verifyExistingObject(bucket, descriptor);
+        reusedExisting = true;
       }
       return Object.freeze({
         sourceObjectId:descriptor.sourceObjectId,
@@ -73,6 +78,7 @@ export function createSettlementImportSourceObjectStore({ bucket } = {}) {
         uploadedAt:descriptor.uploadedAt,
         r2Etag:optionalText(object?.httpEtag || object?.etag),
         r2Version:optionalText(object?.version),
+        reusedExisting,
       });
     },
   });
@@ -81,6 +87,41 @@ export function createSettlementImportSourceObjectStore({ bucket } = {}) {
 export function bindSettlementImportSourceReceipt(importId, persisted) {
   assertReceipt(persisted);
   return Object.freeze({ importId:requiredText(importId, 'SETTLEMENT_IMPORT_ID_REQUIRED'), ...persisted });
+}
+
+async function verifyExistingObject(bucket, descriptor) {
+  let object;
+  try {
+    object = await bucket.get(descriptor.objectKey);
+  } catch (error) {
+    throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_EXISTING_READ_FAILED', error);
+  }
+  if (!object || typeof object.arrayBuffer !== 'function') {
+    throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_EXISTING_MISSING');
+  }
+  let bytes;
+  try {
+    bytes = new Uint8Array(await object.arrayBuffer());
+  } catch (error) {
+    throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_EXISTING_READ_FAILED', error);
+  }
+  if (bytes.byteLength !== descriptor.contentBytes) {
+    throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_EXISTING_SIZE_MISMATCH');
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  if (bytesToHex(digest) !== descriptor.contentSha256) {
+    throw new SettlementImportSourceObjectError('SETTLEMENT_SOURCE_R2_EXISTING_SHA256_MISMATCH');
+  }
+  return object;
+}
+
+function isCreateConditionFailure(error) {
+  let current = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    if (current.code === 'R2_RAW_WRITER_CREATE_CONDITION_FAILED') return true;
+    current = current.cause;
+  }
+  return false;
 }
 
 function assertDescriptor(value) {
