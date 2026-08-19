@@ -1,0 +1,94 @@
+name: Cloudflare Release Trace
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/generate-cloudflare-release-trace.mjs'
+      - 'scripts/test-generate-cloudflare-release-trace.mjs'
+      - 'scripts/deployment-integrity-receipt.mjs'
+      - 'scripts/cloudflare-deployment-discovery-client.mjs'
+      - '.github/workflows/cloudflare-release-trace.yml'
+  push:
+    branches:
+      - 'feature/**'
+      - 'deployment-integrity-*'
+    paths:
+      - 'scripts/generate-cloudflare-release-trace.mjs'
+      - 'scripts/test-generate-cloudflare-release-trace.mjs'
+      - 'scripts/deployment-integrity-receipt.mjs'
+      - 'scripts/cloudflare-deployment-discovery-client.mjs'
+      - '.github/workflows/cloudflare-release-trace.yml'
+  workflow_run:
+    workflows:
+      - Cloudflare Native Canonical CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-release-trace-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    name: Release trace contracts
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check release automation
+        run: |
+          node --check scripts/generate-cloudflare-release-trace.mjs
+          node --check scripts/test-generate-cloudflare-release-trace.mjs
+      - name: Validate release automation contract
+        run: node scripts/test-generate-cloudflare-release-trace.mjs
+
+  trace:
+    name: Trace ${{ matrix.environment }} release
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: development
+            worker: ads-operations-web-dev
+          - environment: production
+            worker: ads-operations-web-prod
+    env:
+      EXPECTED_GIT_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_TRACE_ENVIRONMENT: ${{ matrix.environment }}
+      RELEASE_TRACE_WORKER_NAME: ${{ matrix.worker }}
+      RELEASE_TRACE_OUTPUT_PATH: artifacts/cloudflare-release-trace-${{ matrix.environment }}.json
+      RELEASE_TRACE_ATTEMPTS: '30'
+      RELEASE_TRACE_DELAY_MS: '20000'
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout exact canonical commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate immutable release trace from Cloudflare control-plane truth
+        run: node scripts/generate-cloudflare-release-trace.mjs
+      - name: Upload release trace
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-release-trace-${{ matrix.environment }}-${{ github.event.workflow_run.head_sha }}
+          path: artifacts/cloudflare-release-trace-${{ matrix.environment }}.json
+          if-no-files-found: error
+          retention-days: 90
