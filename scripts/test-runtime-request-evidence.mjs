@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeRuntimeRoute,
+  runtimeEvidenceDataPoint,
   runtimeEvidenceRecord,
   runtimeWorkerVersion,
 } from '../cloudflare/runtime/runtime-observed-entry.js';
@@ -53,4 +54,38 @@ assert.equal(serialized.includes('sensitive-search-term'), false);
 assert.equal(serialized.includes('must-not-appear'), false);
 assert.equal(serialized.includes('authorization'), false);
 
-console.log(JSON.stringify({ ok: true, contract: 'runtime-request-evidence', record }));
+const dataPoint = runtimeEvidenceDataPoint(record);
+assert.deepEqual(dataPoint, {
+  indexes: ['version-123'],
+  blobs: [
+    'runtime_request_evidence',
+    'ads-operations-web-prod',
+    'production',
+    'ray-123',
+    'GET',
+    '/api/v1/stores/:store/csv-analytics/:dimension',
+    '',
+  ],
+  doubles: [200, 17],
+});
+const dataPointSerialized = JSON.stringify(dataPoint);
+assert.equal(dataPointSerialized.includes('store-secret'), false);
+assert.equal(dataPointSerialized.includes('sensitive-search-term'), false);
+assert.equal(dataPointSerialized.includes('must-not-appear'), false);
+assert.equal(dataPointSerialized.includes('authorization'), false);
+
+const writes = [];
+const runtimeDataset = { writeDataPoint(value) { writes.push(value); } };
+assert.equal(typeof runtimeDataset.writeDataPoint, 'function');
+runtimeDataset.writeDataPoint(dataPoint);
+assert.equal(writes.length, 1);
+assert.deepEqual(writes[0], dataPoint);
+
+console.log(JSON.stringify({
+  ok: true,
+  contract: 'runtime-request-evidence',
+  storage: 'analytics-engine',
+  rawRequestMetadataPersisted: false,
+  record,
+  dataPoint,
+}));
