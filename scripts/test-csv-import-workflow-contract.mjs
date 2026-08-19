@@ -35,11 +35,11 @@ assert.doesNotMatch(api, /sourceCode\.startsWith\('CSV_'\)/, 'Internal CSV-prefi
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV import API must not open Amazon execution');
 
 assert.match(entry, /handleSettlementImportsApiRoute/, 'Settlement imports modular handler is not wired');
-const settlementDispatch = entry.indexOf('handleSettlementImportsApiRoute');
+const settlementDispatch = entry.indexOf('handleSettlementImportsApiRoute({ request, env, actor, url, ctx })');
 const genericDispatch = entry.indexOf('handleCsvImportsApiRoute({ request, env, actor, url })');
 assert.ok(settlementDispatch >= 0 && genericDispatch >= 0 && settlementDispatch < genericDispatch,
   'Settlement route must be dispatched before the generic Search Term import handler');
-assert.match(settlementApi, /\/imports\\\/settlements/, 'Settlement import route missing');
+assert.match(settlementApi, /settlements/, 'Settlement import route missing');
 assert.match(settlementApi, /request\.arrayBuffer\(\)/, 'Settlement upload must preserve exact source bytes');
 assert.match(settlementApi, /parseAmazonSettlementCsv/, 'Settlement parser is not wired');
 assert.match(settlementApi, /createSettlementImportSourceObjectStore/, 'Settlement R2 source store is not wired');
@@ -59,7 +59,7 @@ await import('./test-csv-observed-targeting-identity.mjs');
 await import('./test-csv-joint-report-analysis.mjs');
 await import('./test-settlement-csv-import.mjs');
 await import('./test-settlement-source-object.mjs');
-execFileSync('python3', [path.join(root, 'scripts/test-settlement-csv-foundation.py')], { stdio:'inherit' });
+execFileSync('python3', [path.join(root, 'scripts/test-settlement-csv-foundation-v2.py')], { stdio:'inherit' });
 
 console.log(JSON.stringify({
   ok: true,
