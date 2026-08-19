@@ -261,6 +261,9 @@
     const spendMicros = numberOr(row.spendMicros, 0);
     const orders = numberOr(row.orders ?? row.purchases, 0);
     const salesMicros = numberOr(row.salesMicros, 0);
+    const suppliedCvr = finiteNumber(row.cvr);
+    const suppliedAcos = finiteNumber(row.acos);
+    const suppliedRoas = finiteNumber(row.roas);
     return {
       ...row,
       impressions,
@@ -268,27 +271,40 @@
       spendMicros,
       orders,
       salesMicros,
-      cvr: Number.isFinite(Number(row.cvr)) ? Number(row.cvr) : (clicks === 0 ? null : orders / clicks),
-      acos: Number.isFinite(Number(row.acos)) ? Number(row.acos) : (salesMicros === 0 ? null : spendMicros / salesMicros),
-      roas: Number.isFinite(Number(row.roas)) ? Number(row.roas) : (spendMicros === 0 ? null : salesMicros / spendMicros),
+      cvr: suppliedCvr ?? (clicks === 0 ? null : orders / clicks),
+      acos: suppliedAcos ?? (salesMicros === 0 ? null : spendMicros / salesMicros),
+      roas: suppliedRoas ?? (spendMicros === 0 ? null : salesMicros / spendMicros),
     };
   }
 
   function quantile(rows, field, p) {
-    const values = rows.map((row) => Number(row[field])).filter(Number.isFinite).sort((a, b) => a - b);
+    const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null).sort((a, b) => a - b);
     if (!values.length) return null;
     return values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * p) - 1))];
   }
 
   function average(rows, field) { return rows.length ? rows.reduce((sum, row) => sum + numberOr(row[field], 0), 0) / rows.length : null; }
   function averageFinite(rows, field) {
-    const values = rows.map((row) => Number(row[field])).filter(Number.isFinite);
+    const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null);
     return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
   }
-  function finiteAtLeast(value, threshold) { return Number.isFinite(Number(value)) && Number.isFinite(Number(threshold)) && Number(value) >= Number(threshold); }
-  function finiteAtMost(value, threshold) { return Number.isFinite(Number(value)) && Number.isFinite(Number(threshold)) && Number(value) <= Number(threshold); }
-  function finiteOrNull(value) { return Number.isFinite(Number(value)) ? Number(value) : null; }
-  function numberOr(value, fallback) { return Number.isFinite(Number(value)) ? Number(value) : fallback; }
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+  function finiteAtLeast(value, threshold) {
+    const numeric = finiteNumber(value);
+    const benchmark = finiteNumber(threshold);
+    return numeric !== null && benchmark !== null && numeric >= benchmark;
+  }
+  function finiteAtMost(value, threshold) {
+    const numeric = finiteNumber(value);
+    const benchmark = finiteNumber(threshold);
+    return numeric !== null && benchmark !== null && numeric <= benchmark;
+  }
+  function finiteOrNull(value) { return finiteNumber(value); }
+  function numberOr(value, fallback) { return finiteNumber(value) ?? fallback; }
 
   function activeFilters() {
     const filters = global.CloudflareCsvAnalyticsDrilldown?.activeFilters?.() || {};
@@ -363,10 +379,10 @@
     if (button) button.disabled = Boolean(busy);
   }
   function summaryCard(label, value, note) { return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div>`; }
-  function formatInt(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(value)) : '—'; }
-  function money(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value) / 1e6) : '—'; }
-  function pct(value) { return Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(2)}%` : '—'; }
-  function ratio(value) { return Number.isFinite(Number(value)) ? Number(value).toFixed(2) : '—'; }
+  function formatInt(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(numeric); }
+  function money(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(numeric / 1e6); }
+  function pct(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : `${(numeric * 100).toFixed(2)}%`; }
+  function ratio(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : numeric.toFixed(2); }
   function escapeHtml(value) { return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;'); }
 
   function installStyles() {
