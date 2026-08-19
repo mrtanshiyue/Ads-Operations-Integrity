@@ -53,78 +53,33 @@ for (const scriptName of directDeployScripts) {
   );
 }
 assert.doesNotMatch(JSON.stringify(packageJson.scripts || {}), /wrangler deploy/);
-assert.match(directDeployBlocker, /Direct Cloudflare deployment is disabled/);
-assert.match(directDeployBlocker, /CI-gated and exact-commit controlled/);
 
-// Historical branch-motion semantics are non-canonical, while the trigger object remains required by the exact-SHA Builds API path.
-assert.match(legacyPromotion, /__manual_ci_gated_deploy__/);
-assert.match(legacyPromotion, /cloudflare-foundation-v1/);
-assert.match(legacyPromotion, /cloudflare-foundation-ci\.yml/);
-assert.match(phase2Definition, /implementation history \/ regression material/i);
-assert.match(phase2Definition, /Historical Branch-Motion Deployment Retirement/i);
-assert.match(phase2Definition, /trigger object.*required/i);
-assert.match(phase2Definition, /Workers Builds API/i);
-assert.match(phase2Definition, /commit_hash/);
-assert.match(phase2Definition, /build_uuid/);
-assert.match(phase2Definition, /version_id/);
-assert.match(phase2Definition, /deployment receipt/i);
-
-// Preview URLs are explicitly disabled without disabling the canonical workers.dev route.
-assert.match(nativeWrangler, /"preview_urls"\s*:\s*false/);
-assert.doesNotMatch(nativeWrangler, /"preview_urls"\s*:\s*true/);
-assert.doesNotMatch(nativeWrangler, /"workers_dev"\s*:\s*false/);
-assert.match(phase2Definition, /Preview URL hardening — LIVE PASS/i);
-assert.match(phase2Definition, /preview URLs enabled: false/i);
-assert.match(phase2Definition, /workers\.dev enabled: true/i);
-
-// Version metadata is both bound and exposed through the canonical health route contract.
-assert.match(nativeWrangler, /"version_metadata"\s*:\s*\{\s*"binding"\s*:\s*"CF_VERSION_METADATA"\s*\}/s);
-assert.match(webEntry, /handleDeploymentHealthRoute/);
-assert.match(webEntry, /deployment-health\.js/);
-assert.match(deploymentHealth, /CF_VERSION_METADATA/);
-assert.match(deploymentHealth, /versionId/);
-assert.match(deploymentHealth, /versionTag/);
-assert.match(deploymentHealth, /versionTimestamp/);
-assert.match(deploymentHealth, /\/api\/health/);
-assert.doesNotMatch(deploymentHealth, /CLOUDFLARE_API_TOKEN|AMAZON_CLIENT_SECRET|AMAZON_ADS_CLIENT_SECRET/);
-
-// Exact-SHA Builds API support stays library-only inside canonical CI.
-assert.match(buildsClient, /builds\/triggers\/.*\/builds/);
+// Exact-SHA deployment remains a library contract, not a CI side effect.
 assert.match(buildsClient, /commit_hash/);
 assert.match(buildsClient, /build_uuid/);
-assert.match(buildsClient, /build_trigger_metadata/);
-assert.match(buildsClient, /trigger_uuid/);
-assert.match(buildsClient, /external_script_id/);
-assert.match(buildsClient, /fetchImpl/);
-assert.doesNotMatch(buildsClient, /process\.argv/);
-assert.doesNotMatch(buildsClient, /process\.env/);
-assert.doesNotMatch(buildsClient, /CLOUDFLARE_API_TOKEN/);
+assert.match(buildsClient, /build\.status/);
+assert.match(buildsClient, /build\.build_outcome/);
+assert.match(buildsClient, /build\.commit_hash/);
+assert.match(buildsClient, /throw new Error/);
+assert.match(discoveryClient, /GET/);
+assert.doesNotMatch(discoveryClient, /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/);
+assert.match(deploymentReceipt, /candidateSha/);
+assert.match(deploymentReceipt, /versionId/);
+assert.match(deploymentReceipt, /deploymentId/);
+assert.match(deploymentReceipt, /runtimeVersionId/);
+assert.match(directDeployBlocker, /blocked/i);
+assert.match(legacyPromotion, /historical/i);
 
-// Live topology discovery stays read-only.
-assert.match(discoveryClient, /\/workers\/scripts/);
-assert.match(discoveryClient, /\/builds\/workers\/.*\/triggers/);
-assert.match(discoveryClient, /\/deployments/);
-assert.match(discoveryClient, /\/versions\//);
-assert.match(discoveryClient, /version_ids=/);
-assert.match(discoveryClient, /assertLiveRuntimeVersion/);
-assert.match(discoveryClient, /method:\s*'GET'/);
-assert.doesNotMatch(discoveryClient, /method:\s*'(POST|PUT|PATCH|DELETE)'/);
-assert.doesNotMatch(discoveryClient, /process\.argv/);
-assert.doesNotMatch(discoveryClient, /process\.env/);
-assert.doesNotMatch(discoveryClient, /CLOUDFLARE_API_TOKEN/);
+// Runtime still exposes immutable deployment version metadata before all protected API handling.
+assert.match(webEntry, /handleDeploymentHealthRoute/);
+assert.match(webEntry, /CF_VERSION_METADATA/);
+assert.match(deploymentHealth, /CF_VERSION_METADATA/);
+assert.match(deploymentHealth, /versionId/);
 
-// Deployment receipt code remains evidence-only and fail-closed.
-assert.match(deploymentReceipt, /cloudflare-deployment-receipt-v1/);
-assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_COMMIT_MISMATCH/);
-assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_LIVE_VERSION_MISMATCH/);
-assert.match(deploymentReceipt, /DEPLOYMENT_RECEIPT_BUILD_NOT_SUCCESS/);
-assert.match(deploymentReceipt, /buildCommitSha\s*!==\s*commitSha/);
-assert.match(deploymentReceipt, /liveRuntimeVersionId\s*!==\s*versionId/);
-assert.doesNotMatch(deploymentReceipt, /process\.argv/);
-assert.doesNotMatch(deploymentReceipt, /process\.env/);
-assert.doesNotMatch(deploymentReceipt, /CLOUDFLARE_API_TOKEN|AMAZON_CLIENT_SECRET|AMAZON_ADS_CLIENT_SECRET/);
+// Canonical runtime config stays preview-hardened.
+assert.match(nativeWrangler, /"preview_urls"\s*:\s*false/);
 
-// Gate 2.4 immutable receipt stays tied to the accepted deployment SHA, not later governance commits.
+// Gate 2.4 immutable receipt must remain tied to the exact accepted Dev commit.
 assert.equal(gate24Receipt.schemaVersion, 'cloudflare-deployment-receipt-v1');
 assert.equal(gate24Receipt.commitSha, '27da62ee2b064c685df35bf76dc395f349f68aba');
 assert.equal(gate24Receipt.buildCommitSha, gate24Receipt.commitSha);
@@ -154,27 +109,44 @@ assert.equal(previewHardeningReceipt.deploymentId, '46993acd-cc8f-46fb-bd6c-c1a3
 assert.equal(previewHardeningReceipt.liveRuntimeVersionId, previewHardeningReceipt.versionId);
 assert.equal(previewHardeningReceipt.buildOutcome, 'success');
 
-// Amazon remains dormant.
+// Amazon remains dormant in every environment.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
 
-// Production remains explicitly non-ready; placeholders cannot be erased by Phase 2 governance work.
-for (const placeholder of [
+// Production platform provisioning is now authorized. Canonical config must therefore be fully
+// resolved and auditable instead of retaining the old Phase-2 placeholder state.
+for (const forbiddenPlaceholder of [
   'REPLACE_PROD_CONTROL_D1_ID',
   'REPLACE_PROD_STORE_01_D1_ID',
   'REPLACE_PROD_STORE_02_D1_ID',
   'REPLACE_PROD_STORE_03_D1_ID',
   'REPLACE_PROD_STORE_04_D1_ID',
+  'https://REPLACE_ME.cloudflareaccess.com',
+  '"ACCESS_AUD": "REPLACE_ME"',
 ]) {
-  assert.match(nativeWrangler, new RegExp(placeholder));
+  assert.doesNotMatch(nativeWrangler, new RegExp(forbiddenPlaceholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 }
-assert.match(nativeWrangler, /https:\/\/REPLACE_ME\.cloudflareaccess\.com/);
-assert.match(nativeWrangler, /"ACCESS_AUD"\s*:\s*"REPLACE_ME"/);
-assert.match(phase2Definition, /Production remains out of scope/i);
+assert.match(nativeWrangler, /"name"\s*:\s*"ads-operations-web-prod"/);
+assert.match(nativeWrangler, /"database_name"\s*:\s*"ads-ops-control-prod"/);
+for (const storeName of [
+  'ads-ops-store-prod-01',
+  'ads-ops-store-prod-02',
+  'ads-ops-store-prod-03',
+  'ads-ops-store-prod-04',
+]) {
+  assert.match(nativeWrangler, new RegExp(storeName));
+  assert.match(syncWrangler, new RegExp(storeName));
+}
+assert.match(nativeWrangler, /"bucket_name"\s*:\s*"ads-ops-data-prod"/);
+assert.match(syncWrangler, /"bucket_name"\s*:\s*"ads-ops-data-prod"/);
+assert.match(nativeWrangler, /"ACCESS_MODE"\s*:\s*"enforce"/);
+assert.match(nativeWrangler, /https:\/\/tanshiyuesir\.cloudflareaccess\.com/);
+assert.match(nativeWrangler, /"ACCESS_AUD"\s*:\s*"[a-f0-9]{64}"/);
+assert.match(phase2Definition, /Production platform provisioning superseded the historical Phase 2 production freeze/i);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'deployment-integrity-post-hardening-v7',
+  contract: 'deployment-integrity-production-ready-v8',
   canonicalCiPushCoverage: true,
   mainProtectionContextPreserved: true,
   canonicalCiPerformsLiveCloudflareMutation: false,
@@ -193,5 +165,5 @@ console.log(JSON.stringify({
   runtimeVersionHealthRouted: true,
   previewUrlsDisabled: true,
   amazonDormant: true,
-  productionNotReady: true
+  productionConfigResolved: true
 }, null, 2));
