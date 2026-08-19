@@ -8,6 +8,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc');
 const syncConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.sync.jsonc');
+const runtimeObservedEntryPath = path.join(repoRoot, 'cloudflare/runtime/runtime-observed-entry.js');
 const webEntryPath = path.join(repoRoot, 'cloudflare/runtime/web-entry.js');
 const syncWorkerPath = path.join(repoRoot, 'cloudflare/runtime/sync-worker.js');
 const activationStatePath = path.join(repoRoot, 'docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json');
@@ -20,9 +21,10 @@ if (!['dev', 'production'].includes(envName)) {
   throw new Error(`Unsupported environment: ${envName}`);
 }
 
-const [webConfig, syncConfig, webEntrySource, syncWorkerSource, activationState] = await Promise.all([
+const [webConfig, syncConfig, runtimeObservedEntrySource, webEntrySource, syncWorkerSource, activationState] = await Promise.all([
   readConfig(webConfigPath),
   readConfig(syncConfigPath),
+  readFile(runtimeObservedEntryPath, 'utf8'),
   readFile(webEntryPath, 'utf8'),
   readFile(syncWorkerPath, 'utf8'),
   readConfig(activationStatePath),
@@ -67,6 +69,8 @@ console.log(JSON.stringify({
   phase5Activation,
   web: {
     main: webConfig.main,
+    canonicalApplicationEntry: './web-entry.js',
+    runtimeEvidenceWrapper: true,
     d1Bindings: bindingNames(webEnv.d1_databases),
     r2Bindings: bindingNames(webEnv.r2_buckets),
     workflows: bindingNames(webEnv.workflows),
@@ -88,7 +92,21 @@ async function readConfig(configPath) {
 }
 
 function validateWebRuntime() {
-  if (webConfig.main !== './web-entry.js') errors.push('web main must be ./web-entry.js');
+  if (webConfig.main !== './runtime-observed-entry.js') {
+    errors.push('web main must be ./runtime-observed-entry.js');
+  }
+  if (!/import\s+application\s+from\s+['"]\.\/web-entry\.js['"]/.test(runtimeObservedEntrySource)) {
+    errors.push('runtime evidence wrapper must import canonical ./web-entry.js application entry');
+  }
+  if (/src\/worker\.js/.test(runtimeObservedEntrySource)) {
+    errors.push('runtime evidence wrapper must not reference legacy src/worker.js');
+  }
+  if (!runtimeObservedEntrySource.includes('runtime_request_evidence')) {
+    errors.push('runtime evidence wrapper must emit runtime_request_evidence');
+  }
+  if (!runtimeObservedEntrySource.includes('CF_VERSION_METADATA')) {
+    errors.push('runtime evidence wrapper must bind runtime version metadata');
+  }
   if (webConfig.assets?.binding !== 'ASSETS') errors.push('web assets.binding must be ASSETS');
   if (webConfig.assets?.not_found_handling !== 'single-page-application') {
     errors.push('web assets.not_found_handling must be single-page-application');

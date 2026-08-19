@@ -79,7 +79,10 @@ assert.equal(await exists('cloudflare/runtime/wrangler.security-test.jsonc'), tr
 assert.equal(await exists('cloudflare/foundation/migrations/control/0006_control_access_recovery.sql'), true, 'missing access recovery migration');
 
 const nativeWrangler = await text('cloudflare/runtime/wrangler.native.jsonc');
-assert.match(nativeWrangler, /"main"\s*:\s*"\.\/web-entry\.js"/);
+assert.match(nativeWrangler, /"main"\s*:\s*"\.\/runtime-observed-entry\.js"/);
+const runtimeObservedEntry = await text('cloudflare/runtime/runtime-observed-entry.js');
+assert.match(runtimeObservedEntry, /from ['"]\.\/web-entry\.js['"]/);
+assert.doesNotMatch(runtimeObservedEntry, /src\/worker\.js/);
 const webEntry = await text('cloudflare/runtime/web-entry.js');
 assert.match(webEntry, /from ['"]\.\/web-worker\.js['"]/);
 assert.doesNotMatch(webEntry, /src\/worker\.js/);
@@ -235,6 +238,7 @@ console.log(JSON.stringify({
   contract: 'security-integrity-canonical-v10',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
+  runtimeEvidenceWrapper: 'cloudflare/runtime/runtime-observed-entry.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
   legacyBrowserLoaderSourceOwner: 'docs/archive/legacy-browser-loaders/',
   rootWranglerAbsent: true,
