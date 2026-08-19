@@ -1,7 +1,7 @@
 (function initCloudflareCsvLocalDiagnostics(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const PAGE_LIMIT = 200;
   const MAX_SEARCH_TERM_ROWS = 5000;
   const MAX_OBSERVATIONS = 80;
@@ -19,6 +19,7 @@
   if (global.document.readyState === 'loading') global.document.addEventListener('DOMContentLoaded', mount, { once: true });
   else mount();
   global.addEventListener?.('cloudflare-operator-store-change', () => void refresh());
+  global.addEventListener?.('cloudflare-csv-analytics-scope-change', () => void refresh());
 
   function mount() {
     if (state.mounted) return;
@@ -43,6 +44,7 @@
       </div>
       <div class="cfCsvDiagnosticsDiscipline">These observations explain local performance patterns only. They are not approved optimization recommendations and cannot authorize Amazon mutation.</div>
       <div class="cfCsvDiagnosticsStatus" data-cfdiag-status role="status" aria-live="polite">Waiting for analytics scope.</div>
+      <div class="cfCsvDiagnosticsCoverage" data-cfdiag-coverage></div>
       <div class="cfCsvDiagnosticsSummary" data-cfdiag-summary></div>
       <div class="cfCsvDiagnosticsTableWrap"><table><thead><tr><th>Category</th><th>Diagnostic</th><th>Subject</th><th>Evidence</th><th>Severity</th></tr></thead><tbody data-cfdiag-body></tbody></table></div>`;
     const quality = dashboard.querySelector('.cfCsvAnalyticsQualityCard');
@@ -55,7 +57,7 @@
   }
 
   async function refresh() {
-    if (!state.root || state.loading) return;
+    if (!state.root) return;
     const scope = dashboardScope();
     if (!scope.storeId || !scope.startDate || !scope.endDate) {
       renderStatus('Store and date range are required before diagnostics.', 'warn');
@@ -80,12 +82,16 @@
         campaigns: campaignsPayload?.items || [],
         daily: dailyPayload?.items || [],
         matchTypes: matchPayload?.items || [],
-        searchTermTotal: searchTerms.totalItems,
-        searchTermComplete: searchTerms.complete,
+        searchTermTotal: searchTerms.totalGroups,
+        searchTermComplete: !searchTerms.partial,
+        searchTermTruncationReason: searchTerms.truncationReason,
+        searchTermPagesLoaded: searchTerms.pagesLoaded,
         scope: { ...scope, filters },
       });
       renderResult(result);
-      renderStatus(`${result.observations.length} local observations generated. No execution authority granted.`, 'ok');
+      renderStatus(result.coverage.partial
+        ? `${result.observations.length} observations generated from partial coverage. No execution authority granted.`
+        : `${result.observations.length} local observations generated from full coverage. No execution authority granted.`, 'ok');
     } catch (error) {
       if (seq !== state.requestSeq) return;
       renderResult(null);
@@ -102,23 +108,28 @@
     const first = await api().csvAnalytics(storeId, 'search-term', {
       ...common, page: 1, limit: PAGE_LIMIT, sort: 'spendMicros', direction: 'desc',
     });
-    const totalItems = Number(first?.pagination?.totalItems || 0);
-    const totalPages = Number(first?.pagination?.totalPages || 0);
+    const totalGroups = Math.max(0, Number(first?.pagination?.totalItems || 0));
+    const totalPages = Math.max(0, Number(first?.pagination?.totalPages || 0));
     const allowedPages = Math.min(totalPages, Math.ceil(MAX_SEARCH_TERM_ROWS / PAGE_LIMIT));
     const items = [...(first?.items || [])];
+    let pagesLoaded = totalPages > 0 ? 1 : 0;
     for (let start = 2; start <= allowedPages; start += 4) {
       const pages = [];
       for (let page = start; page < start + 4 && page <= allowedPages; page += 1) pages.push(page);
       const responses = await Promise.all(pages.map((page) => api().csvAnalytics(storeId, 'search-term', {
         ...common, page, limit: PAGE_LIMIT, sort: 'spendMicros', direction: 'desc',
       })));
+      pagesLoaded += responses.length;
       for (const response of responses) items.push(...(response?.items || []));
     }
-    return {
-      items: items.slice(0, MAX_SEARCH_TERM_ROWS),
-      totalItems,
-      complete: totalItems <= MAX_SEARCH_TERM_ROWS,
-    };
+    const bounded = items.slice(0, MAX_SEARCH_TERM_ROWS);
+    const analyzedGroups = bounded.length;
+    const partial = analyzedGroups < totalGroups;
+    const coverageRatio = totalGroups > 0 ? analyzedGroups / totalGroups : 1;
+    const truncationReason = partial
+      ? (analyzedGroups >= MAX_SEARCH_TERM_ROWS ? `client_row_cap_${MAX_SEARCH_TERM_ROWS}` : 'incomplete_pagination')
+      : null;
+    return { items: bounded, totalGroups, analyzedGroups, coverageRatio, partial, truncationReason, pagesLoaded };
   }
 
   function generateDiagnostics(input = {}) {
@@ -138,13 +149,12 @@
       cvrP25: quantile(searchTerms, 'cvr', 0.25),
       cvrP90: quantile(searchTerms, 'cvr', 0.90),
     };
-
-    addRanked(observations, searchTerms.filter((row) => row.orders === 0 && finiteAtLeast(row.spendMicros, searchThresholds.spendP90)), 'spendMicros', 'desc', 10, (row) => observation('search-term', 'high_spend_zero_orders', 'high', row.searchTerm, `Spend ${money(row.spendMicros)} is in the top decile while attributed orders are zero.`, row, { benchmark: `P90 spend ${money(searchThresholds.spendP90)}` }));
-    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.acos) && finiteAtLeast(row.acos, searchThresholds.acosP90)), 'acos', 'desc', 10, (row) => observation('search-term', 'high_acos', 'medium', row.searchTerm, `ACoS ${pct(row.acos)} is in the highest decile of this scope.`, row, { benchmark: `P90 ACoS ${pct(searchThresholds.acosP90)}` }));
-    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.roas) && finiteAtLeast(row.roas, searchThresholds.roasP90)), 'roas', 'desc', 8, (row) => observation('search-term', 'high_roas', 'info', row.searchTerm, `ROAS ${ratio(row.roas)} is in the highest decile of this scope.`, row, { benchmark: `P90 ROAS ${ratio(searchThresholds.roasP90)}` }));
-    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.cvr) && row.clicks >= numberOr(searchThresholds.clicksP50, 0) && finiteAtLeast(row.cvr, searchThresholds.cvrP90)), 'cvr', 'desc', 8, (row) => observation('search-term', 'high_conversion', 'info', row.searchTerm, `CVR ${pct(row.cvr)} is in the highest decile with at least median click volume.`, row, { benchmark: `P90 CVR ${pct(searchThresholds.cvrP90)}` }));
-    addRanked(observations, searchTerms.filter((row) => finiteAtLeast(row.clicks, searchThresholds.clicksP90)), 'clicks', 'desc', 8, (row) => observation('search-term', 'large_click_volume', 'info', row.searchTerm, `${formatInt(row.clicks)} clicks place this search term in the highest click-volume decile.`, row, { benchmark: `P90 clicks ${formatInt(searchThresholds.clicksP90)}` }));
-    addRanked(observations, searchTerms.filter((row) => row.clicks >= numberOr(searchThresholds.clicksP75, 0) && Number.isFinite(row.cvr) && finiteAtMost(row.cvr, searchThresholds.cvrP25)), 'clicks', 'desc', 10, (row) => observation('search-term', 'low_conversion', 'medium', row.searchTerm, `${formatInt(row.clicks)} clicks with CVR ${pct(row.cvr)} are weak relative to this scope.`, row, { benchmark: `P25 CVR ${pct(searchThresholds.cvrP25)}` }));
+    addRanked(observations, searchTerms.filter((row) => row.orders === 0 && finiteAtLeast(row.spendMicros, searchThresholds.spendP90)), 'spendMicros', 'desc', 10, (row) => observation('search-term', 'high_spend_zero_orders', 'high', row.searchTerm, `Spend ${money(row.spendMicros)} is in the top decile while attributed orders are zero.`, row));
+    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.acos) && finiteAtLeast(row.acos, searchThresholds.acosP90)), 'acos', 'desc', 10, (row) => observation('search-term', 'high_acos', 'medium', row.searchTerm, `ACoS ${pct(row.acos)} is in the highest decile of this scope.`, row));
+    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.roas) && finiteAtLeast(row.roas, searchThresholds.roasP90)), 'roas', 'desc', 8, (row) => observation('search-term', 'high_roas', 'info', row.searchTerm, `ROAS ${ratio(row.roas)} is in the highest decile of this scope.`, row));
+    addRanked(observations, searchTerms.filter((row) => Number.isFinite(row.cvr) && row.clicks >= numberOr(searchThresholds.clicksP50, 0) && finiteAtLeast(row.cvr, searchThresholds.cvrP90)), 'cvr', 'desc', 8, (row) => observation('search-term', 'high_conversion', 'info', row.searchTerm, `CVR ${pct(row.cvr)} is in the highest decile with at least median click volume.`, row));
+    addRanked(observations, searchTerms.filter((row) => finiteAtLeast(row.clicks, searchThresholds.clicksP90)), 'clicks', 'desc', 8, (row) => observation('search-term', 'large_click_volume', 'info', row.searchTerm, `${formatInt(row.clicks)} clicks place this search term in the highest click-volume decile.`, row));
+    addRanked(observations, searchTerms.filter((row) => row.clicks >= numberOr(searchThresholds.clicksP75, 0) && Number.isFinite(row.cvr) && finiteAtMost(row.cvr, searchThresholds.cvrP25)), 'clicks', 'desc', 10, (row) => observation('search-term', 'low_conversion', 'medium', row.searchTerm, `${formatInt(row.clicks)} clicks with CVR ${pct(row.cvr)} are weak relative to this scope.`, row));
 
     const campaignThresholds = {
       acosP90: quantile(campaigns, 'acos', 0.90),
@@ -159,11 +169,17 @@
     addRanked(observations, campaigns.filter((row) => row.clicks >= numberOr(campaignThresholds.clicksP50, 0) && Number.isFinite(row.cvr) && finiteAtLeast(row.cvr, campaignThresholds.cvrP90)), 'cvr', 'desc', 5, (row) => observation('campaign', 'high_conversion_outlier', 'info', row.campaignName, `Campaign CVR ${pct(row.cvr)} is in the highest decile with meaningful traffic.`, row, { observedId: row.campaignId, identityResolved: false }));
     addRanked(observations, campaigns.filter((row) => row.clicks >= numberOr(campaignThresholds.clicksP50, 0) && Number.isFinite(row.cvr) && finiteAtMost(row.cvr, campaignThresholds.cvrP10)), 'cvr', 'asc', 5, (row) => observation('campaign', 'low_conversion_outlier', 'medium', row.campaignName, `Campaign CVR ${pct(row.cvr)} is in the lowest decile with meaningful traffic.`, row, { observedId: row.campaignId, identityResolved: false }));
     addRanked(observations, campaigns.filter((row) => row.orders === 0 && row.clicks >= numberOr(campaignThresholds.clicksP75, 0)), 'clicks', 'desc', 5, (row) => observation('campaign', 'traffic_without_conversion', 'high', row.campaignName, `${formatInt(row.clicks)} clicks produced zero attributed orders.`, row, { observedId: row.campaignId, identityResolved: false }));
-
     addMatchTypeObservations(observations, matchTypes);
     addTrendObservations(observations, daily);
 
-    const capped = observations.slice(0, MAX_OBSERVATIONS);
+    const analyzedGroups = searchTerms.length;
+    const totalGroups = Math.max(analyzedGroups, Math.max(0, Number(input.searchTermTotal ?? analyzedGroups)));
+    const partial = input.searchTermComplete === false || analyzedGroups < totalGroups;
+    const coverageRatio = totalGroups > 0 ? analyzedGroups / totalGroups : 1;
+    const truncationReason = partial
+      ? String(input.searchTermTruncationReason || (analyzedGroups >= MAX_SEARCH_TERM_ROWS ? `client_row_cap_${MAX_SEARCH_TERM_ROWS}` : 'incomplete_source_coverage'))
+      : null;
+
     return Object.freeze({
       kind: 'diagnostic_bundle',
       authoritative: false,
@@ -173,15 +189,21 @@
       sourceKind: 'csv_business_analytics',
       scope: input.scope || null,
       coverage: Object.freeze({
-        searchTermRowsAnalyzed: searchTerms.length,
-        searchTermRowsTotal: Number(input.searchTermTotal ?? searchTerms.length),
-        searchTermComplete: input.searchTermComplete !== false,
+        totalGroups,
+        analyzedGroups,
+        coverageRatio,
+        partial,
+        truncationReason,
+        pagesLoaded: Math.max(0, Number(input.searchTermPagesLoaded || 0)),
+        searchTermRowsAnalyzed: analyzedGroups,
+        searchTermRowsTotal: totalGroups,
+        searchTermComplete: !partial,
         campaignRowsAnalyzed: campaigns.length,
         dailyRowsAnalyzed: daily.length,
         matchTypeRowsAnalyzed: matchTypes.length,
       }),
       thresholds: Object.freeze({ searchTerm: searchThresholds, campaign: campaignThresholds }),
-      observations: Object.freeze(capped),
+      observations: Object.freeze(observations.slice(0, MAX_OBSERVATIONS)),
     });
   }
 
@@ -216,168 +238,80 @@
       const avgAcos = averageFinite(prior, 'acos');
       const avgRoas = averageFinite(prior, 'roas');
       const avgCvr = averageFinite(prior, 'cvr');
-      if (avgSpend > 0 && current.spendMicros > avgSpend * 1.5) out.push(observation('trend', 'spend_spike', 'medium', current.reportDate, `Spend is ${pct(current.spendMicros / avgSpend - 1)} above the trailing 7-day average.`, current, { trailing7AverageMicros: avgSpend }));
-      if (avgSales > 0 && current.salesMicros < avgSales * 0.6) out.push(observation('trend', 'sales_drop', 'high', current.reportDate, `Sales are ${pct(1 - current.salesMicros / avgSales)} below the trailing 7-day average.`, current, { trailing7AverageMicros: avgSales }));
-      if (Number.isFinite(current.acos) && Number.isFinite(avgAcos) && avgAcos > 0 && current.acos > avgAcos * 1.5) out.push(observation('trend', 'acos_deterioration', 'medium', current.reportDate, `ACoS is ${pct(current.acos / avgAcos - 1)} above the trailing 7-day average.`, current, { trailing7Average: avgAcos }));
-      if (Number.isFinite(current.roas) && Number.isFinite(avgRoas) && avgRoas > 0 && current.roas > avgRoas * 1.5) out.push(observation('trend', 'roas_improvement', 'info', current.reportDate, `ROAS is ${pct(current.roas / avgRoas - 1)} above the trailing 7-day average.`, current, { trailing7Average: avgRoas }));
-      if (Number.isFinite(current.cvr) && Number.isFinite(avgCvr) && avgCvr > 0 && Math.abs(current.cvr / avgCvr - 1) > 0.5) out.push(observation('trend', 'conversion_shift', 'medium', current.reportDate, `CVR shifted ${pct(current.cvr / avgCvr - 1)} versus the trailing 7-day average.`, current, { trailing7Average: avgCvr }));
+      if (avgSpend > 0 && current.spendMicros > avgSpend * 1.5) out.push(observation('trend', 'spend_spike', 'medium', current.reportDate, `Spend is ${pct(current.spendMicros / avgSpend - 1)} above the trailing 7-day average.`, current));
+      if (avgSales > 0 && current.salesMicros < avgSales * 0.6) out.push(observation('trend', 'sales_drop', 'high', current.reportDate, `Sales are ${pct(1 - current.salesMicros / avgSales)} below the trailing 7-day average.`, current));
+      if (Number.isFinite(current.acos) && Number.isFinite(avgAcos) && avgAcos > 0 && current.acos > avgAcos * 1.5) out.push(observation('trend', 'acos_deterioration', 'medium', current.reportDate, `ACoS is ${pct(current.acos / avgAcos - 1)} above the trailing 7-day average.`, current));
+      if (Number.isFinite(current.roas) && Number.isFinite(avgRoas) && avgRoas > 0 && current.roas > avgRoas * 1.5) out.push(observation('trend', 'roas_improvement', 'info', current.reportDate, `ROAS is ${pct(current.roas / avgRoas - 1)} above the trailing 7-day average.`, current));
+      if (Number.isFinite(current.cvr) && Number.isFinite(avgCvr) && avgCvr > 0 && Math.abs(current.cvr / avgCvr - 1) > 0.5) out.push(observation('trend', 'conversion_shift', 'medium', current.reportDate, `CVR shifted ${pct(current.cvr / avgCvr - 1)} versus the trailing 7-day average.`, current));
     }
   }
 
   function observation(category, rule, severity, subject, explanation, row, extra = {}) {
     return Object.freeze({
-      kind: 'diagnostic',
-      category,
-      rule,
-      severity,
-      subject: subject || '—',
-      explanation,
+      kind: 'diagnostic', category, rule, severity, subject: subject || '—', explanation,
       evidence: Object.freeze({
-        impressions: numberOr(row.impressions, 0),
-        clicks: numberOr(row.clicks, 0),
-        spendMicros: numberOr(row.spendMicros, 0),
-        orders: numberOr(row.orders ?? row.purchases, 0),
-        salesMicros: numberOr(row.salesMicros, 0),
-        acos: finiteOrNull(row.acos),
-        roas: finiteOrNull(row.roas),
-        cvr: finiteOrNull(row.cvr),
-        ...extra,
+        impressions: numberOr(row.impressions, 0), clicks: numberOr(row.clicks, 0), spendMicros: numberOr(row.spendMicros, 0),
+        orders: numberOr(row.orders ?? row.purchases, 0), salesMicros: numberOr(row.salesMicros, 0),
+        acos: finiteOrNull(row.acos), roas: finiteOrNull(row.roas), cvr: finiteOrNull(row.cvr), ...extra,
       }),
-      authoritative: false,
-      recommendationAuthorized: false,
-      amazonExecutionAuthorized: false,
+      authoritative: false, recommendationAuthorized: false, amazonExecutionAuthorized: false,
     });
   }
 
   function addRanked(out, rows, field, direction, limit, mapper) {
     const sign = direction === 'asc' ? 1 : -1;
-    const ranked = [...rows].sort((a, b) => sign * (numberOr(a[field], 0) - numberOr(b[field], 0))).slice(0, limit);
-    for (const row of ranked) out.push(mapper(row));
+    for (const row of [...rows].sort((a, b) => sign * (numberOr(a[field], 0) - numberOr(b[field], 0))).slice(0, limit)) out.push(mapper(row));
   }
-
   function metricRow(row = {}) {
-    const impressions = numberOr(row.impressions, 0);
-    const clicks = numberOr(row.clicks, 0);
-    const spendMicros = numberOr(row.spendMicros, 0);
-    const orders = numberOr(row.orders ?? row.purchases, 0);
-    const salesMicros = numberOr(row.salesMicros, 0);
-    const suppliedCvr = finiteNumber(row.cvr);
-    const suppliedAcos = finiteNumber(row.acos);
-    const suppliedRoas = finiteNumber(row.roas);
-    return {
-      ...row,
-      impressions,
-      clicks,
-      spendMicros,
-      orders,
-      salesMicros,
-      cvr: suppliedCvr ?? (clicks === 0 ? null : orders / clicks),
-      acos: suppliedAcos ?? (salesMicros === 0 ? null : spendMicros / salesMicros),
-      roas: suppliedRoas ?? (spendMicros === 0 ? null : salesMicros / spendMicros),
-    };
+    const impressions = numberOr(row.impressions, 0); const clicks = numberOr(row.clicks, 0); const spendMicros = numberOr(row.spendMicros, 0);
+    const orders = numberOr(row.orders ?? row.purchases, 0); const salesMicros = numberOr(row.salesMicros, 0);
+    return { ...row, impressions, clicks, spendMicros, orders, salesMicros,
+      cvr: finiteNumber(row.cvr) ?? (clicks === 0 ? null : orders / clicks),
+      acos: finiteNumber(row.acos) ?? (salesMicros === 0 ? null : spendMicros / salesMicros),
+      roas: finiteNumber(row.roas) ?? (spendMicros === 0 ? null : salesMicros / spendMicros) };
   }
-
-  function quantile(rows, field, p) {
-    const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null).sort((a, b) => a - b);
-    if (!values.length) return null;
-    return values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * p) - 1))];
-  }
-
+  function quantile(rows, field, p) { const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null).sort((a, b) => a - b); return values.length ? values[Math.min(values.length - 1, Math.max(0, Math.ceil(values.length * p) - 1))] : null; }
   function average(rows, field) { return rows.length ? rows.reduce((sum, row) => sum + numberOr(row[field], 0), 0) / rows.length : null; }
-  function averageFinite(rows, field) {
-    const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null);
-    return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
-  }
-  function finiteNumber(value) {
-    if (value === null || value === undefined || value === '') return null;
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : null;
-  }
-  function finiteAtLeast(value, threshold) {
-    const numeric = finiteNumber(value);
-    const benchmark = finiteNumber(threshold);
-    return numeric !== null && benchmark !== null && numeric >= benchmark;
-  }
-  function finiteAtMost(value, threshold) {
-    const numeric = finiteNumber(value);
-    const benchmark = finiteNumber(threshold);
-    return numeric !== null && benchmark !== null && numeric <= benchmark;
-  }
+  function averageFinite(rows, field) { const values = rows.map((row) => finiteNumber(row[field])).filter((value) => value !== null); return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null; }
+  function finiteNumber(value) { if (value === null || value === undefined || value === '') return null; const numeric = Number(value); return Number.isFinite(numeric) ? numeric : null; }
+  function finiteAtLeast(value, threshold) { const numeric = finiteNumber(value); const benchmark = finiteNumber(threshold); return numeric !== null && benchmark !== null && numeric >= benchmark; }
+  function finiteAtMost(value, threshold) { const numeric = finiteNumber(value); const benchmark = finiteNumber(threshold); return numeric !== null && benchmark !== null && numeric <= benchmark; }
   function finiteOrNull(value) { return finiteNumber(value); }
   function numberOr(value, fallback) { return finiteNumber(value) ?? fallback; }
-
-  function activeFilters() {
-    const filters = global.CloudflareCsvAnalyticsDrilldown?.activeFilters?.() || {};
-    return compact(filters);
-  }
-
+  function activeFilters() { return compact(global.CloudflareCsvAnalyticsDrilldown?.activeFilters?.() || {}); }
   function dashboardScope() {
+    const dashboardState = global.CloudflareCsvAnalyticsDashboard?.getState?.() || {};
     const dashboard = global.document.querySelector('#cfCsvAnalyticsDashboard');
     return {
-      storeId: String(global.CloudflareOperatorWorkspace?.currentStoreId?.() || dashboard?.querySelector('#cfCsvAnalyticsStore')?.textContent || '').trim().replace(/^—$/, ''),
-      startDate: String(dashboard?.querySelector('#cfCsvAnalyticsStart')?.value || '').trim(),
-      endDate: String(dashboard?.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim(),
+      storeId: String(dashboardState.storeId || global.CloudflareOperatorWorkspace?.currentStoreId?.() || dashboard?.querySelector('#cfCsvAnalyticsStore')?.textContent || '').trim().replace(/^—$/, ''),
+      startDate: String(dashboardState.startDate || dashboard?.querySelector('#cfCsvAnalyticsStart')?.value || '').trim(),
+      endDate: String(dashboardState.endDate || dashboard?.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim(),
     };
   }
-
-  function api() {
-    if (!global.CloudflareNativeAPI?.csvAnalytics) throw new Error('csv_analytics_native_api_not_ready');
-    return global.CloudflareNativeAPI;
-  }
-
+  function api() { if (!global.CloudflareNativeAPI?.csvAnalytics) throw new Error('csv_analytics_native_api_not_ready'); return global.CloudflareNativeAPI; }
   function compact(value) { return Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item !== null && item !== undefined && item !== '')); }
 
   function renderResult(result) {
     const summary = state.root?.querySelector('[data-cfdiag-summary]');
     const body = state.root?.querySelector('[data-cfdiag-body]');
-    if (!summary || !body) return;
-    if (!result) {
-      summary.innerHTML = '';
-      body.innerHTML = '<tr><td colspan="5" class="cfCsvDiagnosticsEmpty">No diagnostics available.</td></tr>';
-      return;
-    }
+    const coverage = state.root?.querySelector('[data-cfdiag-coverage]');
+    if (!summary || !body || !coverage) return;
+    if (!result) { summary.innerHTML = ''; coverage.innerHTML = ''; body.innerHTML = '<tr><td colspan="5" class="cfCsvDiagnosticsEmpty">No diagnostics available.</td></tr>'; return; }
+    const c = result.coverage;
+    coverage.innerHTML = c.partial
+      ? `<strong>Partial coverage</strong><span>${formatInt(c.analyzedGroups)} of ${formatInt(c.totalGroups)} groups analyzed · ${pct(c.coverageRatio)} · ${escapeHtml(c.truncationReason || 'truncated')}</span>`
+      : `<strong>Full coverage</strong><span>${formatInt(c.analyzedGroups)} of ${formatInt(c.totalGroups)} groups analyzed · 100%</span>`;
+    coverage.dataset.partial = c.partial ? 'true' : 'false';
     const counts = countByCategory(result.observations);
-    summary.innerHTML = `
-      ${summaryCard('Observations', formatInt(result.observations.length), 'diagnostic only')}
-      ${summaryCard('Search terms', formatInt(result.coverage.searchTermRowsAnalyzed), result.coverage.searchTermComplete ? 'complete scope' : `capped from ${formatInt(result.coverage.searchTermRowsTotal)}`)}
-      ${summaryCard('Campaign', formatInt(counts.campaign || 0), 'relative observations')}
-      ${summaryCard('Search term', formatInt(counts['search-term'] || 0), 'relative observations')}
-      ${summaryCard('Trend', formatInt(counts.trend || 0), '7-day relative shifts')}
-      ${summaryCard('Match type', formatInt(counts['match-type'] || 0), 'comparative observations')}`;
+    summary.innerHTML = `${summaryCard('Observations', formatInt(result.observations.length), 'diagnostic only')}${summaryCard('Search terms', formatInt(c.analyzedGroups), c.partial ? 'Partial coverage' : 'Full coverage')}${summaryCard('Campaign', formatInt(counts.campaign || 0), 'relative observations')}${summaryCard('Search term', formatInt(counts['search-term'] || 0), 'relative observations')}${summaryCard('Trend', formatInt(counts.trend || 0), '7-day relative shifts')}${summaryCard('Match type', formatInt(counts['match-type'] || 0), 'comparative observations')}`;
     body.innerHTML = result.observations.length
       ? result.observations.map((item) => `<tr><td>${escapeHtml(item.category)}</td><td><strong>${escapeHtml(item.rule.replaceAll('_', ' '))}</strong><small>${escapeHtml(item.explanation)}</small></td><td>${escapeHtml(item.subject)}</td><td>${evidenceText(item.evidence)}</td><td><span class="cfCsvDiagnosticsSeverity" data-severity="${escapeHtml(item.severity)}">${escapeHtml(item.severity)}</span></td></tr>`).join('')
       : '<tr><td colspan="5" class="cfCsvDiagnosticsEmpty">No relative anomalies or leaders detected in this scope.</td></tr>';
   }
-
-  function countByCategory(items) {
-    const out = {};
-    for (const item of items || []) out[item.category] = (out[item.category] || 0) + 1;
-    return out;
-  }
-
-  function evidenceText(evidence) {
-    const parts = [
-      `Spend ${money(evidence.spendMicros)}`,
-      `Sales ${money(evidence.salesMicros)}`,
-      `Orders ${formatInt(evidence.orders)}`,
-      `Clicks ${formatInt(evidence.clicks)}`,
-    ];
-    if (Number.isFinite(evidence.acos)) parts.push(`ACoS ${pct(evidence.acos)}`);
-    if (Number.isFinite(evidence.roas)) parts.push(`ROAS ${ratio(evidence.roas)}`);
-    return escapeHtml(parts.join(' · '));
-  }
-
-  function renderStatus(text, tone) {
-    const node = state.root?.querySelector('[data-cfdiag-status]');
-    if (!node) return;
-    node.textContent = String(text || '');
-    node.dataset.tone = tone || '';
-  }
-  function setBusy(busy) {
-    state.root?.setAttribute('aria-busy', busy ? 'true' : 'false');
-    const button = state.root?.querySelector('[data-cfdiag-refresh]');
-    if (button) button.disabled = Boolean(busy);
-  }
+  function countByCategory(items) { const out = {}; for (const item of items || []) out[item.category] = (out[item.category] || 0) + 1; return out; }
+  function evidenceText(evidence) { const parts = [`Spend ${money(evidence.spendMicros)}`, `Sales ${money(evidence.salesMicros)}`, `Orders ${formatInt(evidence.orders)}`, `Clicks ${formatInt(evidence.clicks)}`]; if (Number.isFinite(evidence.acos)) parts.push(`ACoS ${pct(evidence.acos)}`); if (Number.isFinite(evidence.roas)) parts.push(`ROAS ${ratio(evidence.roas)}`); return escapeHtml(parts.join(' · ')); }
+  function renderStatus(text, tone) { const node = state.root?.querySelector('[data-cfdiag-status]'); if (!node) return; node.textContent = String(text || ''); node.dataset.tone = tone || ''; }
+  function setBusy(busy) { state.root?.setAttribute('aria-busy', busy ? 'true' : 'false'); const button = state.root?.querySelector('[data-cfdiag-refresh]'); if (button) button.disabled = Boolean(busy); }
   function summaryCard(label, value, note) { return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div>`; }
   function formatInt(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(numeric); }
   function money(value) { const numeric = finiteNumber(value); return numeric === null ? '—' : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(numeric / 1e6); }
@@ -389,9 +323,7 @@
     if (global.document.querySelector('#cfCsvLocalDiagnosticsStyles')) return;
     const style = global.document.createElement('style');
     style.id = 'cfCsvLocalDiagnosticsStyles';
-    style.textContent = `
-      .cfCsvDiagnosticsCard{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}.cfCsvDiagnosticsHead{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 11px;border-bottom:1px solid var(--line)}.cfCsvDiagnosticsHead>div{display:flex;align-items:center;gap:8px}.cfCsvDiagnosticsHead>div:first-child{flex-direction:column;align-items:flex-start;gap:2px}.cfCsvDiagnosticsHead strong{font-size:12.5px}.cfCsvDiagnosticsHead span{font-size:9.8px;color:var(--muted)}.cfCsvDiagnosticsBadge{padding:5px 8px;border-radius:7px;background:var(--softWarn);color:var(--warn)!important;font-weight:800}.cfCsvDiagnosticsDiscipline{padding:8px 10px;background:var(--softWarn);color:var(--warn);font-size:9.8px;font-weight:700}.cfCsvDiagnosticsStatus{margin:8px 10px 0;padding:7px 9px;border-radius:8px;background:var(--hover-bg);font-size:10.4px;color:var(--muted)}.cfCsvDiagnosticsStatus[data-tone="ok"]{background:var(--softGood);color:var(--good)}.cfCsvDiagnosticsStatus[data-tone="warn"]{background:var(--softWarn);color:var(--warn)}.cfCsvDiagnosticsStatus[data-tone="bad"]{background:var(--softBad);color:var(--bad)}.cfCsvDiagnosticsSummary{display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:7px;padding:8px 10px}.cfCsvDiagnosticsSummary>div{padding:8px;border:1px solid var(--line);border-radius:8px}.cfCsvDiagnosticsSummary span,.cfCsvDiagnosticsSummary small{display:block;color:var(--muted);font-size:9px}.cfCsvDiagnosticsSummary strong{display:block;margin:3px 0;font-size:14px}.cfCsvDiagnosticsTableWrap{max-height:440px;overflow:auto;border-top:1px solid var(--line)}.cfCsvDiagnosticsTableWrap table{width:100%;min-width:980px;border-collapse:collapse}.cfCsvDiagnosticsTableWrap th,.cfCsvDiagnosticsTableWrap td{padding:8px 9px;border-bottom:1px solid var(--line);text-align:left;font-size:10px;vertical-align:top}.cfCsvDiagnosticsTableWrap th{position:sticky;top:0;background:var(--th-bg);color:var(--muted);z-index:1}.cfCsvDiagnosticsTableWrap td strong,.cfCsvDiagnosticsTableWrap td small{display:block}.cfCsvDiagnosticsTableWrap td small{margin-top:2px;color:var(--muted);max-width:360px}.cfCsvDiagnosticsSeverity{display:inline-flex;padding:4px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfCsvDiagnosticsSeverity[data-severity="high"]{color:var(--bad);background:var(--softBad)}.cfCsvDiagnosticsSeverity[data-severity="medium"]{color:var(--warn);background:var(--softWarn)}.cfCsvDiagnosticsSeverity[data-severity="info"]{color:var(--good);background:var(--softGood)}.cfCsvDiagnosticsEmpty{text-align:center!important;color:var(--muted);height:90px}@media(max-width:900px){.cfCsvDiagnosticsHead{flex-direction:column;align-items:flex-start}.cfCsvDiagnosticsSummary{grid-template-columns:repeat(3,minmax(0,1fr))}}
-    `;
+    style.textContent = `.cfCsvDiagnosticsCard{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}.cfCsvDiagnosticsHead{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 11px;border-bottom:1px solid var(--line)}.cfCsvDiagnosticsHead>div{display:flex;align-items:center;gap:8px}.cfCsvDiagnosticsHead>div:first-child{flex-direction:column;align-items:flex-start;gap:2px}.cfCsvDiagnosticsHead strong{font-size:12.5px}.cfCsvDiagnosticsHead span{font-size:9.8px;color:var(--muted)}.cfCsvDiagnosticsBadge{padding:5px 8px;border-radius:7px;background:var(--softWarn);color:var(--warn)!important;font-weight:800}.cfCsvDiagnosticsDiscipline{padding:8px 10px;background:var(--softWarn);color:var(--warn);font-size:9.8px;font-weight:700}.cfCsvDiagnosticsStatus,.cfCsvDiagnosticsCoverage{margin:8px 10px 0;padding:7px 9px;border-radius:8px;background:var(--hover-bg);font-size:10.4px;color:var(--muted)}.cfCsvDiagnosticsCoverage{display:flex;align-items:center;gap:8px}.cfCsvDiagnosticsCoverage strong{color:var(--good)}.cfCsvDiagnosticsCoverage[data-partial="true"]{background:var(--softWarn);color:var(--warn)}.cfCsvDiagnosticsCoverage[data-partial="true"] strong{color:var(--warn)}.cfCsvDiagnosticsStatus[data-tone="ok"]{background:var(--softGood);color:var(--good)}.cfCsvDiagnosticsStatus[data-tone="warn"]{background:var(--softWarn);color:var(--warn)}.cfCsvDiagnosticsStatus[data-tone="bad"]{background:var(--softBad);color:var(--bad)}.cfCsvDiagnosticsSummary{display:grid;grid-template-columns:repeat(6,minmax(105px,1fr));gap:7px;padding:8px 10px}.cfCsvDiagnosticsSummary>div{padding:8px;border:1px solid var(--line);border-radius:8px}.cfCsvDiagnosticsSummary span,.cfCsvDiagnosticsSummary small{display:block;color:var(--muted);font-size:9px}.cfCsvDiagnosticsSummary strong{display:block;margin:3px 0;font-size:14px}.cfCsvDiagnosticsTableWrap{max-height:440px;overflow:auto;border-top:1px solid var(--line)}.cfCsvDiagnosticsTableWrap table{width:100%;min-width:980px;border-collapse:collapse}.cfCsvDiagnosticsTableWrap th,.cfCsvDiagnosticsTableWrap td{padding:8px 9px;border-bottom:1px solid var(--line);text-align:left;font-size:10px;vertical-align:top}.cfCsvDiagnosticsTableWrap th{position:sticky;top:0;background:var(--th-bg);color:var(--muted);z-index:1}.cfCsvDiagnosticsTableWrap td strong,.cfCsvDiagnosticsTableWrap td small{display:block}.cfCsvDiagnosticsTableWrap td small{margin-top:2px;color:var(--muted);max-width:360px}.cfCsvDiagnosticsSeverity{display:inline-flex;padding:4px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfCsvDiagnosticsSeverity[data-severity="high"]{color:var(--bad);background:var(--softBad)}.cfCsvDiagnosticsSeverity[data-severity="medium"]{color:var(--warn);background:var(--softWarn)}.cfCsvDiagnosticsSeverity[data-severity="info"]{color:var(--good);background:var(--softGood)}.cfCsvDiagnosticsEmpty{text-align:center!important;color:var(--muted);height:90px}@media(max-width:900px){.cfCsvDiagnosticsHead{flex-direction:column;align-items:flex-start}.cfCsvDiagnosticsSummary{grid-template-columns:repeat(3,minmax(0,1fr))}}`;
     global.document.head.appendChild(style);
   }
 })(typeof window !== 'undefined' ? window : globalThis);

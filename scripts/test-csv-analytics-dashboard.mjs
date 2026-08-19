@@ -66,6 +66,14 @@ for (const rule of [
 ]) assert.match(diagnostics, new RegExp(rule), `Missing local diagnostic rule: ${rule}`);
 assert.match(diagnostics, /MAX_SEARCH_TERM_ROWS = 5000/, 'Diagnostics must declare bounded search-term coverage');
 assert.match(diagnostics, /searchTermComplete/, 'Diagnostics must surface whether search-term coverage is complete');
+assert.match(diagnostics, /totalGroups/, 'Diagnostics must expose total grouping cardinality');
+assert.match(diagnostics, /analyzedGroups/, 'Diagnostics must expose analyzed grouping cardinality');
+assert.match(diagnostics, /coverageRatio/, 'Diagnostics must expose coverage ratio');
+assert.match(diagnostics, /partial/, 'Diagnostics must expose partial/full state');
+assert.match(diagnostics, /truncationReason/, 'Diagnostics must expose truncation reason');
+assert.match(diagnostics, /Partial coverage/, 'Partial coverage must be explicit in the operator UI');
+assert.doesNotMatch(diagnostics, /if\s*\(!state\.root\s*\|\|\s*state\.loading\)\s*return/, 'Diagnostics refresh must not drop the latest user intent while a prior request is loading');
+assert.match(diagnostics, /seq\s*!==\s*state\.requestSeq/, 'Latest-request-wins sequence guard must remain active');
 assert.match(diagnostics, /authoritative:\s*false/, 'Diagnostics must not become authority');
 assert.match(diagnostics, /recommendationAuthorized:\s*false/, 'Diagnostics must not become recommendations');
 assert.match(diagnostics, /amazonExecutionAuthorized:\s*false/, 'Diagnostics must not authorize Amazon execution');
@@ -203,8 +211,8 @@ vm.runInNewContext(diagnostics, {
   Set,
   Map,
 }, { filename: 'cloudflare-native-csv-local-diagnostics-v1.js' });
-assert.equal(diagnosticsWindow.CloudflareCsvLocalDiagnostics.version, '1.0.0');
-const diagnosticBundle = diagnosticsWindow.CloudflareCsvLocalDiagnostics.generateDiagnostics({
+assert.equal(diagnosticsWindow.CloudflareCsvLocalDiagnostics.version, '1.1.0');
+const diagnosticInput = {
   searchTerms: [
     { searchTerm: 'waste term', impressions: 1000, clicks: 40, spendMicros: 90000000, orders: 0, salesMicros: 0 },
     { searchTerm: 'efficient term', impressions: 700, clicks: 30, spendMicros: 10000000, orders: 12, salesMicros: 90000000 },
@@ -225,6 +233,9 @@ const diagnosticBundle = diagnosticsWindow.CloudflareCsvLocalDiagnostics.generat
     ...Array.from({ length: 7 }, (_, index) => ({ reportDate: `2026-06-0${index + 1}`, impressions: 1000, clicks: 100, spendMicros: 10000000, orders: 10, salesMicros: 30000000 })),
     { reportDate: '2026-06-08', impressions: 1500, clicks: 150, spendMicros: 20000000, orders: 3, salesMicros: 10000000 },
   ],
+};
+const diagnosticBundle = diagnosticsWindow.CloudflareCsvLocalDiagnostics.generateDiagnostics({
+  ...diagnosticInput,
   searchTermTotal: 5,
   searchTermComplete: true,
 });
@@ -234,6 +245,11 @@ assert.equal(diagnosticBundle.recommendationAuthorized, false);
 assert.equal(diagnosticBundle.reviewAuthorized, false);
 assert.equal(diagnosticBundle.amazonExecutionAuthorized, false);
 assert.equal(diagnosticBundle.coverage.searchTermComplete, true);
+assert.equal(diagnosticBundle.coverage.totalGroups, 5);
+assert.equal(diagnosticBundle.coverage.analyzedGroups, 5);
+assert.equal(diagnosticBundle.coverage.coverageRatio, 1);
+assert.equal(diagnosticBundle.coverage.partial, false);
+assert.equal(diagnosticBundle.coverage.truncationReason, null);
 assert.ok(diagnosticBundle.observations.length > 0);
 assert.ok(diagnosticBundle.observations.every((item) => item.kind === 'diagnostic' && item.authoritative === false && item.recommendationAuthorized === false && item.amazonExecutionAuthorized === false));
 assert.ok(diagnosticBundle.observations.some((item) => item.rule === 'high_spend_zero_orders'));
@@ -243,5 +259,20 @@ assert.ok(diagnosticBundle.observations.some((item) => item.rule === 'spend_spik
 assert.ok(diagnosticBundle.observations.some((item) => item.rule === 'sales_drop'));
 const campaignObservation = diagnosticBundle.observations.find((item) => item.category === 'campaign');
 assert.equal(campaignObservation?.evidence?.identityResolved, false);
+
+const partialBundle = diagnosticsWindow.CloudflareCsvLocalDiagnostics.generateDiagnostics({
+  ...diagnosticInput,
+  searchTermTotal: 6557,
+  searchTermComplete: false,
+  searchTermTruncationReason: 'client_row_cap_5000',
+  searchTermPagesLoaded: 25,
+});
+assert.equal(partialBundle.coverage.totalGroups, 6557);
+assert.equal(partialBundle.coverage.analyzedGroups, 5);
+assert.equal(partialBundle.coverage.coverageRatio, 5 / 6557);
+assert.equal(partialBundle.coverage.partial, true);
+assert.equal(partialBundle.coverage.truncationReason, 'client_row_cap_5000');
+assert.equal(partialBundle.coverage.pagesLoaded, 25);
+assert.equal(partialBundle.coverage.searchTermComplete, false);
 
 console.log('csv analytics dashboard contract: PASS');
