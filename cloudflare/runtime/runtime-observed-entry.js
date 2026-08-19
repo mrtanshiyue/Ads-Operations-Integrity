@@ -81,9 +81,29 @@ export function runtimeEvidenceRecord({ request, env, url, workerVersion, status
   };
 }
 
+export function runtimeEvidenceDataPoint(record = {}) {
+  return {
+    indexes: [String(record.workerVersion || 'unknown')],
+    blobs: [
+      String(record.event || 'runtime_request_evidence'),
+      String(record.service || 'unknown'),
+      String(record.environment || 'unknown'),
+      String(record.cfRay || ''),
+      String(record.method || 'GET'),
+      String(record.routeClass || '/api/:other'),
+      String(record.errorCode || ''),
+    ],
+    doubles: [
+      Number(record.status || 0),
+      Math.max(0, Number(record.durationMs || 0)),
+    ],
+  };
+}
+
 function emitRuntimeEvidence(input) {
-  const record = runtimeEvidenceRecord(input);
-  console.log('runtime_request_evidence', JSON.stringify(record));
+  const dataset = input?.env?.RUNTIME_EVIDENCE;
+  if (!dataset || typeof dataset.writeDataPoint !== 'function') return;
+  dataset.writeDataPoint(runtimeEvidenceDataPoint(runtimeEvidenceRecord(input)));
 }
 
 function withRuntimeEvidenceHeaders(response, workerVersion) {
