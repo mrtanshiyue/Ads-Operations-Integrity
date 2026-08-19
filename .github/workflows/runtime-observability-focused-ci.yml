@@ -1,0 +1,41 @@
+name: Runtime Observability Focused CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/runtime-observed-entry.js'
+      - 'cloudflare/runtime/wrangler.native.jsonc'
+      - 'scripts/test-runtime-request-evidence.mjs'
+      - '.github/workflows/runtime-observability-focused-ci.yml'
+  push:
+    branches:
+      - 'observability/**'
+    paths:
+      - 'cloudflare/runtime/runtime-observed-entry.js'
+      - 'cloudflare/runtime/wrangler.native.jsonc'
+      - 'scripts/test-runtime-request-evidence.mjs'
+      - '.github/workflows/runtime-observability-focused-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-observability-focused-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Runtime observability focused contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate runtime evidence wrapper syntax
+        run: node --check cloudflare/runtime/runtime-observed-entry.js
+      - name: Validate runtime evidence privacy and version contract
+        run: node scripts/test-runtime-request-evidence.mjs
