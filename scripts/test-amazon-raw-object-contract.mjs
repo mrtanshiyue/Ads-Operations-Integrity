@@ -3,6 +3,7 @@ import {
   buildRawObjectKey, validateDownloadedRawArtifact, buildCreateOnlyR2PutOptions,
   verifyInitialR2PutReceipt, verifyRawObjectBeforeIngest,
 } from '../cloudflare/runtime/amazon-raw-object-contract.js';
+import { createR2CreateOnlyRawObjectWriter } from '../cloudflare/runtime/r2-raw-object-writer.js';
 
 const key = buildRawObjectKey({
   storeCode:'DEV01', profileId:'12345', adProduct:'SPONSORED_PRODUCTS', reportType:'spSearchTerm',
@@ -17,6 +18,30 @@ assert.match(artifact.contentSha256, /^[0-9a-f]{64}$/);
 const opts = buildCreateOnlyR2PutOptions(artifact.contentSha256);
 assert.equal(opts.onlyIf.etagDoesNotMatch, '*');
 assert.equal(new Uint8Array(opts.sha256).byteLength, 32);
+
+// The shared writer must translate the internal wildcard sentinel to the R2 HTTP conditional
+// representation. This keeps create-only semantics at the actual Workers binding boundary.
+let observedPut = null;
+const putRawObject = createR2CreateOnlyRawObjectWriter({
+  bucket:{
+    async put(observedKey, observedBytes, observedOptions) {
+      observedPut = { key:observedKey, bytes:observedBytes, options:observedOptions };
+      return {
+        key:observedKey,
+        size:observedBytes.byteLength,
+        version:'writer-version-1',
+        etag:'writer-etag-1',
+        checksums:{ sha256:observedOptions.sha256 },
+      };
+    },
+  },
+});
+await putRawObject({ key, bytes, options:opts });
+assert.equal(observedPut.key, key);
+assert.ok(observedPut.options.onlyIf instanceof Headers);
+assert.equal(observedPut.options.onlyIf.get('if-none-match'), '*');
+assert.deepEqual([...observedPut.options.onlyIf.keys()], ['if-none-match']);
+assert.equal(observedPut.options.onlyIf.get('if-match'), null);
 
 const object = {
   key, size:artifact.contentBytes, version:'version-1', etag:'opaque-etag-1', checksums:{ sha256:opts.sha256 },
@@ -46,4 +71,4 @@ try {
   assert.fail('non-gzip accepted');
 } catch (e) { assert.equal(e.code, 'RAW_DOWNLOAD_GZIP_MAGIC_INVALID'); }
 
-console.log(JSON.stringify({ ok:true, createOnlyCondition:true, nativeSha256Receipt:true, originalVersionEtagReceipt:true, preIngestMutationGuard:true }, null, 2));
+console.log(JSON.stringify({ ok:true, createOnlyCondition:true, createOnlyHeaderBoundary:true, nativeSha256Receipt:true, originalVersionEtagReceipt:true, preIngestMutationGuard:true }, null, 2));

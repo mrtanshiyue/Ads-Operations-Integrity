@@ -17,7 +17,9 @@ class FakeR2Object {
 class FakeBucket {
   constructor() { this.objects = new Map(); }
   async put(key, bytes, options) {
-    assert.deepEqual(options.onlyIf, { etagDoesNotMatch:'*' });
+    assert.ok(options.onlyIf instanceof Headers);
+    assert.equal(options.onlyIf.get('if-none-match'), '*');
+    assert.deepEqual([...options.onlyIf.keys()], ['if-none-match']);
     assert.equal(new Uint8Array(options.sha256).byteLength, 32);
     if (this.objects.has(key)) return null;
     const object = new FakeR2Object(bytes, key);

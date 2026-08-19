@@ -67,9 +67,13 @@ function normalizeCreateOnlyOptions(value) {
     throw new R2RawObjectWriterError('R2_RAW_WRITER_CREATE_ONLY_CONDITION_REQUIRED');
   }
 
+  // Preserve the internal caller contract while translating the wildcard into the HTTP
+  // conditional form R2 Workers bindings implement as create-if-absent. The object-form
+  // etagDoesNotMatch:'*' must not be sent to R2 because it can be interpreted as a literal ETag.
   const sha256 = copySha256(value.sha256);
+  const conditionalHeaders = new Headers({ 'If-None-Match':'*' });
   return Object.freeze({
-    onlyIf:Object.freeze({ etagDoesNotMatch:'*' }),
+    onlyIf:conditionalHeaders,
     sha256,
   });
 }

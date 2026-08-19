@@ -17,6 +17,12 @@ function expectCode(code, fn) {
   );
 }
 
+function assertCreateOnlyConditional(options) {
+  assert.ok(options.onlyIf instanceof Headers);
+  assert.equal(options.onlyIf.get('if-none-match'), '*');
+  assert.deepEqual([...options.onlyIf.keys()], ['if-none-match']);
+}
+
 function bucketHarness({ result = null, error = null } = {}) {
   const calls = { put:0, get:0, head:0, list:0, delete:0 };
   const observed = [];
@@ -72,7 +78,7 @@ expectCode('R2_RAW_WRITER_BUCKET_INVALID', () => createR2CreateOnlyRawObjectWrit
   assert.equal(h.observed[0].key, input.key);
   assert.deepEqual([...h.observed[0].bytes], [...input.bytes]);
   assert.notEqual(h.observed[0].bytes.buffer, input.bytes.buffer, 'writer must snapshot mutable input bytes');
-  assert.deepEqual(h.observed[0].options.onlyIf, { etagDoesNotMatch:'*' });
+  assertCreateOnlyConditional(h.observed[0].options);
   assert.equal(new Uint8Array(h.observed[0].options.sha256).byteLength, 32);
 }
 
@@ -257,7 +263,7 @@ function materializeBucket(db, mode) {
         'raw/amazon-ads/DEV01/profile-1/SPONSORED_PRODUCTS/spSearchTerm/dt=2026-08-12/amazon-materialize-1.json.gz',
       );
       assert.deepEqual([...bytes], [...MATERIALIZE_BYTES]);
-      assert.deepEqual(options.onlyIf, { etagDoesNotMatch:'*' });
+      assertCreateOnlyConditional(options);
       assert.equal(new Uint8Array(options.sha256).byteLength, 32);
       if (mode === 'winner') {
         db.state.job = {

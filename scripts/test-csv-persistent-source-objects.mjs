@@ -17,6 +17,12 @@ const CSV = [
 const SOURCE_CONTEXT = Object.freeze({ storeId:'store-01', contentType:'text/csv', importerUserId:'user-dev-owner' });
 const UPLOADED_AT = '2026-08-19T02:40:00.000Z';
 
+function assertCreateOnlyConditional(options) {
+  assert.ok(options?.onlyIf instanceof Headers);
+  assert.equal(options.onlyIf.get('if-none-match'), '*');
+  assert.deepEqual([...options.onlyIf.keys()], ['if-none-match']);
+}
+
 function makeBucket({ failPut = false } = {}) {
   const objects = new Map();
   let puts = 0;
@@ -26,7 +32,7 @@ function makeBucket({ failPut = false } = {}) {
     async put(key, bytes, options) {
       puts += 1;
       if (failPut) throw new Error('synthetic_r2_failure');
-      assert.deepEqual(options?.onlyIf, { etagDoesNotMatch:'*' });
+      assertCreateOnlyConditional(options);
       assert.equal(new Uint8Array(options?.sha256 || new ArrayBuffer(0)).byteLength, 32);
       if (objects.has(key)) return null;
       const copy = new Uint8Array(bytes);
