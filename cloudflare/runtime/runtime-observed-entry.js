@@ -5,24 +5,8 @@ export default {
     const startedAt = Date.now();
     const url = new URL(request.url);
     const workerVersion = runtimeWorkerVersion(env);
-    let response;
-
-    try {
-      response = await application.fetch(request, env, ctx);
-    } catch (error) {
-      emitRuntimeEvidence({
-        request,
-        env,
-        url,
-        workerVersion,
-        status: 500,
-        durationMs: Date.now() - startedAt,
-        errorCode: safeRuntimeErrorCode(error),
-      });
-      throw error;
-    }
-
-    emitRuntimeEvidence({
+    const response = await application.fetch(request, env, ctx);
+    const record = runtimeEvidenceRecord({
       request,
       env,
       url,
@@ -31,8 +15,7 @@ export default {
       durationMs: Date.now() - startedAt,
       errorCode: response.status >= 500 ? `http_${response.status}` : null,
     });
-
-    return withRuntimeEvidenceHeaders(response, workerVersion);
+    return withRuntimeEvidenceHeaders(response, record);
   },
 };
 
@@ -81,42 +64,24 @@ export function runtimeEvidenceRecord({ request, env, url, workerVersion, status
   };
 }
 
-export function runtimeEvidenceDataPoint(record = {}) {
+export function runtimeEvidenceHeaders(record = {}) {
   return {
-    indexes: [String(record.workerVersion || 'unknown')],
-    blobs: [
-      String(record.event || 'runtime_request_evidence'),
-      String(record.service || 'unknown'),
-      String(record.environment || 'unknown'),
-      String(record.cfRay || ''),
-      String(record.method || 'GET'),
-      String(record.routeClass || '/api/:other'),
-      String(record.errorCode || ''),
-    ],
-    doubles: [
-      Number(record.status || 0),
-      Math.max(0, Number(record.durationMs || 0)),
-    ],
+    'x-runtime-worker-version': String(record.workerVersion || 'unknown'),
+    'x-runtime-route-class': String(record.routeClass || '/api/:other'),
+    'x-runtime-duration-ms': String(Math.max(0, Number(record.durationMs || 0))),
+    'x-runtime-error-code': String(record.errorCode || ''),
+    'x-runtime-evidence-channel': 'response-headers',
   };
 }
 
-function emitRuntimeEvidence(input) {
-  const dataset = input?.env?.RUNTIME_EVIDENCE;
-  if (!dataset || typeof dataset.writeDataPoint !== 'function') return;
-  dataset.writeDataPoint(runtimeEvidenceDataPoint(runtimeEvidenceRecord(input)));
-}
-
-function withRuntimeEvidenceHeaders(response, workerVersion) {
+function withRuntimeEvidenceHeaders(response, record) {
   const headers = new Headers(response.headers);
-  headers.set('x-runtime-worker-version', String(workerVersion || 'unknown'));
+  for (const [name, value] of Object.entries(runtimeEvidenceHeaders(record))) {
+    headers.set(name, value);
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
-}
-
-function safeRuntimeErrorCode(error) {
-  const raw = String(error?.code || error?.name || 'runtime_error').toLowerCase();
-  return raw.replace(/[^a-z0-9_.-]/g, '_').slice(0, 80) || 'runtime_error';
 }
