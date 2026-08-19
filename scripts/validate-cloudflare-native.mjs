@@ -8,6 +8,7 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const webConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.native.jsonc');
 const syncConfigPath = path.join(repoRoot, 'cloudflare/runtime/wrangler.sync.jsonc');
+const webEntryPath = path.join(repoRoot, 'cloudflare/runtime/web-entry.js');
 const syncWorkerPath = path.join(repoRoot, 'cloudflare/runtime/sync-worker.js');
 const activationStatePath = path.join(repoRoot, 'docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json');
 const args = new Set(process.argv.slice(2));
@@ -19,9 +20,10 @@ if (!['dev', 'production'].includes(envName)) {
   throw new Error(`Unsupported environment: ${envName}`);
 }
 
-const [webConfig, syncConfig, syncWorkerSource, activationState] = await Promise.all([
+const [webConfig, syncConfig, webEntrySource, syncWorkerSource, activationState] = await Promise.all([
   readConfig(webConfigPath),
   readConfig(syncConfigPath),
+  readFile(webEntryPath, 'utf8'),
   readFile(syncWorkerPath, 'utf8'),
   readConfig(activationStatePath),
 ]);
@@ -68,6 +70,8 @@ console.log(JSON.stringify({
     d1Bindings: bindingNames(webEnv.d1_databases),
     r2Bindings: bindingNames(webEnv.r2_buckets),
     workflows: bindingNames(webEnv.workflows),
+    accessMode: webEnv.vars?.ACCESS_MODE,
+    devReadOnlyAccessBypass: envName === 'dev' && webEnv.vars?.ACCESS_MODE === 'off',
     syncTriggerEnabled: webEnv.vars?.SYNC_TRIGGER_ENABLED,
   },
   sync: {
@@ -94,11 +98,17 @@ function validateWebRuntime() {
   }
   validateDataBindings('web', webEnv);
 
-  if (envName === 'production' && webEnv.vars?.ACCESS_MODE !== 'enforce') {
-    errors.push('production web ACCESS_MODE must be enforce');
+  const accessMode = String(webEnv.vars?.ACCESS_MODE || '').trim().toLowerCase();
+  if (envName === 'production') {
+    if (webEnv.vars?.APP_ENV !== 'production') errors.push('production web APP_ENV must be production');
+    if (accessMode !== 'enforce') errors.push('production web ACCESS_MODE must be enforce');
   }
-  if (envName === 'dev' && !['observe', 'enforce'].includes(webEnv.vars?.ACCESS_MODE)) {
-    errors.push('dev web ACCESS_MODE must be observe or enforce');
+  if (envName === 'dev') {
+    if (webEnv.vars?.APP_ENV !== 'development') errors.push('dev web APP_ENV must be development');
+    if (!['off', 'observe', 'enforce'].includes(accessMode)) {
+      errors.push('dev web ACCESS_MODE must be off, observe, or enforce');
+    }
+    if (accessMode === 'off') validateDevReadOnlyAccessBypass();
   }
   if (envName === 'production' && webEnv.vars?.SYNC_TRIGGER_ENABLED !== 'false') {
     errors.push('production SYNC_TRIGGER_ENABLED must remain false during Phase 5');
@@ -113,6 +123,29 @@ function validateWebRuntime() {
     if (workflow.class_name !== 'AmazonAdsSyncWorkflow') errors.push('web Workflow class_name must be AmazonAdsSyncWorkflow');
     if (workflow.name !== expectedWorkflowName) errors.push(`web Workflow name must be ${expectedWorkflowName}`);
     if (workflow.script_name !== expectedSyncScriptName) errors.push(`web Workflow script_name must be ${expectedSyncScriptName}`);
+  }
+}
+
+function validateDevReadOnlyAccessBypass() {
+  if (webEnv.vars?.SYNC_TRIGGER_ENABLED !== 'false') {
+    errors.push('dev ACCESS_MODE off requires SYNC_TRIGGER_ENABLED=false');
+  }
+
+  const requiredMarkers = [
+    "DEV_READ_ONLY_BYPASS_ACTOR_ID = 'user-dev-owner'",
+    "DEV_READ_ONLY_BYPASS_METHODS = new Set(['GET', 'HEAD'])",
+    'guardDevReadOnlyAccessBypass',
+    'isDevReadOnlyAccessBypassRoute',
+    'isDevReadOnlyAccessBypassRequest',
+    'resolveDevReadOnlyBypassActor',
+    'dev_read_only_bypass_write_blocked',
+    'dev_read_only_bypass_route_blocked',
+    'if (!devReadOnlyBypass)',
+  ];
+  for (const marker of requiredMarkers) {
+    if (!webEntrySource.includes(marker)) {
+      errors.push(`dev ACCESS_MODE off requires read-only bypass marker: ${marker}`);
+    }
   }
 }
 
