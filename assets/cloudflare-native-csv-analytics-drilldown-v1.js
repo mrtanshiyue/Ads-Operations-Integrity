@@ -114,6 +114,7 @@
       void refresh();
     });
     root.addEventListener('click', (event) => {
+      if (state.loading) return;
       if (event.target.closest('[data-cfdd-refresh]')) {
         state.q = String(root.querySelector('[data-cfdd-search]')?.value || '').trim().slice(0, 200);
         state.page = 1;
@@ -351,7 +352,7 @@
     ];
     if (level === 'campaign') return [{ key: 'campaignName', label: 'Campaign' }, { key: 'campaignId', label: 'Observed ID', kind: 'identity' }, ...metrics];
     if (level === 'ad-group') return [{ key: 'adGroupName', label: 'Ad Group' }, { key: 'adGroupId', label: 'Observed ID', kind: 'identity' }, { key: 'campaignName', label: 'Campaign' }, ...metrics];
-    if (level === 'targeting') return [{ key: 'targeting', label: 'Targeting' }, { key: 'targetingId', label: 'Observed ID', kind: 'identity' }, { key: 'matchType', label: 'Match type' }, ...metrics];
+    if (level === 'targeting') return [{ key: 'targeting', label: 'Targeting' }, { key: 'targetingId', label: 'Observed ID', kind: 'identity' }, { key: 'targetingType', label: 'Targeting type' }, ...metrics];
     return [{ key: 'searchTerm', label: 'Search Term' }, { key: 'matchType', label: 'Match type' }, { key: 'targeting', label: 'Targeting' }, ...metrics];
   }
 
@@ -377,8 +378,17 @@
   }
 
   function renderBusy(busy) {
-    state.root?.setAttribute('aria-busy', busy ? 'true' : 'false');
-    for (const button of state.root?.querySelectorAll('button') || []) button.disabled = Boolean(busy);
+    if (!state.root) return;
+    state.root.setAttribute('aria-busy', busy ? 'true' : 'false');
+    for (const control of state.root.querySelectorAll('[data-cfdd-refresh],[data-cfdd-clear],[data-cfdd-match],[data-cfdd-sort],[data-cfdd-direction],[data-cfdd-search]')) {
+      control.disabled = Boolean(busy);
+    }
+    if (busy) {
+      const prev = state.root.querySelector('[data-cfdd-prev]');
+      const next = state.root.querySelector('[data-cfdd-next]');
+      if (prev) prev.disabled = true;
+      if (next) next.disabled = true;
+    }
   }
 
   function scopeCard(label, value, note) {
