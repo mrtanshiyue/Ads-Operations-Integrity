@@ -2,7 +2,7 @@
   'use strict';
 
   const VERSION = '1.1.0';
-  const PAGE_LIMIT = 200;
+  // Compatibility for the pure local generator contract only. Runtime refresh never paginates search terms.
   const MAX_SEARCH_TERM_ROWS = 5000;
   const MAX_OBSERVATIONS = 80;
   const state = { mounted: false, loading: false, root: null, requestSeq: 0 };
@@ -66,32 +66,16 @@
     const seq = ++state.requestSeq;
     state.loading = true;
     setBusy(true);
-    renderStatus('Reading governed analytics and computing local diagnostics…', 'loading');
+    renderStatus('Reading full governed analytics and computing diagnostics server-side…', 'loading');
     try {
       const filters = activeFilters();
       const common = compact({ startDate: scope.startDate, endDate: scope.endDate, ...filters });
-      const [searchTerms, campaignsPayload, dailyPayload, matchPayload] = await Promise.all([
-        readAllSearchTerms(scope.storeId, common),
-        api().csvAnalytics(scope.storeId, 'campaign', { ...common, page: 1, limit: 200, sort: 'spendMicros', direction: 'desc' }),
-        api().csvAnalytics(scope.storeId, 'daily', { ...common, page: 1, limit: 366, sort: 'reportDate', direction: 'asc' }),
-        api().csvAnalytics(scope.storeId, 'match-type', { ...common, page: 1, limit: 200, sort: 'spendMicros', direction: 'desc' }),
-      ]);
+      const result = await api().csvAnalytics(scope.storeId, 'diagnostics', common);
       if (seq !== state.requestSeq) return;
-      const result = generateDiagnostics({
-        searchTerms: searchTerms.items,
-        campaigns: campaignsPayload?.items || [],
-        daily: dailyPayload?.items || [],
-        matchTypes: matchPayload?.items || [],
-        searchTermTotal: searchTerms.totalGroups,
-        searchTermComplete: !searchTerms.partial,
-        searchTermTruncationReason: searchTerms.truncationReason,
-        searchTermPagesLoaded: searchTerms.pagesLoaded,
-        scope: { ...scope, filters },
-      });
       renderResult(result);
-      renderStatus(result.coverage.partial
-        ? `${result.observations.length} observations generated from partial coverage. No execution authority granted.`
-        : `${result.observations.length} local observations generated from full coverage. No execution authority granted.`, 'ok');
+      renderStatus(result.coverage?.partial
+        ? `${result.observations?.length || 0} observations generated from truthful partial coverage. No execution authority granted.`
+        : `${result.observations?.length || 0} local observations generated from full server-side coverage. No execution authority granted.`, 'ok');
     } catch (error) {
       if (seq !== state.requestSeq) return;
       renderResult(null);
@@ -102,34 +86,6 @@
         setBusy(false);
       }
     }
-  }
-
-  async function readAllSearchTerms(storeId, common) {
-    const first = await api().csvAnalytics(storeId, 'search-term', {
-      ...common, page: 1, limit: PAGE_LIMIT, sort: 'spendMicros', direction: 'desc',
-    });
-    const totalGroups = Math.max(0, Number(first?.pagination?.totalItems || 0));
-    const totalPages = Math.max(0, Number(first?.pagination?.totalPages || 0));
-    const allowedPages = Math.min(totalPages, Math.ceil(MAX_SEARCH_TERM_ROWS / PAGE_LIMIT));
-    const items = [...(first?.items || [])];
-    let pagesLoaded = totalPages > 0 ? 1 : 0;
-    for (let start = 2; start <= allowedPages; start += 4) {
-      const pages = [];
-      for (let page = start; page < start + 4 && page <= allowedPages; page += 1) pages.push(page);
-      const responses = await Promise.all(pages.map((page) => api().csvAnalytics(storeId, 'search-term', {
-        ...common, page, limit: PAGE_LIMIT, sort: 'spendMicros', direction: 'desc',
-      })));
-      pagesLoaded += responses.length;
-      for (const response of responses) items.push(...(response?.items || []));
-    }
-    const bounded = items.slice(0, MAX_SEARCH_TERM_ROWS);
-    const analyzedGroups = bounded.length;
-    const partial = analyzedGroups < totalGroups;
-    const coverageRatio = totalGroups > 0 ? analyzedGroups / totalGroups : 1;
-    const truncationReason = partial
-      ? (analyzedGroups >= MAX_SEARCH_TERM_ROWS ? `client_row_cap_${MAX_SEARCH_TERM_ROWS}` : 'incomplete_pagination')
-      : null;
-    return { items: bounded, totalGroups, analyzedGroups, coverageRatio, partial, truncationReason, pagesLoaded };
   }
 
   function generateDiagnostics(input = {}) {
