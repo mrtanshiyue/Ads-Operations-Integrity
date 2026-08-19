@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+
+const dashboard = await readFile(new URL('../assets/cloudflare-native-csv-analytics-dashboard-v1.js', import.meta.url), 'utf8');
+const apiClient = await readFile(new URL('../assets/cloudflare-native-api-v1.js', import.meta.url), 'utf8');
+
+assert.match(apiClient, /csvAnalytics:\s*\(storeId, dimension, params\)/, 'Native API must expose the governed CSV analytics route');
+assert.match(apiClient, /cloudflare-native-csv-analytics-dashboard-v1\.js/, 'CSV analytics dashboard must be self-loaded from the same-origin Native client');
+assert.match(dashboard, /CSV · LOCAL DATA · READ ONLY/, 'Dashboard read-only source identity must be visible');
+assert.match(dashboard, /Recommendation\/review remain blocked by provenance authority/, 'Legacy provenance gate must be visible');
+assert.match(dashboard, /Observed IDs never imply canonical Amazon identity/, 'Observed CSV IDs must not be presented as canonical identity');
+assert.match(dashboard, /Comparable period unavailable/, 'Missing comparison periods must not be rendered as fabricated zero deltas');
+assert.match(dashboard, /cloudflare-operator-store-change/, 'Dashboard must follow the operator store context');
+assert.match(dashboard, /startDate/, 'Dashboard must expose a date range');
+assert.match(dashboard, /dimension/, 'Dashboard must expose dimension switching');
+assert.match(dashboard, /pagination|totalPages/, 'Dashboard must expose pagination');
+assert.doesNotMatch(dashboard, /\bfetch\s*\(/, 'Dashboard must delegate transport to CloudflareNativeAPI');
+assert.doesNotMatch(dashboard, /startSync\s*\(|optimization-actions|execution-permits|method:\s*['"](?:POST|PUT|PATCH|DELETE)/i, 'Dashboard must remain read-only and isolated from execution/write controls');
+assert.doesNotMatch(dashboard, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|amazon-ads-api/i, 'Dashboard must not touch Amazon transport switches');
+
+const calls = [];
+const window = {
+  CloudflareNativeAPI: {
+    csvAnalytics(storeId, dimension, params) {
+      calls.push({ storeId, dimension, params: { ...params } });
+      return Promise.resolve(dimension === 'overview'
+        ? { metrics: {}, governance: { analyticsEligible: true, recommendationEligible: false, provenanceClasses: ['legacy_batch_only'] }, comparison: { available: false } }
+        : { items: [], pagination: { page: params.page || 1, limit: params.limit || 25, totalItems: 0, totalPages: 0 } });
+    },
+  },
+  addEventListener() {},
+};
+vm.runInNewContext(dashboard, { window, globalThis: window, console, Intl, Date, Promise, Object, Array, String, Number, Math, Set, Map }, { filename: 'cloudflare-native-csv-analytics-dashboard-v1.js' });
+assert.equal(window.CloudflareCsvAnalyticsDashboard.version, '1.0.0');
+const snapshot = await window.CloudflareCsvAnalyticsDashboard.loadSnapshot({
+  storeId: 'store-dev-01',
+  startDate: '2026-06-01',
+  endDate: '2026-06-30',
+  dimension: 'campaign',
+  sort: 'salesMicros',
+  direction: 'desc',
+  page: 2,
+  limit: 25,
+  q: ' readers ',
+});
+assert.ok(snapshot.overview && snapshot.daily && snapshot.table);
+assert.deepEqual(calls.map((call) => call.dimension), ['overview', 'daily', 'campaign']);
+assert.equal(calls[0].storeId, 'store-dev-01');
+assert.equal(calls[0].params.startDate, '2026-06-01');
+assert.equal(calls[1].params.limit, 366);
+assert.equal(calls[1].params.sort, 'reportDate');
+assert.equal(calls[2].params.page, 2);
+assert.equal(calls[2].params.sort, 'salesMicros');
+assert.equal(calls[2].params.q, 'readers');
+
+console.log('csv analytics dashboard contract: PASS');

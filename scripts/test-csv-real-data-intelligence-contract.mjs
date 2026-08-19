@@ -78,5 +78,6 @@ assert.doesNotMatch(authorityMigration, /202606|csv-import-0a2cb4a8|csv-import-0
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-analytics-foundation.mjs');
+await import('./test-csv-analytics-dashboard.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v5-with-analytics-foundation' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v6-with-analytics-dashboard' }));
