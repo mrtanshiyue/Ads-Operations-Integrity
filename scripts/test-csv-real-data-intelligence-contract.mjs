@@ -79,5 +79,6 @@ await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-analytics-foundation.mjs');
 await import('./test-csv-analytics-dashboard.mjs');
+await import('./test-csv-analytics-quality.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v6-with-analytics-dashboard' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v7-with-analytics-quality' }));
