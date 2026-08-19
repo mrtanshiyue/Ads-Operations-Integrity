@@ -213,9 +213,23 @@ function assertSourceBinding(receipt) {
     previousSourceContentSha256s: [...item.previousSourceContentSha256s],
     currentSourceContentSha256s: [...item.currentSourceContentSha256s],
   }));
-  if (JSON.stringify(source.sharedQuarterBindings) !== JSON.stringify(expectedShared)) throw receiptError('CSV_HISTORY_R12_TRANSITION_RECEIPT_SHARED_EVIDENCE_BINDING_MISMATCH');
+  if (!sameSharedQuarterBindings(source.sharedQuarterBindings, expectedShared)) throw receiptError('CSV_HISTORY_R12_TRANSITION_RECEIPT_SHARED_EVIDENCE_BINDING_MISMATCH');
 }
 
+function sameSharedQuarterBindings(left, right) {
+  return Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length
+    && left.every((item, index) => {
+      const expected = right[index];
+      return item?.quarter === expected?.quarter
+        && item?.previousCanonicalQuarterFingerprint === expected?.previousCanonicalQuarterFingerprint
+        && item?.currentCanonicalQuarterFingerprint === expected?.currentCanonicalQuarterFingerprint
+        && sameStringArray(item?.previousSourceInputSetFingerprints, expected?.previousSourceInputSetFingerprints)
+        && sameStringArray(item?.currentSourceInputSetFingerprints, expected?.currentSourceInputSetFingerprints)
+        && sameStringArray(item?.previousSourceContentSha256s, expected?.previousSourceContentSha256s)
+        && sameStringArray(item?.currentSourceContentSha256s, expected?.currentSourceContentSha256s);
+    });
+}
 function sameStringArray(left, right) {
   return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
 }
