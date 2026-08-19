@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import {
+import path from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const distRoot = path.join(repoRoot, 'dist-cloudflare-native');
+const chronologyRelative = 'assets/cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js';
+const chronologySource = await readFile(path.join(repoRoot, chronologyRelative), 'utf8');
+const chronologyDistSource = await readFile(path.join(distRoot, chronologyRelative), 'utf8');
+const chronologyMod = await import(`${pathToFileURL(path.join(distRoot, chronologyRelative)).href}?r12Chronology=${Date.now()}`);
+const {
   CSV_HISTORY_ROLLING_12_TRANSITION_CHRONOLOGY_SCHEMA_VERSION,
   projectHistoricalRolling12VerifiedTransitionChronology,
-} from '../assets/cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js';
+} = chronologyMod;
 
 function assertAuthorityFalse(authority) {
   assert.equal(authority.authoritative, false);
@@ -53,6 +62,10 @@ function board(previousWindowKey, currentWindowKey, fingerprint, delta, override
     ...overrides,
   };
 }
+
+assert.equal(chronologySource, chronologyDistSource, 'Canonical build must preserve the chronology module source exactly');
+assert.equal(CSV_HISTORY_ROLLING_12_TRANSITION_CHRONOLOGY_SCHEMA_VERSION, 'csv-history-rolling-12-transition-chronology-v1');
+assert.equal(typeof projectHistoricalRolling12VerifiedTransitionChronology, 'function');
 
 const first = board('2026-Q1-R12', '2026-Q2-R12', 'receipt-1', 12);
 const second = board('2026-Q2-R12', '2026-Q3-R12', 'receipt-2', -4);
@@ -140,23 +153,42 @@ assert.throws(
   /At least two ordered Rolling-12 transition review boards are required/,
 );
 
-const source = await readFile(new URL('../assets/cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js', import.meta.url), 'utf8');
-assert.match(source, /buildHistoricalRolling12WindowTransitionReviewBoard/);
-assert.match(source, /non_contiguous_ledger_evidence/);
-assert.match(source, /missing_ledger_fingerprint/);
-assert.match(source, /crossWindowAggregationApplied: false/);
-assert.match(source, /crossWindowNormalizationApplied: false/);
-assert.match(source, /automaticTrendInferenceApplied: false/);
-assert.match(source, /outcomeQualityJudgmentApplied: false/);
-assert.match(source, /recommendationGenerated: false/);
-assert.match(source, /actionGenerated: false/);
-assert.match(source, /windowSelectionAutoReordered: false/);
-assert.match(source, /invalidTransitionAutoSkipped: false/);
-assert.doesNotMatch(source, /\.sort\s*\(/);
+for (const pattern of [
+  /\bfetch\s*\(/,
+  /XMLHttpRequest/,
+  /navigator\.sendBeacon/,
+  /\bWebSocket\b/,
+  /\bEventSource\b/,
+  /\blocalStorage\b/,
+  /\bsessionStorage\b/,
+  /\bindexedDB\b/,
+  /CloudflareNativeAPI/,
+  /\/api\/v1\//,
+  /CONTROL_DB/,
+  /STORE_01_DB/,
+  /DATA_BUCKET/,
+  /AMAZON_ADS_ENABLED/,
+  /optimization-actions/,
+  /execution-permits/,
+]) assert.equal(pattern.test(chronologySource), false, `Chronology must remain explicit-local and execution-free: ${pattern}`);
+
+assert.match(chronologySource, /buildHistoricalRolling12WindowTransitionReviewBoard/);
+assert.match(chronologySource, /non_contiguous_ledger_evidence/);
+assert.match(chronologySource, /missing_ledger_fingerprint/);
+assert.match(chronologySource, /crossWindowAggregationApplied: false/);
+assert.match(chronologySource, /crossWindowNormalizationApplied: false/);
+assert.match(chronologySource, /automaticTrendInferenceApplied: false/);
+assert.match(chronologySource, /outcomeQualityJudgmentApplied: false/);
+assert.match(chronologySource, /recommendationGenerated: false/);
+assert.match(chronologySource, /actionGenerated: false/);
+assert.match(chronologySource, /windowSelectionAutoReordered: false/);
+assert.match(chronologySource, /invalidTransitionAutoSkipped: false/);
+assert.doesNotMatch(chronologySource, /\.sort\s*\(/);
 
 console.log(JSON.stringify({
   ok: true,
   contract: 'csv-history-rolling-12-transition-chronology-v1',
+  packagedArtifactVerified: true,
   transitionCount: chronology.transitionCount,
   chronologyAllowed: chronology.chronologyAllowed,
   nonAdjacentFailsClosed: true,
