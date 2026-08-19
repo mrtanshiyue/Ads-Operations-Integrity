@@ -16,12 +16,6 @@
       "observability": {
         "enabled": false
       },
-      "analytics_engine_datasets": [
-        {
-          "binding": "RUNTIME_EVIDENCE",
-          "dataset": "ads_operations_runtime_evidence_dev"
-        }
-      ],
       "vars": {
         "APP_ENV": "development",
         "ACCESS_MODE": "off",
@@ -68,12 +62,6 @@
       "observability": {
         "enabled": false
       },
-      "analytics_engine_datasets": [
-        {
-          "binding": "RUNTIME_EVIDENCE",
-          "dataset": "ads_operations_runtime_evidence_prod"
-        }
-      ],
       "vars": {
         "APP_ENV": "production",
         "ACCESS_MODE": "enforce",
