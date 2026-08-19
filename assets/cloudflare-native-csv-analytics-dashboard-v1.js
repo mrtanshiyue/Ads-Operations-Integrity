@@ -9,11 +9,14 @@
     mounted: false,
     loading: false,
     storeId: '',
+    startDate: '',
+    endDate: '',
     dimension: DEFAULT_DIMENSION,
     page: 1,
     limit: 25,
     sort: 'spendMicros',
     direction: 'desc',
+    q: '',
     root: null,
     requestSeq: 0,
   };
@@ -23,6 +26,9 @@
     mount,
     refresh,
     loadSnapshot,
+    getState,
+    getScope,
+    resetScope,
     metricContract: Object.freeze(['impressions', 'clicks', 'spendMicros', 'purchases', 'orders', 'unitsSold', 'salesMicros', 'ctr', 'cpcMicros', 'cvr', 'acos', 'roas']),
   });
 
@@ -43,6 +49,7 @@
     state.storeId = storeId;
     state.page = 1;
     updateStoreLabel();
+    broadcastScope();
     void refresh();
   });
 
@@ -63,7 +70,17 @@
     const q = String(options.q || '').trim().slice(0, 200);
     if (!storeId || !startDate || !endDate) throw new Error('csv_analytics_scope_required');
 
-    const common = { startDate, endDate };
+    const common = compact({
+      startDate,
+      endDate,
+      marketplace: options.marketplace,
+      profileId: options.profileId,
+      advertiserAccountId: options.advertiserAccountId,
+      campaignId: options.campaignId,
+      adGroupId: options.adGroupId,
+      targetingId: options.targetingId,
+      matchType: options.matchType,
+    });
     const tableParams = { ...common, page, limit, sort, direction, q };
     const [overview, daily, table, quality] = await Promise.all([
       api().csvAnalytics(storeId, 'overview', common),
@@ -83,6 +100,8 @@
     installStyles();
 
     const range = defaultRange();
+    state.startDate = range.startDate;
+    state.endDate = range.endDate;
     const root = global.document.createElement('section');
     root.id = 'cfCsvAnalyticsDashboard';
     root.className = 'card cfCsvAnalyticsDashboard';
@@ -108,6 +127,7 @@
         <label>Order <select id="cfCsvAnalyticsDirection"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
         <label class="cfCsvAnalyticsSearch">Filter <input id="cfCsvAnalyticsQuery" type="search" maxlength="200" placeholder="Campaign / ad group / targeting / search term"></label>
         <button id="cfCsvAnalyticsRun" class="btn primary" type="button">Load analytics</button>
+        <button id="cfCsvAnalyticsReset" class="btn" type="button">Reset scope</button>
       </div>
       <div id="cfCsvAnalyticsStatus" class="cfCsvAnalyticsStatus" role="status" aria-live="polite">Select a business-data period to load governed analytics.</div>
       <div id="cfCsvAnalyticsGovernance" class="cfCsvAnalyticsGovernance"></div>
@@ -136,6 +156,7 @@
     else content.prepend(root);
 
     root.querySelector('#cfCsvAnalyticsRun')?.addEventListener('click', () => { state.page = 1; void refresh(); });
+    root.querySelector('#cfCsvAnalyticsReset')?.addEventListener('click', () => resetScope(true));
     root.querySelector('#cfCsvAnalyticsDimension')?.addEventListener('change', (event) => {
       state.dimension = TABLE_DIMENSIONS.includes(event.target.value) ? event.target.value : DEFAULT_DIMENSION;
       state.page = 1;
@@ -151,6 +172,8 @@
       state.page = 1;
       void refresh();
     });
+    root.querySelector('#cfCsvAnalyticsStart')?.addEventListener('change', () => { state.page = 1; void refresh(); });
+    root.querySelector('#cfCsvAnalyticsEnd')?.addEventListener('change', () => { state.page = 1; void refresh(); });
     root.querySelector('#cfCsvAnalyticsQuery')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') { event.preventDefault(); state.page = 1; void refresh(); }
     });
@@ -163,10 +186,11 @@
       state.page += 1;
       void refresh();
     });
+    broadcastScope();
   }
 
   async function refresh() {
-    if (!state.root || state.loading) return;
+    if (!state.root) return;
     const storeId = String(state.storeId || global.CloudflareOperatorWorkspace?.currentStoreId?.() || '').trim();
     const startDate = String(state.root.querySelector('#cfCsvAnalyticsStart')?.value || '').trim();
     const endDate = String(state.root.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim();
@@ -175,7 +199,11 @@
     state.sort = String(state.root.querySelector('#cfCsvAnalyticsSort')?.value || state.sort);
     state.direction = String(state.root.querySelector('#cfCsvAnalyticsDirection')?.value || state.direction) === 'asc' ? 'asc' : 'desc';
     state.storeId = storeId;
+    state.startDate = startDate;
+    state.endDate = endDate;
+    state.q = q.slice(0, 200);
     updateStoreLabel();
+    broadcastScope();
     if (!storeId) return setStatus('No store context is available.', 'warn');
     if (!startDate || !endDate) return setStatus('Start and end dates are required.', 'warn');
 
@@ -184,6 +212,7 @@
     setBusy(true);
     setStatus('Loading governed business CSV analytics…', 'loading');
     try {
+      const filters = global.CloudflareCsvAnalyticsDrilldown?.activeFilters?.() || {};
       const snapshot = await loadSnapshot({
         storeId,
         startDate,
@@ -193,7 +222,8 @@
         direction: state.direction,
         page: state.page,
         limit: state.limit,
-        q,
+        q: state.q,
+        ...filters,
       });
       if (seq !== state.requestSeq) return;
       renderGovernance(snapshot.overview?.governance);
@@ -215,6 +245,78 @@
         setBusy(false);
       }
     }
+  }
+
+  function getState() {
+    const scope = getScope();
+    return Object.freeze({
+      storeId: scope.store,
+      startDate: scope.startDate,
+      endDate: scope.endDate,
+      dimension: state.dimension,
+      page: state.page,
+      limit: state.limit,
+      sort: state.sort,
+      direction: state.direction,
+      q: scope.q,
+      marketplace: scope.marketplace,
+      profileId: scope.profile,
+      campaignId: scope.campaign,
+      adGroupId: scope.adGroup,
+      targetingId: scope.targeting,
+      matchType: scope.matchType,
+      loading: state.loading,
+      requestSeq: state.requestSeq,
+    });
+  }
+
+  function getScope() {
+    const filters = global.CloudflareCsvAnalyticsDrilldown?.activeFilters?.() || {};
+    return Object.freeze({
+      store: String(state.storeId || global.CloudflareOperatorWorkspace?.currentStoreId?.() || '').trim(),
+      startDate: String(state.startDate || state.root?.querySelector('#cfCsvAnalyticsStart')?.value || '').trim(),
+      endDate: String(state.endDate || state.root?.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim(),
+      marketplace: filters.marketplace || null,
+      profile: filters.profileId || null,
+      campaign: filters.campaignId || null,
+      adGroup: filters.adGroupId || null,
+      targeting: filters.targetingId || null,
+      matchType: filters.matchType || null,
+      q: String(state.q || state.root?.querySelector('#cfCsvAnalyticsQuery')?.value || '').trim().slice(0, 200),
+    });
+  }
+
+  function resetScope(refreshNow = true) {
+    const range = defaultRange();
+    state.startDate = range.startDate;
+    state.endDate = range.endDate;
+    state.dimension = DEFAULT_DIMENSION;
+    state.page = 1;
+    state.sort = 'spendMicros';
+    state.direction = 'desc';
+    state.q = '';
+    global.CloudflareCsvAnalyticsDrilldown?.reset?.(false);
+    if (state.root) {
+      const start = state.root.querySelector('#cfCsvAnalyticsStart');
+      const end = state.root.querySelector('#cfCsvAnalyticsEnd');
+      const dimension = state.root.querySelector('#cfCsvAnalyticsDimension');
+      const sort = state.root.querySelector('#cfCsvAnalyticsSort');
+      const direction = state.root.querySelector('#cfCsvAnalyticsDirection');
+      const query = state.root.querySelector('#cfCsvAnalyticsQuery');
+      if (start) start.value = range.startDate;
+      if (end) end.value = range.endDate;
+      if (dimension) dimension.value = DEFAULT_DIMENSION;
+      if (sort) sort.value = 'spendMicros';
+      if (direction) direction.value = 'desc';
+      if (query) query.value = '';
+    }
+    broadcastScope();
+    if (refreshNow) void refresh();
+  }
+
+  function broadcastScope() {
+    if (!global.dispatchEvent || !global.CustomEvent) return;
+    global.dispatchEvent(new global.CustomEvent('cloudflare-csv-analytics-scope-change', { detail: getScope() }));
   }
 
   function renderGovernance(governance) {
@@ -379,7 +481,7 @@
   function setBusy(busy) {
     state.root?.setAttribute('aria-busy', busy ? 'true' : 'false');
     const button = state.root?.querySelector('#cfCsvAnalyticsRun');
-    if (button) button.disabled = Boolean(busy);
+    if (button) button.setAttribute('aria-busy', busy ? 'true' : 'false');
   }
 
   function updateStoreLabel() {
@@ -407,6 +509,7 @@
     return ({ campaign: 'Campaign', 'ad-group': 'Ad group', targeting: 'Targeting', 'search-term': 'Search term', 'match-type': 'Match type' })[value] || 'Campaign';
   }
 
+  function compact(value) { return Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item !== null && item !== undefined && item !== '')); }
   function govBadge(text, kind) { return `<span class="cfCsvAnalyticsGovBadge" data-kind="${kind}">${escapeHtml(text)}</span>`; }
   function formatInt(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(value)) : '—'; }
   function moneyMicros(value) { return Number.isFinite(Number(value)) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value) / 1e6) : '—'; }
