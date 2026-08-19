@@ -56,6 +56,8 @@ const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywo
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
 const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert|execution-permits))?)?$/;
 const GOVERNANCE_HEALTH_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/governance-health$/;
+const DEV_READ_ONLY_BYPASS_ACTOR_ID = 'user-dev-owner';
+const DEV_READ_ONLY_BYPASS_METHODS = new Set(['GET', 'HEAD']);
 
 export default {
   async fetch(request, env, ctx) {
@@ -63,6 +65,9 @@ export default {
 
     const deploymentHealthResponse = handleDeploymentHealthRoute({ request, env, url });
     if (deploymentHealthResponse) return deploymentHealthResponse;
+
+    const devReadOnlyGuard = guardDevReadOnlyAccessBypass(request, env, url);
+    if (devReadOnlyGuard) return devReadOnlyGuard;
 
     if (shouldApplyStrictAccessGuard(url.pathname, request.method, env)) {
       const guard = await strictAccessGuard(request, env);
@@ -96,10 +101,19 @@ export default {
       return json(request, { error: 'access_denied', reason: access.error || 'unauthenticated' }, 401);
     }
 
-    const actor = await resolveActor(env.CONTROL_DB, access);
-    if (!actor) return json(request, { error: 'app_user_not_provisioned' }, 403);
+    const devReadOnlyBypass = isDevReadOnlyAccessBypassRequest(url.pathname, request.method, env);
+    const actor = devReadOnlyBypass
+      ? await resolveDevReadOnlyBypassActor(env.CONTROL_DB)
+      : await resolveActor(env.CONTROL_DB, access);
+    if (!actor) {
+      return json(request, {
+        error: devReadOnlyBypass ? 'dev_read_only_bypass_actor_not_provisioned' : 'app_user_not_provisioned',
+      }, devReadOnlyBypass ? 503 : 403);
+    }
 
-    await touchLastSeen(env.CONTROL_DB, actor.user_id);
+    if (!devReadOnlyBypass) {
+      await touchLastSeen(env.CONTROL_DB, actor.user_id);
+    }
 
     try {
       if (CSV_IMPORTS_ROUTE_PATTERN.test(url.pathname)
@@ -222,6 +236,57 @@ function isNegativeKeywordScopeRoute(pathname) {
 
 function isAccessGovernanceRoute(pathname) {
   return ACCESS_GOVERNANCE_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname));
+}
+
+export function isDevReadOnlyAccessBypassEnabled(env = {}) {
+  return String(env.APP_ENV || '').trim().toLowerCase() === 'development'
+    && String(env.ACCESS_MODE || '').trim().toLowerCase() === 'off';
+}
+
+export function isDevReadOnlyAccessBypassRoute(pathname) {
+  return isControlRoute(pathname)
+    || STORE_PRODUCTS_ROUTE_PATTERN.test(pathname)
+    || PRODUCT_KEYWORDS_ROUTE_PATTERN.test(pathname)
+    || isNegativeKeywordScopeRoute(pathname)
+    || AUDIT_ROUTE_PATTERN.test(pathname)
+    || STORE_ROUTE_PATTERN.test(pathname)
+    || CSV_IMPORTS_ROUTE_PATTERN.test(pathname)
+    || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(pathname)
+    || ANALYTICS_ROUTE_PATTERN.test(pathname)
+    || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(pathname)
+    || GOVERNANCE_HEALTH_ROUTE_PATTERN.test(pathname);
+}
+
+export function isDevReadOnlyAccessBypassRequest(pathname, method, env = {}) {
+  return isDevReadOnlyAccessBypassEnabled(env)
+    && DEV_READ_ONLY_BYPASS_METHODS.has(String(method || '').toUpperCase())
+    && isDevReadOnlyAccessBypassRoute(pathname);
+}
+
+export function guardDevReadOnlyAccessBypass(request, env = {}, url = new URL(request.url)) {
+  if (!isDevReadOnlyAccessBypassEnabled(env)) return null;
+  if (!url.pathname.startsWith('/api/') || url.pathname === '/api/health' || request.method === 'OPTIONS') return null;
+
+  if (!isDevReadOnlyAccessBypassRoute(url.pathname)) {
+    return json(request, { error: 'dev_read_only_bypass_route_blocked' }, 403);
+  }
+
+  if (!DEV_READ_ONLY_BYPASS_METHODS.has(String(request.method || '').toUpperCase())) {
+    return json(request, { error: 'dev_read_only_bypass_write_blocked' }, 403);
+  }
+
+  return null;
+}
+
+export async function resolveDevReadOnlyBypassActor(db) {
+  if (!db) return null;
+  return db.prepare(`
+    SELECT user_id, cf_access_sub, email, email_norm, display_name, status
+    FROM users
+    WHERE status = 'active'
+      AND user_id = ?1
+    LIMIT 1
+  `).bind(DEV_READ_ONLY_BYPASS_ACTOR_ID).first();
 }
 
 function shouldApplyStrictAccessGuard(pathname, method, env) {
