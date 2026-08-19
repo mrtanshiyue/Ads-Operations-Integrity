@@ -221,15 +221,13 @@ export async function handleCsvAnalyticsApiRoute({ request, env, actor, url }) {
   const sorting = parseSorting(url, spec);
   if (sorting.error) return json(request, { error: sorting.error }, 400);
 
-  const [itemsResult, countRow] = await Promise.all([
-    readDimension(route.storeDb, spec, currentWhere, sorting.value, paging.value),
-    countDimension(route.storeDb, spec, currentWhere),
-  ]);
-  const items = (itemsResult.results || []).map((row) => ({
+  const itemsResult = await readDimension(route.storeDb, spec, currentWhere, sorting.value, paging.value);
+  const resultRows = itemsResult.results || [];
+  const items = resultRows.map((row) => ({
     ...spec.labels(row),
     ...metricRow(row),
   }));
-  const totalItems = integer(countRow?.count);
+  const totalItems = resultRows.length > 0 ? integer(resultRows[0]?.total_count) : 0;
 
   return json(request, {
     storeId,
@@ -336,6 +334,7 @@ async function readDimension(db, spec, where, sorting, paging) {
     ), enriched AS (
       SELECT
         *,
+        COUNT(*) OVER() AS total_count,
         CASE WHEN impressions = 0 THEN NULL ELSE CAST(clicks AS REAL) / impressions END AS ctr,
         CASE WHEN clicks = 0 THEN NULL ELSE CAST(spend_micros AS REAL) / clicks END AS cpc_micros,
         CASE WHEN clicks = 0 THEN NULL ELSE CAST(purchases AS REAL) / clicks END AS cvr,
@@ -348,19 +347,6 @@ async function readDimension(db, spec, where, sorting, paging) {
     ORDER BY ${sorting.column} ${sorting.direction.toUpperCase()}, ${spec.tieBreaker} ASC
     LIMIT ? OFFSET ?
   `).bind(...where.params, paging.limit, offset).all();
-}
-
-async function countDimension(db, spec, where) {
-  const group = spec.group.join(', ');
-  return db.prepare(`
-    SELECT COUNT(*) AS count
-    FROM (
-      SELECT 1
-      FROM csv_business_search_term_daily f
-      WHERE ${where.sql}
-      GROUP BY ${group}
-    ) grouped_rows
-  `).bind(...where.params).first();
 }
 
 function parseDateRange(url) {
