@@ -39,7 +39,17 @@ const window = {
       }
       if (dimension === 'quality') {
         return Promise.resolve({
-          quality: { qualityScore: 98.1, issueCount: 2, issueOccurrences: 7, severity: 'medium', affectedFacts: 7 },
+          quality: {
+            qualityScore: 98.1,
+            issueCount: 2,
+            issueOccurrences: 7,
+            severity: 'medium',
+            affectedFacts: 7,
+            reliabilityOnly: true,
+            changesIdentityAuthority: false,
+            changesRecommendationAuthority: false,
+            amazonExecutionAuthorized: false,
+          },
           coverage: { observedDays: 30, expectedDays: 30, missingDays: 0, campaignIdPresentRate: 0.99, targetingIdPresentRate: 0.9 },
           issues: [],
         });
@@ -73,6 +83,9 @@ assert.equal(calls[2].params.sort, 'salesMicros');
 assert.equal(calls[2].params.q, 'readers');
 assert.equal(calls[3].params.startDate, '2026-06-01');
 assert.equal(calls[3].params.endDate, '2026-06-30');
-assert.equal(snapshot.quality.quality.reliabilityOnly, undefined, 'Mock quality semantics stay presentation-only in this dashboard transport contract');
+assert.equal(snapshot.quality.quality.reliabilityOnly, true);
+assert.equal(snapshot.quality.quality.changesIdentityAuthority, false);
+assert.equal(snapshot.quality.quality.changesRecommendationAuthority, false);
+assert.equal(snapshot.quality.quality.amazonExecutionAuthorized, false);
 
 console.log('csv analytics dashboard contract: PASS');
