@@ -64,9 +64,9 @@ const storeDb = {
           ? juneTotals
           : { fact_count: 0, impressions: 0, clicks: 0, spend_micros: 0, purchases: 0, units_sold: 0, sales_micros: 0 };
       }
-      if (sql.includes('SELECT COUNT(*) AS count') && sql.includes('grouped_rows')) return { count: 1 };
       if (sql.includes('WITH aggregated AS')) {
         assert.equal(mode, 'all');
+        assert.match(sql, /COUNT\(\*\) OVER\(\) AS total_count/, 'Dimension pagination must derive total count from the same grouped query');
         return {
           results: [{
             campaign_name: 'Readers Exact',
@@ -79,6 +79,7 @@ const storeDb = {
             purchases: 2,
             units_sold: 2,
             sales_micros: 20000000,
+            total_count: 1,
           }],
         };
       }
@@ -126,7 +127,10 @@ async function call(path) {
 }
 
 {
+  const beforeDimensionSqlCount = executedSql.filter((sql) => sql.includes('WITH aggregated AS')).length;
   const { payload } = await call('/api/v1/stores/store-dev-01/csv-analytics/campaign?startDate=2026-06-01&endDate=2026-06-30&sort=salesMicros&direction=desc&page=1&limit=50');
+  const dimensionSql = executedSql.filter((sql) => sql.includes('WITH aggregated AS'));
+  assert.equal(dimensionSql.length - beforeDimensionSqlCount, 1, 'Dimension page and total count must execute as one grouped SQL query');
   assert.equal(payload.dimension, 'campaign');
   assert.equal(payload.items.length, 1);
   assert.equal(payload.items[0].campaignId, 'observed-campaign-1');
@@ -160,6 +164,8 @@ const source = await readFile(new URL('../cloudflare/runtime/csv-analytics-api.j
 const entry = await readFile(new URL('../cloudflare/runtime/web-entry.js', import.meta.url), 'utf8').catch(() => '');
 assert.doesNotMatch(source, /\bfetch\s*\(/, 'CSV analytics foundation must not perform network calls');
 assert.doesNotMatch(source, /AMAZON_ADS_ENABLED\s*=\s*true|SYNC_TRIGGER_ENABLED\s*=\s*true/, 'CSV analytics must not enable Amazon/sync transport');
+assert.doesNotMatch(source, /async function countDimension/, 'Repeated high-cardinality count query must stay removed');
+assert.match(source, /COUNT\(\*\) OVER\(\) AS total_count/, 'Grouped dimension query must carry total cardinality');
 assert.match(source, /amazonExecutionAuthorized:\s*false/);
 assert.match(source, /GOVERNED_PROVENANCE/);
 assert.match(source, /legacy_batch_only|provenanceClasses/);
