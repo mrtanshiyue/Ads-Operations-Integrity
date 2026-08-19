@@ -18,6 +18,7 @@ import { handleUserLifecycleApiRoute } from './user-lifecycle-api.js';
 import { handleGlobalRoleGovernanceApiRoute } from './global-role-governance-api.js';
 import { handleAnalyticsApiRoute } from './analytics-api.js';
 import { handleCsvAnalyticsApiRoute } from './csv-analytics-api.js';
+import { handleCsvAnalyticsDiagnosticsApiRoute } from './csv-analytics-diagnostics-api.js';
 import { handleCsvAnalyticsQualityApiRoute } from './csv-analytics-quality-api.js';
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
@@ -54,7 +55,7 @@ const STORE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/(campaigns|ad-groups|key
 const SYNC_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/sync(?:\/[^/]+)?$/;
 const CSV_IMPORTS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/imports(?:\/[^/]+(?:\/errors)?)?$/;
 const CSV_ADVISORY_REVIEWS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/advisory-reviews(?:\/[^/]+)?$/;
-const CSV_ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/csv-analytics\/(overview|daily|campaign|ad-group|ad_group|targeting|search-term|search_term|match-type|match_type|quality)$/;
+const CSV_ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/csv-analytics\/(overview|daily|campaign|ad-group|ad_group|targeting|search-term|search_term|match-type|match_type|quality|diagnostics)$/;
 const ANALYTICS_ROUTE_PATTERN = /^\/api\/v1\/analytics\/(overview|products|keywords|data-health)$/;
 const SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/search-term-intelligence(?:\/recommendation-preview)?$/;
 const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimization-actions(?:\/[^/]+(?:\/(?:reject|approve|apply|revert|execution-permits))?)?$/;
@@ -208,6 +209,8 @@ export default {
         if (response) return response;
       }
       if (CSV_ANALYTICS_ROUTE_PATTERN.test(url.pathname)) {
+        const diagnosticsResponse = await handleCsvAnalyticsDiagnosticsApiRoute({ request, env, actor, url });
+        if (diagnosticsResponse) return diagnosticsResponse;
         const qualityResponse = await handleCsvAnalyticsQualityApiRoute({ request, env, actor, url });
         if (qualityResponse) return qualityResponse;
         const response = await handleCsvAnalyticsApiRoute({ request, env, actor, url });
