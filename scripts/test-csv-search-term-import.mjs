@@ -8,15 +8,18 @@ import {
 } from '../cloudflare/runtime/csv-search-term-import.js';
 import { createD1CsvSearchTermImportRepository } from '../cloudflare/runtime/csv-search-term-import-repository.js';
 import { ingestSearchTermCsvOnce } from '../cloudflare/runtime/csv-search-term-ingestion.js';
+import { createCsvImportSourceObjectStore } from '../cloudflare/runtime/csv-import-source-object.js';
 
 const csv = [
   'Date,Portfolio name,Campaign Name,Ad Group Name,Targeting,Match Type,Customer Search Term,Impressions,Clicks,Spend,7 Day Total Orders,7 Day Total Sales,7 Day Total Units',
   '08/12/2026,Readers,Campaign A,Ad Group A,reading glasses,BROAD,reading glasses men,100,10,$12.34,2,$40.00,2',
   '08/12/2026,Readers,Campaign A,Ad Group A,reading glasses,BROAD,"reading, glasses women",80,8,$9.00,1,$25.00,1',
 ].join('\r\n');
+const sourceBytes = new TextEncoder().encode(csv);
 
 const input = {
   csvText:csv,
+  sourceBytes,
   sourceFileName:'Sponsored Products Search term report.csv',
   marketplace:'US',
   currencyCode:'USD',
@@ -81,6 +84,31 @@ const duplicateParsed = await parseAmazonSearchTermCsv({
 assert.equal(duplicateParsed.ok, false);
 assert.ok(duplicateParsed.errors.some((error) => error.errorCode === 'CSV_DUPLICATE_LOGICAL_ROW'));
 
+const sourceObjects = new Map();
+const sourceBucket = {
+  async put(key, bytes) {
+    if (sourceObjects.has(key)) return null;
+    const copy = new Uint8Array(bytes);
+    sourceObjects.set(key, copy);
+    return { etag:'test-etag', version:'test-version' };
+  },
+  async get(key) {
+    const bytes = sourceObjects.get(key);
+    if (!bytes) return null;
+    return {
+      async arrayBuffer() {
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      },
+    };
+  },
+};
+const sourceObjectStore = createCsvImportSourceObjectStore({ bucket:sourceBucket });
+const sourceContext = {
+  storeId:'store-test',
+  contentType:'text/csv',
+  importerUserId:'user-test',
+};
+
 const calls = [];
 const repository = {
   async findDuplicate(args) { calls.push(['findDuplicate', args]); return null; },
@@ -91,11 +119,17 @@ const published = await ingestSearchTermCsvOnce({
   importId:'imp-published',
   input,
   repository,
+  sourceObjectStore,
+  sourceContext,
   now:'2026-08-18T01:01:00.000Z',
 });
 assert.equal(published.action, 'csv_import_published');
 assert.equal(published.published, true);
 assert.equal(calls.filter(([name]) => name === 'commitValidatedImport').length, 1);
+assert.equal(sourceObjects.size, 1, 'published import must preserve one immutable raw source object');
+const commitCall = calls.find(([name]) => name === 'commitValidatedImport')?.[1];
+assert.equal(commitCall.sourceObject.contentSha256, published.parsed.contentSha256);
+assert.equal(commitCall.sourceObject.contentBytes, sourceBytes.byteLength);
 
 const duplicateRepository = {
   ...repository,
@@ -103,16 +137,23 @@ const duplicateRepository = {
   async commitValidatedImport() { throw new Error('must not commit duplicate'); },
 };
 const reused = await ingestSearchTermCsvOnce({
-  importId:'imp-ignored', input, repository:duplicateRepository, now:'2026-08-18T01:01:00.000Z',
+  importId:'imp-ignored',
+  input,
+  repository:duplicateRepository,
+  sourceObjectStore,
+  sourceContext,
+  now:'2026-08-18T01:01:00.000Z',
 });
 assert.equal(reused.action, 'csv_import_duplicate');
 assert.equal(reused.reused, true);
 assert.equal(reused.importId, 'imp-existing');
+assert.equal(sourceObjects.size, 1, 'duplicate authority must not create a second R2 object');
 
 const repositorySource = await readFile(new URL('../cloudflare/runtime/csv-search-term-import-repository.js', import.meta.url), 'utf8');
 for (const token of ['advertiser_account_id','campaign_id','ad_group_id','targeting_id','targeting_identity_state','target_bid_micros']) {
   assert.match(repositorySource, new RegExp(token), `repository must persist ${token}`);
 }
+assert.match(repositorySource, /INSERT INTO csv_import_source_objects/, 'repository must bind D1 authority to immutable source receipt');
 
 function fakeStatement(sql, values = []) {
   return {
@@ -153,16 +194,33 @@ const scaleParsed = {
     canonicalRowJson:JSON.stringify({ rowKey:`row-${index + 1}`, reportDate:'2026-06-01' }),
   })),
 };
+const scaleSourceObject = {
+  importId:'imp-scale-8753',
+  sourceObjectId:`csv-source-${scaleParsed.contentSha256}`,
+  sourceKind:'manual_csv_upload',
+  r2BindingKey:'DATA_BUCKET',
+  objectKey:`csv/raw/store-scale/spSearchTerm/sha256/aa/${scaleParsed.contentSha256}`,
+  contentSha256:scaleParsed.contentSha256,
+  contentBytes:scaleParsed.contentBytes,
+  contentType:'text/csv',
+  sourceFileName:scaleParsed.sourceFileName,
+  importerUserId:'user-test',
+  uploadedAt:scaleParsed.uploadedAt,
+  r2Etag:'etag-scale',
+  r2Version:'version-scale',
+};
 const scaleRepository = createD1CsvSearchTermImportRepository(scaleDb);
 const scaleResult = await scaleRepository.commitValidatedImport({
   importId:'imp-scale-8753',
   parsed:scaleParsed,
+  sourceObject:scaleSourceObject,
   now:'2026-08-18T03:14:00.000Z',
 });
 assert.equal(scaleResult.status, 'published');
 assert.equal(scaleBatches.length, 1, 'validated import must remain one atomic D1 batch');
 const scaleStatements = scaleBatches[0];
 assert.ok(scaleStatements.length < 50, `real-scale import must stay below the Free D1 per-invocation query ceiling; got ${scaleStatements.length}`);
+assert.match(scaleStatements[0].sql, /INSERT INTO csv_import_source_objects/, 'source receipt must be first in the D1 transactional batch');
 const stageStatements = scaleStatements.filter((statement) => /INSERT INTO csv_search_term_stage/.test(statement.sql));
 assert.equal(stageStatements.length, Math.ceil(realScaleRowCount / 500));
 assert.ok(stageStatements.every((statement) => /FROM json_each\(\?2\)/.test(statement.sql)), 'stage writes must be set-based JSON1 inserts');
@@ -178,6 +236,7 @@ console.log(JSON.stringify({
   unresolvedTargetingPreserved:true,
   schemaVersion:parsed.schemaVersion,
   ingestion:true,
+  persistentSourceReceipt:true,
   realScaleRows:realScaleRowCount,
   realScaleD1Statements:scaleStatements.length,
 }));

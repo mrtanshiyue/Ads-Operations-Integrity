@@ -18,6 +18,7 @@ export function createD1CsvSearchTermImportRepository(db) {
   if (!db || typeof db.prepare !== 'function' || typeof db.batch !== 'function') {
     throw new CsvImportRepositoryError('CSV_IMPORT_DB_INVALID');
   }
+
   return Object.freeze({
     async findDuplicate({ contentSha256, reportStartDate, reportEndDate }) {
       return db.prepare(`
@@ -28,9 +29,11 @@ export function createD1CsvSearchTermImportRepository(db) {
       `).bind(contentSha256, CSV_SEARCH_TERM_REPORT_TYPE, reportStartDate, reportEndDate).first();
     },
 
-    async commitValidatedImport({ importId, parsed, now }) {
+    async commitValidatedImport({ importId, parsed, sourceObject, now }) {
       const batch = normalizeBatch(importId, parsed, now);
-      const statements = [];
+      const source = normalizeSourceObject(batch.importId, parsed, sourceObject);
+      const statements = [sourceObjectInsert(db, source)];
+
       statements.push(db.prepare(`
         INSERT INTO csv_import_batches(
           import_id, source_file_name, report_type, marketplace, profile_id, advertiser_account_id, currency_code,
@@ -47,11 +50,10 @@ export function createD1CsvSearchTermImportRepository(db) {
       }))) {
         statements.push(db.prepare(`
           INSERT INTO csv_search_term_stage(import_id,source_row_ordinal,logical_row_key,canonical_row_json)
-          SELECT
-            ?1,
-            CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
-            json_extract(value,'$.logicalRowKey'),
-            json_extract(value,'$.canonicalRowJson')
+          SELECT ?1,
+                 CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
+                 json_extract(value,'$.logicalRowKey'),
+                 json_extract(value,'$.canonicalRowJson')
           FROM json_each(?2)
         `).bind(batch.importId, chunkJson));
       }
@@ -93,9 +95,7 @@ export function createD1CsvSearchTermImportRepository(db) {
           json_extract(canonical_row_json,'$.marketplace'),
           json_extract(canonical_row_json,'$.profileId'),
           json_extract(canonical_row_json,'$.currencyCode'),
-          ?1,
-          source_row_ordinal,
-          ?2
+          ?1, source_row_ordinal, ?2
         FROM csv_search_term_stage
         WHERE import_id=?1
         ORDER BY source_row_ordinal
@@ -133,14 +133,21 @@ export function createD1CsvSearchTermImportRepository(db) {
       try { result = await db.batch(statements); }
       catch (error) { throw new CsvImportRepositoryError('CSV_IMPORT_DB_BATCH_FAILED', error); }
       const update = result?.[result.length - 2];
-      if (Number(update?.meta?.changes || 0) !== 1) throw new CsvImportRepositoryError('CSV_IMPORT_PUBLISH_UNVERIFIED');
+      if (Number(update?.meta?.changes || 0) !== 1) {
+        throw new CsvImportRepositoryError('CSV_IMPORT_PUBLISH_UNVERIFIED');
+      }
       return this.loadImport(batch.importId);
     },
 
-    async recordRejectedImport({ importId, parsed }) {
-      if (!parsed || parsed.ok !== false || parsed.rejectedRows < 1) throw new CsvImportRepositoryError('CSV_REJECTED_IMPORT_INVALID');
+    async recordRejectedImport({ importId, parsed, sourceObject }) {
+      if (!parsed || parsed.ok !== false || parsed.rejectedRows < 1) {
+        throw new CsvImportRepositoryError('CSV_REJECTED_IMPORT_INVALID');
+      }
+      const id = requiredText(importId, 'CSV_IMPORT_ID_REQUIRED');
       const uploadedAt = requiredText(parsed.uploadedAt, 'CSV_UPLOADED_AT_REQUIRED');
-      const statements = [db.prepare(`
+      const source = normalizeSourceObject(id, parsed, sourceObject);
+      const statements = [sourceObjectInsert(db, source)];
+      statements.push(db.prepare(`
         INSERT INTO csv_import_batches(
           import_id, source_file_name, report_type, marketplace, profile_id, advertiser_account_id, currency_code,
           report_start_date, report_end_date, content_sha256, content_bytes, schema_version,
@@ -148,12 +155,13 @@ export function createD1CsvSearchTermImportRepository(db) {
           validation_summary_json, uploaded_at
         ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,'unique','rejected',?16,?17)
       `).bind(
-        requiredText(importId,'CSV_IMPORT_ID_REQUIRED'), requiredText(parsed.sourceFileName,'CSV_SOURCE_FILE_NAME_REQUIRED'),
+        id, requiredText(parsed.sourceFileName,'CSV_SOURCE_FILE_NAME_REQUIRED'),
         CSV_SEARCH_TERM_REPORT_TYPE, parsed.marketplace, parsed.profileId, parsed.advertiserAccountId, parsed.currencyCode,
-        requiredText(parsed.reportStartDate,'CSV_REPORT_START_DATE_REQUIRED'), requiredText(parsed.reportEndDate,'CSV_REPORT_END_DATE_REQUIRED'),
+        requiredText(parsed.reportStartDate,'CSV_REPORT_START_DATE_REQUIRED'),
+        requiredText(parsed.reportEndDate,'CSV_REPORT_END_DATE_REQUIRED'),
         requiredText(parsed.contentSha256,'CSV_CONTENT_SHA256_REQUIRED'), parsed.contentBytes, CSV_IMPORT_SCHEMA_VERSION,
         parsed.rowCount, parsed.acceptedRows, parsed.rejectedRows, canonicalJson(parsed.validationSummary), uploadedAt,
-      )];
+      ));
       for (const chunkJson of buildJsonChunks(parsed.errors, (error, index) => ({
         errorOrdinal:index,
         sourceRowOrdinal:error.sourceRowOrdinal,
@@ -161,22 +169,77 @@ export function createD1CsvSearchTermImportRepository(db) {
       }))) {
         statements.push(db.prepare(`
           INSERT INTO csv_import_errors(import_id,error_ordinal,source_row_ordinal,error_code)
-          SELECT
-            ?1,
-            CAST(json_extract(value,'$.errorOrdinal') AS INTEGER),
-            CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
-            json_extract(value,'$.errorCode')
+          SELECT ?1,
+                 CAST(json_extract(value,'$.errorOrdinal') AS INTEGER),
+                 CAST(json_extract(value,'$.sourceRowOrdinal') AS INTEGER),
+                 json_extract(value,'$.errorCode')
           FROM json_each(?2)
-        `).bind(importId, chunkJson));
+        `).bind(id, chunkJson));
       }
       try { await db.batch(statements); }
       catch (error) { throw new CsvImportRepositoryError('CSV_IMPORT_REJECTION_DB_BATCH_FAILED', error); }
-      return this.loadImport(importId);
+      return this.loadImport(id);
     },
 
     async loadImport(importId) {
-      return db.prepare(`SELECT * FROM csv_import_batches WHERE import_id=?1 LIMIT 1`).bind(requiredText(importId,'CSV_IMPORT_ID_REQUIRED')).first();
+      return db.prepare('SELECT * FROM csv_import_batches WHERE import_id=?1 LIMIT 1')
+        .bind(requiredText(importId,'CSV_IMPORT_ID_REQUIRED')).first();
     },
+
+    async loadSourceObject(importId) {
+      return db.prepare('SELECT * FROM csv_import_source_objects WHERE import_id=?1 LIMIT 1')
+        .bind(requiredText(importId,'CSV_IMPORT_ID_REQUIRED')).first();
+    },
+  });
+}
+
+function sourceObjectInsert(db, source) {
+  return db.prepare(`
+    INSERT INTO csv_import_source_objects(
+      import_id, source_object_id, source_kind, r2_binding_key, object_key,
+      content_sha256, content_bytes, content_type, source_file_name,
+      importer_user_id, uploaded_at, r2_etag, r2_version
+    ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+  `).bind(
+    source.importId, source.sourceObjectId, source.sourceKind, source.r2BindingKey, source.objectKey,
+    source.contentSha256, source.contentBytes, source.contentType, source.sourceFileName,
+    source.importerUserId, source.uploadedAt, source.r2Etag, source.r2Version,
+  );
+}
+
+function normalizeSourceObject(importId, parsed, sourceObject) {
+  if (!sourceObject || typeof sourceObject !== 'object' || Array.isArray(sourceObject)) {
+    throw new CsvImportRepositoryError('CSV_SOURCE_OBJECT_REQUIRED');
+  }
+  const id = requiredText(importId, 'CSV_IMPORT_ID_REQUIRED');
+  if (requiredText(sourceObject.importId, 'CSV_SOURCE_IMPORT_ID_REQUIRED') !== id) {
+    throw new CsvImportRepositoryError('CSV_SOURCE_IMPORT_ID_MISMATCH');
+  }
+  const contentSha256 = requiredHash(sourceObject.contentSha256, 'CSV_SOURCE_SHA256_REQUIRED');
+  const parsedSha256 = requiredHash(parsed?.contentSha256, 'CSV_CONTENT_SHA256_REQUIRED');
+  if (contentSha256 !== parsedSha256) throw new CsvImportRepositoryError('CSV_SOURCE_SHA256_MISMATCH');
+  const contentBytes = positiveInteger(sourceObject.contentBytes, 'CSV_SOURCE_CONTENT_BYTES_INVALID');
+  if (contentBytes !== parsed?.contentBytes) throw new CsvImportRepositoryError('CSV_SOURCE_CONTENT_BYTES_MISMATCH');
+  const sourceFileName = requiredText(sourceObject.sourceFileName, 'CSV_SOURCE_FILE_NAME_REQUIRED');
+  if (sourceFileName !== parsed?.sourceFileName) throw new CsvImportRepositoryError('CSV_SOURCE_FILE_NAME_MISMATCH');
+  const uploadedAt = requiredText(sourceObject.uploadedAt, 'CSV_SOURCE_UPLOADED_AT_REQUIRED');
+  if (uploadedAt !== parsed?.uploadedAt) throw new CsvImportRepositoryError('CSV_SOURCE_UPLOADED_AT_MISMATCH');
+  if (sourceObject.sourceKind !== 'manual_csv_upload') throw new CsvImportRepositoryError('CSV_SOURCE_KIND_INVALID');
+  if (sourceObject.r2BindingKey !== 'DATA_BUCKET') throw new CsvImportRepositoryError('CSV_SOURCE_BINDING_INVALID');
+  return Object.freeze({
+    importId:id,
+    sourceObjectId:requiredText(sourceObject.sourceObjectId,'CSV_SOURCE_OBJECT_ID_REQUIRED'),
+    sourceKind:sourceObject.sourceKind,
+    r2BindingKey:sourceObject.r2BindingKey,
+    objectKey:requiredText(sourceObject.objectKey,'CSV_SOURCE_OBJECT_KEY_REQUIRED'),
+    contentSha256,
+    contentBytes,
+    contentType:optionalText(sourceObject.contentType),
+    sourceFileName,
+    importerUserId:requiredText(sourceObject.importerUserId,'CSV_SOURCE_IMPORTER_REQUIRED'),
+    uploadedAt,
+    r2Etag:optionalText(sourceObject.r2Etag),
+    r2Version:optionalText(sourceObject.r2Version),
   });
 }
 
@@ -223,7 +286,7 @@ function normalizeBatch(importId, parsed, now) {
       parsed.currencyCode,
       requiredText(parsed.reportStartDate,'CSV_REPORT_START_DATE_REQUIRED'),
       requiredText(parsed.reportEndDate,'CSV_REPORT_END_DATE_REQUIRED'),
-      requiredText(parsed.contentSha256,'CSV_CONTENT_SHA256_REQUIRED'),
+      requiredHash(parsed.contentSha256,'CSV_CONTENT_SHA256_REQUIRED'),
       parsed.contentBytes,
       CSV_IMPORT_SCHEMA_VERSION,
       parsed.rowCount,
@@ -233,8 +296,25 @@ function normalizeBatch(importId, parsed, now) {
     ],
   });
 }
+
+function positiveInteger(value, code) {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new CsvImportRepositoryError(code);
+  return value;
+}
+
+function requiredHash(value, code) {
+  const text = requiredText(value, code);
+  if (!/^[0-9a-f]{64}$/.test(text)) throw new CsvImportRepositoryError(code);
+  return text;
+}
+
 function requiredText(value, code) {
   const text = String(value ?? '').trim();
   if (!text) throw new CsvImportRepositoryError(code);
   return text;
+}
+
+function optionalText(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
 }

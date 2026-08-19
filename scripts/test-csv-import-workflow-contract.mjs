@@ -16,7 +16,11 @@ assert.match(api, /'ads\.read'/, 'History and validation reads must require ads.
 assert.match(api, /STORE_BINDINGS = new Set/, 'Store D1 binding allowlist missing');
 assert.match(api, /createD1CsvSearchTermImportRepository/, 'Canonical CSV D1 repository missing');
 assert.match(api, /ingestSearchTermCsvOnce/, 'Canonical CSV ingestion orchestrator missing');
-assert.match(api, /request\.text\(\)/, 'Upload must consume raw CSV instead of JSON wrapping');
+assert.match(api, /request\.arrayBuffer\(\)/, 'Upload must preserve exact request bytes before text decoding');
+assert.doesNotMatch(api, /request\.text\(\)/, 'CSV provenance must not depend on text re-encoding');
+assert.match(api, /createCsvImportSourceObjectStore/, 'Immutable R2 CSV source store missing');
+assert.match(api, /sourceBytes/, 'Exact source bytes must flow into canonical ingestion');
+assert.match(api, /sourceObjectKey/, 'Audit metadata must correlate the immutable R2 object');
 assert.match(api, /MAX_CSV_BYTES = 10 \* 1024 \* 1024/, '10 MB boundary missing');
 assert.match(api, /resource === 'search-terms'/, 'Search Term upload resource missing');
 assert.match(api, /csv_import\.published/, 'Published import audit event missing');
@@ -28,9 +32,7 @@ assert.match(api, /safeParserErrorCode/, 'Parser error responses must be allowli
 assert.doesNotMatch(api, /sourceCode\.startsWith\('CSV_'\)/, 'Internal CSV-prefixed repository errors must not be downgraded to 400');
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV import API must not open Amazon execution');
 
-// This contract is already executed by the protected canonical CI job. Keep the
-// built CSV operator surfaces and local advisory analysis inside that same required
-// context instead of allowing syntax-only or un-gated analytics regressions.
+await import('./test-csv-persistent-source-objects.mjs');
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-product-ui-navigation-contract.mjs');
@@ -40,8 +42,9 @@ await import('./test-csv-joint-report-analysis.mjs');
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-import-workflow-v5-required-observed-identity',
+  contract: 'csv-import-workflow-v6-persistent-exact-source',
   requiredContracts: [
+    'csv-persistent-source-objects-v1',
     'csv-imports-ui-v1',
     'csv-real-data-intelligence-ui-v4-canonical-identity-copy',
     'csv-product-ui-navigation-v3-versioned-load-order',
