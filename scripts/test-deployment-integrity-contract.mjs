@@ -18,6 +18,7 @@ const deploymentReceipt = await text('scripts/deployment-integrity-receipt.mjs')
 const directDeployBlocker = await text('scripts/block-direct-cloudflare-deploy.mjs');
 const legacyPromotion = await text('scripts/promote-cloudflare-sync-dev-trigger.mjs');
 const phase2Definition = await text('docs/architecture/PHASE2_DEPLOYMENT_INTEGRITY.md');
+const productionStatus = await text('docs/architecture/PRODUCTION_PLATFORM_STATUS.md');
 const gate24Receipt = JSON.parse(await text('docs/architecture/PHASE2_GATE24_DEPLOYMENT_RECEIPT.json'));
 const previewHardeningReceipt = JSON.parse(await text('docs/architecture/PHASE2_PREVIEW_HARDENING_DEPLOYMENT_RECEIPT.json'));
 
@@ -109,6 +110,11 @@ assert.equal(previewHardeningReceipt.deploymentId, '46993acd-cc8f-46fb-bd6c-c1a3
 assert.equal(previewHardeningReceipt.liveRuntimeVersionId, previewHardeningReceipt.versionId);
 assert.equal(previewHardeningReceipt.buildOutcome, 'success');
 
+// Historical Phase 2 evidence remains immutable; current Production status is maintained separately.
+assert.match(phase2Definition, /Production remains out of scope/i);
+assert.match(productionStatus, /supersedes the historical Phase 2 statement that Production was out of scope/i);
+assert.match(productionStatus, /runtime verification/i);
+
 // Amazon remains dormant in every environment.
 assert.match(nativeWrangler, /"SYNC_TRIGGER_ENABLED"\s*:\s*"false"/);
 assert.match(syncWrangler, /"AMAZON_ADS_ENABLED"\s*:\s*"false"/);
@@ -142,7 +148,8 @@ assert.match(syncWrangler, /"bucket_name"\s*:\s*"ads-ops-data-prod"/);
 assert.match(nativeWrangler, /"ACCESS_MODE"\s*:\s*"enforce"/);
 assert.match(nativeWrangler, /https:\/\/tanshiyuesir\.cloudflareaccess\.com/);
 assert.match(nativeWrangler, /"ACCESS_AUD"\s*:\s*"[a-f0-9]{64}"/);
-assert.match(phase2Definition, /Production platform provisioning superseded the historical Phase 2 production freeze/i);
+assert.match(productionStatus, /SYNC_TRIGGER_ENABLED=false/);
+assert.match(productionStatus, /AMAZON_ADS_ENABLED=false/);
 
 console.log(JSON.stringify({
   ok: true,
