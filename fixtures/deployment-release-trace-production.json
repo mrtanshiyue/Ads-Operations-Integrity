@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "cloudflare-release-trace-v1",
+  "gitCommitSha": "02aae3792726af2ddc3fc21679c4c0a6f6bcd3e5",
+  "workersBuildUuid": "7da40dbc-9b73-48ef-bab6-d53d42fcd016",
+  "workersBuildTriggerUuid": "fa90d482-de7b-466b-9ada-04404569ede9",
+  "workerVersionId": "6b056104-ffba-4399-a575-9a070e64ed1e",
+  "deploymentId": "806aa666-dbe4-4a18-a54c-7089ebc2c323",
+  "deployedAt": "2026-08-19T06:48:32.87072Z",
+  "environment": "production",
+  "workerName": "ads-operations-web-prod"
+}

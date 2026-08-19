@@ -3,6 +3,7 @@ const ACCOUNT_ID_PATTERN = /^[0-9a-f]{32}$/i;
 const WORKER_TAG_PATTERN = /^[0-9a-f]{32}$/i;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const RFC3339_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 
 export class DeploymentIntegrityReceiptError extends Error {
   constructor(code) {
@@ -75,8 +76,50 @@ export function createDeploymentIntegrityReceipt(input = {}) {
   });
 }
 
+export function createDeploymentReleaseTrace(input = {}) {
+  const gitCommitSha = requiredSha(input.gitCommitSha, 'RELEASE_TRACE_GIT_COMMIT_SHA_INVALID');
+  const workersBuildUuid = requiredUuid(input.workersBuildUuid, 'RELEASE_TRACE_BUILD_UUID_INVALID');
+  const workersBuildTriggerUuid = requiredUuid(input.workersBuildTriggerUuid, 'RELEASE_TRACE_TRIGGER_UUID_INVALID');
+  const workerVersionId = requiredUuid(input.workerVersionId, 'RELEASE_TRACE_VERSION_ID_INVALID');
+  const deploymentId = requiredUuid(input.deploymentId, 'RELEASE_TRACE_DEPLOYMENT_ID_INVALID');
+  const deployedAt = requiredRfc3339UtcTimestamp(input.deployedAt, 'RELEASE_TRACE_DEPLOYED_AT_INVALID');
+  const environment = requiredEnvironment(input.environment);
+  const workerName = requiredWorkerName(input.workerName);
+
+  return deepFreeze({
+    schemaVersion: 'cloudflare-release-trace-v1',
+    gitCommitSha,
+    workersBuildUuid,
+    workersBuildTriggerUuid,
+    workerVersionId,
+    deploymentId,
+    deployedAt,
+    environment,
+    workerName,
+  });
+}
+
+export function releaseTraceFromDeploymentIntegrityReceipt(receipt, deployment = {}) {
+  const validated = createDeploymentIntegrityReceipt(receipt);
+  return createDeploymentReleaseTrace({
+    gitCommitSha: validated.commitSha,
+    workersBuildUuid: validated.buildUuid,
+    workersBuildTriggerUuid: validated.triggerUuid,
+    workerVersionId: validated.versionId,
+    deploymentId: validated.deploymentId,
+    deployedAt: deployment.deployedAt ?? validated.acceptedAt,
+    environment: deployment.environment,
+    workerName: validated.workerName,
+  });
+}
+
 export function serializeDeploymentIntegrityReceipt(receipt) {
   const validated = createDeploymentIntegrityReceipt(receipt);
+  return `${JSON.stringify(validated, null, 2)}\n`;
+}
+
+export function serializeDeploymentReleaseTrace(trace) {
+  const validated = createDeploymentReleaseTrace(trace);
   return `${JSON.stringify(validated, null, 2)}\n`;
 }
 
@@ -108,6 +151,14 @@ function requiredWorkerTag(value) {
   const text = String(value ?? '').trim().toLowerCase();
   if (!WORKER_TAG_PATTERN.test(text)) {
     throw new DeploymentIntegrityReceiptError('DEPLOYMENT_RECEIPT_WORKER_TAG_INVALID');
+  }
+  return text;
+}
+
+function requiredEnvironment(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!['development', 'production'].includes(text)) {
+    throw new DeploymentIntegrityReceiptError('RELEASE_TRACE_ENVIRONMENT_INVALID');
   }
   return text;
 }
@@ -146,6 +197,14 @@ function requiredIsoTimestamp(value) {
   const date = new Date(text);
   if (Number.isNaN(date.getTime()) || date.toISOString() !== text) {
     throw new DeploymentIntegrityReceiptError('DEPLOYMENT_RECEIPT_ACCEPTED_AT_INVALID');
+  }
+  return text;
+}
+
+function requiredRfc3339UtcTimestamp(value, code) {
+  const text = String(value ?? '').trim();
+  if (!RFC3339_UTC_PATTERN.test(text) || Number.isNaN(Date.parse(text))) {
+    throw new DeploymentIntegrityReceiptError(code);
   }
   return text;
 }

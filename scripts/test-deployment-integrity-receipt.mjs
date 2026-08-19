@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   DeploymentIntegrityReceiptError,
   createDeploymentIntegrityReceipt,
+  createDeploymentReleaseTrace,
+  releaseTraceFromDeploymentIntegrityReceipt,
   serializeDeploymentIntegrityReceipt,
+  serializeDeploymentReleaseTrace,
 } from './deployment-integrity-receipt.mjs';
 
 const base = Object.freeze({
@@ -51,6 +55,36 @@ assert.doesNotMatch(serialized, /must-not-appear/);
 assert.doesNotMatch(serialized, /TOKEN|SECRET/);
 assert.deepEqual(JSON.parse(serialized), receipt);
 
+const derivedTrace = releaseTraceFromDeploymentIntegrityReceipt(receipt, {
+  environment: 'development',
+  deployedAt: '2026-08-16T09:04:59.123456Z',
+});
+assert.deepEqual(derivedTrace, {
+  schemaVersion: 'cloudflare-release-trace-v1',
+  gitCommitSha: base.commitSha,
+  workersBuildUuid: base.buildUuid,
+  workersBuildTriggerUuid: base.triggerUuid,
+  workerVersionId: base.versionId,
+  deploymentId: base.deploymentId,
+  deployedAt: '2026-08-16T09:04:59.123456Z',
+  environment: 'development',
+  workerName: base.workerName,
+});
+assert.equal(Object.isFrozen(derivedTrace), true);
+assert.deepEqual(JSON.parse(serializeDeploymentReleaseTrace(derivedTrace)), derivedTrace);
+
+const fixture = JSON.parse(await readFile(new URL('../fixtures/deployment-release-trace-production.json', import.meta.url), 'utf8'));
+const productionTrace = createDeploymentReleaseTrace(fixture);
+assert.deepEqual(productionTrace, fixture);
+assert.equal(productionTrace.gitCommitSha, '02aae3792726af2ddc3fc21679c4c0a6f6bcd3e5');
+assert.equal(productionTrace.workersBuildUuid, '7da40dbc-9b73-48ef-bab6-d53d42fcd016');
+assert.equal(productionTrace.workersBuildTriggerUuid, 'fa90d482-de7b-466b-9ada-04404569ede9');
+assert.equal(productionTrace.workerVersionId, '6b056104-ffba-4399-a575-9a070e64ed1e');
+assert.equal(productionTrace.deploymentId, '806aa666-dbe4-4a18-a54c-7089ebc2c323');
+assert.equal(productionTrace.deployedAt, '2026-08-19T06:48:32.87072Z');
+assert.equal(productionTrace.environment, 'production');
+assert.equal(productionTrace.workerName, 'ads-operations-web-prod');
+
 for (const [name, patch, expectedPrefix] of [
   ['commit mismatch', { buildCommitSha: '1111111111111111111111111111111111111111' }, 'DEPLOYMENT_RECEIPT_COMMIT_MISMATCH:'],
   ['live version mismatch', { liveRuntimeVersionId: '99999999-8888-7777-6666-555555555555' }, 'DEPLOYMENT_RECEIPT_LIVE_VERSION_MISMATCH:'],
@@ -70,6 +104,18 @@ for (const [name, patch, expectedPrefix] of [
   );
 }
 
+for (const [name, patch, expectedCode] of [
+  ['invalid release environment', { environment: 'staging' }, 'RELEASE_TRACE_ENVIRONMENT_INVALID'],
+  ['invalid release build uuid', { workersBuildUuid: 'not-a-uuid' }, 'RELEASE_TRACE_BUILD_UUID_INVALID'],
+  ['invalid release deployedAt', { deployedAt: '2026-08-19 06:48:32' }, 'RELEASE_TRACE_DEPLOYED_AT_INVALID'],
+]) {
+  assert.throws(
+    () => createDeploymentReleaseTrace({ ...fixture, ...patch }),
+    (error) => error instanceof DeploymentIntegrityReceiptError && error.code === expectedCode,
+    name,
+  );
+}
+
 assert.throws(
   () => createDeploymentIntegrityReceipt({ ...base, repository: 'invalid repository' }),
   (error) => error instanceof DeploymentIntegrityReceiptError
@@ -79,10 +125,13 @@ assert.throws(
 console.log(JSON.stringify({
   ok: true,
   contract: 'cloudflare-deployment-receipt-v1',
+  releaseTraceContract: 'cloudflare-release-trace-v1',
   exactCommitEqualityRequired: true,
   successfulBuildRequired: true,
   liveVersionEqualityRequired: true,
   immutableReceipt: true,
+  immutableReleaseTrace: true,
+  productionFixtureVerified: true,
   secretsExcludedByAllowlist: true,
   canonicalFieldOrderStable: true,
   noLiveCloudflareRequest: true,
