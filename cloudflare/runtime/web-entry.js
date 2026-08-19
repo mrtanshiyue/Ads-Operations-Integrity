@@ -23,6 +23,7 @@ import { handleCsvAnalyticsQualityApiRoute } from './csv-analytics-quality-api.j
 import { handleDataHealthApiRoute } from './data-health-api.js';
 import { handleSyncApiRoute } from './sync-api.js';
 import { handleCsvImportsApiRoute } from './csv-imports-api.js';
+import { handleSettlementImportsApiRoute } from './settlement-imports-api.js';
 import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
 import { handleCsvProductizationApiRoute } from './csv-productization-api.js';
 import { handleSearchTermIntelligenceApiRoute } from './search-term-intelligence-api.js';
@@ -121,6 +122,10 @@ export default {
     }
 
     try {
+      if (/^\/api\/v1\/stores\/[^/]+\/imports\/settlements$/.test(url.pathname)) {
+        const settlementResponse = await handleSettlementImportsApiRoute({ request, env, actor, url, ctx });
+        if (settlementResponse) return settlementResponse;
+      }
       if (CSV_IMPORTS_ROUTE_PATTERN.test(url.pathname)
           || CSV_ADVISORY_REVIEWS_ROUTE_PATTERN.test(url.pathname)
           || SEARCH_TERM_INTELLIGENCE_ROUTE_PATTERN.test(url.pathname)) {
