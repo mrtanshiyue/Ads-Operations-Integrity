@@ -47,6 +47,10 @@ assert.match(settlementApi, /createD1SettlementImportRepository/, 'Settlement D1
 assert.match(settlementApi, /settlement_import\.published/, 'Settlement published audit event missing');
 assert.match(settlementApi, /sourceObjectReusableOnRetry:true/, 'R2-before-D1 failure must be declared retry-safe');
 assert.match(settlementApi, /reconciliationStatus/, 'Settlement audit evidence must include reconciliation status');
+assert.match(settlementApi, /method === 'PATCH'/, 'Settlement authority mutation route missing');
+assert.match(settlementApi, /settlement_import\.authority_changed/, 'Settlement authority audit event missing');
+assert.match(settlementApi, /settlement_authority_reconciliation_required/, 'Settlement business authority must require reconciled published facts');
+assert.match(settlementApi, /provenance_class='exact_source_object'/, 'Settlement provenance must remain exact-source-object');
 assert.doesNotMatch(settlementApi, /orderCity|orderState|orderPostal/, 'Settlement API must not expose order location fields');
 assert.doesNotMatch(settlementApi, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'Settlement CSV API must not open Amazon execution');
 
@@ -59,7 +63,7 @@ await import('./test-csv-observed-targeting-identity.mjs');
 await import('./test-csv-joint-report-analysis.mjs');
 await import('./test-settlement-csv-import.mjs');
 await import('./test-settlement-source-object.mjs');
-execFileSync('python3', [path.join(root, 'scripts/test-settlement-csv-foundation-v2.py')], { stdio:'inherit' });
+execFileSync('python3', [path.join(root, 'scripts/test-settlement-csv-foundation.py')], { stdio:'inherit' });
 
 console.log(JSON.stringify({
   ok: true,
@@ -75,6 +79,7 @@ console.log(JSON.stringify({
     'settlement-csv-import-v1',
     'settlement-r2-retry-recovery-v1',
     'settlement-d1-foundation-v1',
+    'settlement-authority-v1',
   ],
   amazonLiveApiCalls: false,
   cloudflareWrites: false,
