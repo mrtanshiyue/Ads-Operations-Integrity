@@ -122,6 +122,7 @@
 
   loadReadOnlyAnalyticsAsset('assets/cloudflare-native-csv-analytics-dashboard-v1.js', 'cfCsvAnalyticsDashboard');
   loadReadOnlyAnalyticsAsset('assets/cloudflare-native-csv-analytics-drilldown-v1.js', 'cfCsvAnalyticsDrilldown');
+  loadReadOnlyAnalyticsAsset('assets/cloudflare-native-csv-local-diagnostics-v1.js', 'cfCsvLocalDiagnostics');
 
   function loadReadOnlyAnalyticsAsset(src, datasetKey) {
     if (!global.document || global.document.querySelector(`script[data-${datasetKey.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}]`)) return;
