@@ -50,6 +50,23 @@ assert.equal(bundle.reviewAuthorized, false);
 assert.equal(bundle.amazonExecutionAuthorized, false);
 assert.ok(bundle.observations.length <= 80);
 
+const scaleBundle = generateCsvDiagnostics({
+  searchTermAnalysis: {
+    totalGroups: 100000,
+    thresholds: { spendP90: 90, clicksP50: 50, clicksP75: 75, clicksP90: 90, acosP90: 0.9, roasP90: 5, cvrP25: 0.02, cvrP90: 0.2 },
+    observations: [{
+      kind: 'diagnostic', category: 'search-term', rule: 'high_acos', severity: 'medium', subject: 'ranked in D1', explanation: 'server-ranked',
+      evidence: { impressions: 1, clicks: 1, spendMicros: 1, orders: 1, salesMicros: 1, acos: 1, roas: 1, cvr: 1 },
+      authoritative: false, recommendationAuthorized: false, amazonExecutionAuthorized: false,
+    }],
+  },
+});
+assert.equal(scaleBundle.coverage.totalGroups, 100000, 'D1-ranked diagnostics must truthfully cover all grouped search terms');
+assert.equal(scaleBundle.coverage.analyzedGroups, 100000);
+assert.equal(scaleBundle.coverage.partial, false);
+assert.equal(scaleBundle.searchTermComputeLocation, 'd1_ranked_server_side');
+assert.equal(scaleBundle.observations.length, 1, 'Worker must receive ranked observations rather than 100k grouped rows');
+
 for (const rule of [
   'high_spend_zero_orders', 'high_acos', 'high_roas', 'high_conversion', 'large_click_volume', 'low_conversion',
   'campaign_spend_concentration', 'campaign_sales_concentration', 'acos_outlier', 'traffic_without_conversion',
@@ -61,6 +78,9 @@ assert.match(server, /GROUP BY[\s\S]*f\.search_term/, 'Search-term aggregation m
 assert.match(server, /GROUP BY f\.campaign_name/, 'Campaign aggregation must execute on D1');
 assert.match(server, /GROUP BY f\.report_date/, 'Daily aggregation must execute on D1');
 assert.match(server, /GROUP BY f\.match_type/, 'Match-type aggregation must execute on D1');
+assert.match(server, /json_group_array\(json_object/, 'High-cardinality search diagnostics must be ranked and bounded inside D1');
+assert.match(server, /SELECT COUNT\(\*\) FROM metrics/, 'Full grouped cardinality must be computed inside D1');
+assert.doesNotMatch(server, /function readSearchTerms\s*\(/, 'Runtime must not materialize every search-term group in Worker memory');
 assert.doesNotMatch(server, /\bLIMIT\s+5000\b/i, 'Server diagnostics must not cap search-term groups at 5000');
 assert.doesNotMatch(server, /amazon-ads|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|optimization-actions|execution-permits/i, 'Diagnostics server must remain isolated from Amazon/execution transports');
 assert.doesNotMatch(server, /request\.method\s*===\s*['"](?:POST|PUT|PATCH|DELETE)/i, 'Diagnostics route must remain read-only');
@@ -73,9 +93,12 @@ assert.match(entry, /handleCsvAnalyticsDiagnosticsApiRoute/, 'Web entry must dis
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-server-side-diagnostics-v1',
+  contract: 'csv-server-side-diagnostics-v2',
   juneGroupsCovered: 6557,
+  scaleGroupsCovered: 100000,
+  d1RankedSearchDiagnostics: true,
   browserPaginationCapRemovedFromRuntime: true,
+  workerSearchTermMaterializationRemoved: true,
   authoritative: false,
   recommendationAuthorized: false,
   reviewAuthorized: false,

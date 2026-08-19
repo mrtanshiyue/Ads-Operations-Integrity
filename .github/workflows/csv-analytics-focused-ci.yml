@@ -7,6 +7,7 @@ on:
     paths:
       - 'cloudflare/runtime/csv-analytics-*.js'
       - 'assets/cloudflare-native-csv-*.js'
+      - 'scripts/csv-analytics-scale-harness.mjs'
       - 'scripts/test-csv-*.mjs'
       - '.github/workflows/csv-analytics-focused-ci.yml'
   push:
@@ -17,6 +18,7 @@ on:
     paths:
       - 'cloudflare/runtime/csv-analytics-*.js'
       - 'assets/cloudflare-native-csv-*.js'
+      - 'scripts/csv-analytics-scale-harness.mjs'
       - 'scripts/test-csv-*.mjs'
       - '.github/workflows/csv-analytics-focused-ci.yml'
 
@@ -37,12 +39,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Syntax check diagnostics runtime
+      - name: Syntax check analytics scale runtime
         run: |
           node --check cloudflare/runtime/csv-analytics-diagnostics-api.js
           node --check assets/cloudflare-native-csv-local-diagnostics-v1.js
           node --check cloudflare/runtime/web-entry.js
+          node --check scripts/csv-analytics-scale-harness.mjs
+          node --check scripts/test-csv-analytics-scale-harness.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
         run: node scripts/test-csv-server-side-diagnostics.mjs
+      - name: Validate deterministic scale harness contract
+        run: node scripts/test-csv-analytics-scale-harness.mjs
