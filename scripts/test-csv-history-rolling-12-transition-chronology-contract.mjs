@@ -100,11 +100,27 @@ const nonAdjacent = projectHistoricalRolling12VerifiedTransitionChronology([
 ]);
 assert.equal(nonAdjacent.chronologyAllowed, false);
 assert.equal(nonAdjacent.operatorState, 'chronology_blocked_raw_evidence_only');
-assert.equal(nonAdjacent.blockers[0].code, 'non_adjacent_transition_sequence');
+assert.equal(nonAdjacent.blockers.some((item) => item.code === 'non_adjacent_transition_sequence'), true);
 assert.equal(nonAdjacent.transitions[0].metrics[0].rolling12Delta, null);
 assert.equal(nonAdjacent.transitions[0].metrics[0].movementDirection, 'withheld_not_comparable');
 assert.equal(nonAdjacent.transitions[1].interpretationAllowed, false);
 assert.equal(nonAdjacent.transitions[1].rawEvidenceOnly, true);
+
+const evidenceMismatch = projectHistoricalRolling12VerifiedTransitionChronology([
+  { board: first },
+  { board: board('2026-Q2-R12', '2026-Q3-R12', 'receipt-evidence-mismatch', 5, { previousLedgerFingerprint: 'ledger-different-Q2-evidence' }) },
+]);
+assert.equal(evidenceMismatch.chronologyAllowed, false);
+assert.equal(evidenceMismatch.blockers.some((item) => item.code === 'non_contiguous_ledger_evidence'), true);
+assert.equal(evidenceMismatch.transitions[0].metrics[0].rolling12Delta, null);
+assert.equal(evidenceMismatch.transitions[1].rawEvidenceOnly, true);
+
+const missingFingerprint = projectHistoricalRolling12VerifiedTransitionChronology([
+  { board: first },
+  { board: board('2026-Q2-R12', '2026-Q3-R12', 'receipt-missing-ledger', 5, { previousLedgerFingerprint: '' }) },
+]);
+assert.equal(missingFingerprint.chronologyAllowed, false);
+assert.equal(missingFingerprint.blockers.some((item) => item.code === 'missing_ledger_fingerprint'), true);
 
 const unverified = projectHistoricalRolling12VerifiedTransitionChronology([
   { board: first },
@@ -112,7 +128,7 @@ const unverified = projectHistoricalRolling12VerifiedTransitionChronology([
   { board: board('2026-Q3-R12', '2026-Q4-R12', 'receipt-3', 6, { receiptFingerprintMatch: false }) },
 ]);
 assert.equal(unverified.chronologyAllowed, false);
-assert.equal(unverified.blockers[0].code, 'transition_not_verified_allowed');
+assert.equal(unverified.blockers.some((item) => item.code === 'transition_not_verified_allowed'), true);
 for (const transition of unverified.transitions) {
   assert.equal(transition.interpretationAllowed, false);
   assert.equal(transition.rawEvidenceOnly, true);
@@ -126,6 +142,8 @@ assert.throws(
 
 const source = await readFile(new URL('../assets/cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js', import.meta.url), 'utf8');
 assert.match(source, /buildHistoricalRolling12WindowTransitionReviewBoard/);
+assert.match(source, /non_contiguous_ledger_evidence/);
+assert.match(source, /missing_ledger_fingerprint/);
 assert.match(source, /crossWindowAggregationApplied: false/);
 assert.match(source, /crossWindowNormalizationApplied: false/);
 assert.match(source, /automaticTrendInferenceApplied: false/);
@@ -142,6 +160,8 @@ console.log(JSON.stringify({
   transitionCount: chronology.transitionCount,
   chronologyAllowed: chronology.chronologyAllowed,
   nonAdjacentFailsClosed: true,
+  evidenceMismatchFailsClosed: true,
+  missingLedgerFingerprintFailsClosed: true,
   unverifiedFailsClosed: true,
   crossWindowAggregationApplied: chronology.crossWindowAggregationApplied,
   automaticTrendInferenceApplied: chronology.automaticTrendInferenceApplied,
