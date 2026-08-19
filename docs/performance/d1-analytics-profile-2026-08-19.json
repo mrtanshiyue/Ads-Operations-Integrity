@@ -1,0 +1,73 @@
+{
+  "schema": "d1-analytics-profile-v1",
+  "profiledAt": "2026-08-19T08:55:00Z",
+  "environment": "development",
+  "database": "ads-ops-store-dev",
+  "sourceFacts": {
+    "table": "csv_business_search_term_daily",
+    "realRows": 8753,
+    "realRange": ["2026-06-01", "2026-06-30"]
+  },
+  "isolatedBenchmark": {
+    "table": "bench_csv_quality_100k",
+    "rows": 105036,
+    "temporary": true,
+    "cleanupVerified": true
+  },
+  "measurements": {
+    "sevenDayTotals": {
+      "range": ["2026-06-24", "2026-06-30"],
+      "withoutIndex": { "rowsRead": 105036, "sqlDurationMs": 44.5399 },
+      "reportDateIndex": { "rowsRead": 29472, "sqlDurationMs": 19.8542 }
+    },
+    "sevenDaySearchTermGrouping": {
+      "range": ["2026-06-24", "2026-06-30"],
+      "groupingFields": 11,
+      "groups": 2073,
+      "withoutIndex": { "rowsRead": 134508, "sqlDurationMs": 79.9798 },
+      "forcedReportDateIndex": { "rowsRead": 58944, "sqlDurationMs": 77.7399 },
+      "rowsReadReductionPct": 56.18
+    },
+    "fullMonthTotals": {
+      "range": ["2026-06-01", "2026-06-30"],
+      "withoutIndex": { "rowsRead": 105036, "sqlDurationMs": 31.2016 },
+      "reportDateIndexAfterAnalyze": { "rowsRead": 105036, "sqlDurationMs": 58.2406 },
+      "latencyRegressionPct": 86.66
+    },
+    "fullMonthSearchTermGrouping": {
+      "range": ["2026-06-01", "2026-06-30"],
+      "groupingFields": 11,
+      "groups": 6557,
+      "withoutIndex": { "rowsRead": 210072, "sqlDurationMs": 258.4211 },
+      "reportDateIndexAfterAnalyze": { "rowsRead": 210072, "sqlDurationMs": 259.8842 }
+    }
+  },
+  "candidateDecisions": [
+    {
+      "candidate": "global_report_date_index",
+      "decision": "rejected",
+      "reason": "full-month totals latency regressed materially while rows_read did not improve"
+    },
+    {
+      "candidate": "date_term_metrics_covering_index",
+      "decision": "rejected",
+      "reason": "narrow-window gains were offset by full-month latency regression and storage/write amplification"
+    },
+    {
+      "candidate": "bounded_narrow_window_query_plan",
+      "decision": "promising_not_shipped",
+      "reason": "7-day rows_read improved materially without latency regression, but a safe planner contract is required before schema rollout"
+    }
+  ],
+  "shipDecision": "no_schema_change",
+  "dod": {
+    "requiresRowsReadReduction": true,
+    "requiresNoLatencyRegression": true,
+    "globalCandidateMeetsDod": false
+  },
+  "safety": {
+    "productionTouched": false,
+    "amazonExecutionTouched": false,
+    "temporaryBenchmarkRemoved": true
+  }
+}
