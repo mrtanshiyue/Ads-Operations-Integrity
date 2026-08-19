@@ -15,7 +15,7 @@
       "name": "ads-operations-web-dev",
       "vars": {
         "APP_ENV": "development",
-        "ACCESS_MODE": "enforce",
+        "ACCESS_MODE": "off",
         "SYNC_TRIGGER_ENABLED": "false",
         "PHASE5_SINGLE_RUN_PERMIT_ID": "",
         "PHASE5_SINGLE_RUN_REPORT_DATE": "",
