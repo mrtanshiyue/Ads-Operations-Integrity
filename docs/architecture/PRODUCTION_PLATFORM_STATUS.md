@@ -25,8 +25,7 @@ R2:              ads-ops-data-prod
 
 Canonical D1 IDs are bound in `cloudflare/runtime/wrangler.native.jsonc` and
 `cloudflare/runtime/wrangler.sync.jsonc`. Those files, plus runtime discovery, are authoritative
-for deployable resource identity; this document is descriptive and must not replace runtime
-verification.
+for deployable resource identity; this document is descriptive and must not replace runtime verification.
 
 ## Access contract
 
