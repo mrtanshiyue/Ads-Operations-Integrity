@@ -1,7 +1,7 @@
 (function initCloudflareCsvAnalyticsDashboard(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const DEFAULT_DIMENSION = 'campaign';
   const TABLE_DIMENSIONS = Object.freeze(['campaign', 'ad-group', 'targeting', 'search-term', 'match-type']);
   const SORT_FIELDS = Object.freeze(['spendMicros', 'salesMicros', 'clicks', 'impressions', 'purchases', 'acos', 'roas']);
@@ -65,12 +65,13 @@
 
     const common = { startDate, endDate };
     const tableParams = { ...common, page, limit, sort, direction, q };
-    const [overview, daily, table] = await Promise.all([
+    const [overview, daily, table, quality] = await Promise.all([
       api().csvAnalytics(storeId, 'overview', common),
       api().csvAnalytics(storeId, 'daily', { ...common, page: 1, limit: 366, sort: 'reportDate', direction: 'asc' }),
       api().csvAnalytics(storeId, dimension, tableParams),
+      api().csvAnalytics(storeId, 'quality', common),
     ]);
-    return { overview, daily, table };
+    return { overview, daily, table, quality };
   }
 
   function mount() {
@@ -111,6 +112,10 @@
       <div id="cfCsvAnalyticsStatus" class="cfCsvAnalyticsStatus" role="status" aria-live="polite">Select a business-data period to load governed analytics.</div>
       <div id="cfCsvAnalyticsGovernance" class="cfCsvAnalyticsGovernance"></div>
       <div id="cfCsvAnalyticsKpis" class="cfCsvAnalyticsKpis"></div>
+      <div class="cfCsvAnalyticsQualityCard">
+        <div class="cfCsvAnalyticsSectionHead"><strong>Analytics data quality</strong><span>Reliability only · authority unchanged</span></div>
+        <div id="cfCsvAnalyticsQuality" class="cfCsvAnalyticsQuality"></div>
+      </div>
       <div class="cfCsvAnalyticsTrendCard">
         <div class="cfCsvAnalyticsSectionHead"><strong>Daily trend</strong><span>Spend vs sales</span></div>
         <div id="cfCsvAnalyticsTrend" class="cfCsvAnalyticsTrend"></div>
@@ -192,7 +197,8 @@
       });
       if (seq !== state.requestSeq) return;
       renderGovernance(snapshot.overview?.governance);
-      renderKpis(snapshot.overview?.metrics, snapshot.overview?.comparison);
+      renderKpis(snapshot.overview?.metrics, snapshot.overview?.comparison, snapshot.overview?.governance);
+      renderQuality(snapshot.quality);
       renderTrend(snapshot.daily?.items || []);
       renderTable(snapshot.table);
       const governance = snapshot.overview?.governance;
@@ -226,7 +232,7 @@
       ${govBadge(`Recommendation · ${governance.recommendationEligible ? 'allowed' : 'blocked'}`, governance.recommendationEligible ? 'safe' : 'warn')}`;
   }
 
-  function renderKpis(metrics, comparison) {
+  function renderKpis(metrics, comparison, governance) {
     const node = state.root?.querySelector('#cfCsvAnalyticsKpis');
     if (!node) return;
     const m = metrics || {};
@@ -236,11 +242,45 @@
       ['Orders', formatInt(m.orders), deltaFor(comparison, 'orders')],
       ['ROAS', ratioNumber(m.roas), deltaFor(comparison, 'roas')],
       ['ACoS', percent(m.acos), deltaFor(comparison, 'acos')],
-      ['CTR', percent(m.ctr), deltaFor(comparison, 'ctr')],
-      ['Clicks', formatInt(m.clicks), deltaFor(comparison, 'clicks')],
       ['CVR', percent(m.cvr), deltaFor(comparison, 'cvr')],
+      ['CTR', percent(m.ctr), deltaFor(comparison, 'ctr')],
+      ['CPC', moneyMicros(m.cpcMicros), deltaFor(comparison, 'cpcMicros')],
+      ['Units', formatInt(m.unitsSold), deltaFor(comparison, 'unitsSold')],
+      ['Clicks', formatInt(m.clicks), deltaFor(comparison, 'clicks')],
+      ['Business facts', formatInt(governance?.factCount), 'Business-class rows only'],
     ];
     node.innerHTML = cards.map(([label, value, delta]) => `<div class="cfCsvAnalyticsKpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(delta)}</small></div>`).join('');
+  }
+
+  function renderQuality(payload) {
+    const node = state.root?.querySelector('#cfCsvAnalyticsQuality');
+    if (!node) return;
+    const quality = payload?.quality;
+    const coverage = payload?.coverage;
+    if (!quality || !coverage) {
+      node.innerHTML = '<div class="cfCsvAnalyticsEmpty">Quality metadata unavailable for this period.</div>';
+      return;
+    }
+    const issues = Array.isArray(payload.issues) ? payload.issues : [];
+    const severityTone = quality.severity === 'critical' || quality.severity === 'high'
+      ? 'bad'
+      : quality.severity === 'medium'
+        ? 'warn'
+        : 'safe';
+    const issueMarkup = issues.length
+      ? issues.slice(0, 8).map((issue) => `<div class="cfCsvAnalyticsQualityIssue" data-severity="${escapeHtml(issue.severity)}"><span><strong>${escapeHtml(issue.label)}</strong><small>${escapeHtml(issue.explanation)}</small></span><b>${formatInt(issue.count)}</b></div>`).join('')
+      : '<div class="cfCsvAnalyticsQualityClean">No active quality issues detected in the selected business facts.</div>';
+    node.innerHTML = `
+      <div class="cfCsvAnalyticsQualitySummary">
+        <div><span>Quality score</span><strong>${quality.qualityScore === null ? '—' : escapeHtml(Number(quality.qualityScore).toFixed(1))}</strong><small>Analytics reliability only</small></div>
+        <div><span>Issue types</span><strong>${formatInt(quality.issueCount)}</strong><small>${formatInt(quality.issueOccurrences)} occurrences</small></div>
+        <div data-tone="${severityTone}"><span>Highest severity</span><strong>${escapeHtml(String(quality.severity || 'none').toUpperCase())}</strong><small>${formatInt(quality.affectedFacts)} affected facts</small></div>
+        <div><span>Date coverage</span><strong>${formatInt(coverage.observedDays)} / ${formatInt(coverage.expectedDays)}</strong><small>${formatInt(coverage.missingDays)} missing days</small></div>
+        <div><span>Campaign ID coverage</span><strong>${percent(coverage.campaignIdPresentRate)}</strong><small>Observed CSV identifiers</small></div>
+        <div><span>Targeting ID coverage</span><strong>${percent(coverage.targetingIdPresentRate)}</strong><small>Observed CSV identifiers</small></div>
+      </div>
+      <div class="cfCsvAnalyticsQualityNote">Quality does not change Amazon identity authority or recommendation eligibility. Observed IDs remain non-canonical.</div>
+      <div class="cfCsvAnalyticsQualityIssues">${issueMarkup}</div>`;
   }
 
   function renderTrend(items) {
@@ -289,7 +329,8 @@
 
   function renderEmpty() {
     renderGovernance(null);
-    renderKpis({}, null);
+    renderKpis({}, null, null);
+    renderQuality(null);
     renderTrend([]);
     renderTable({ items: [], pagination: { totalItems: 0, totalPages: 0, page: 1 } });
   }
@@ -382,15 +423,17 @@
     style.id = 'cfCsvAnalyticsDashboardStyles';
     style.textContent = `
       .cfCsvAnalyticsDashboard{display:flex;flex-direction:column;gap:12px;border-left:3px solid var(--accent)!important}
-      .cfCsvAnalyticsHead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.cfCsvAnalyticsHead h2{margin:2px 0 4px;font-size:18px}.cfCsvAnalyticsHead p{margin:0;color:var(--muted);font-size:11.5px}.cfCsvAnalyticsEyebrow{font-size:9.6px;font-weight:900;letter-spacing:.09em;color:var(--accent)}
-      .cfCsvAnalyticsHeadBadges,.cfCsvAnalyticsGovernance{display:flex;gap:6px;flex-wrap:wrap}.cfCsvAnalyticsBadge,.cfCsvAnalyticsGovBadge{display:inline-flex;align-items:center;min-height:25px;padding:4px 7px;border:1px solid var(--line);border-radius:7px;background:var(--hover-bg);font-size:10px;font-weight:800;color:var(--muted)}.cfCsvAnalyticsBadge[data-kind="safe"],.cfCsvAnalyticsGovBadge[data-kind="safe"]{color:var(--good);background:var(--softGood);border-color:transparent}.cfCsvAnalyticsGovBadge[data-kind="warn"]{color:var(--warn);background:var(--softWarn);border-color:transparent}
-      .cfCsvAnalyticsControls{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--hover-bg)}.cfCsvAnalyticsControls label{display:flex;flex-direction:column;gap:4px;font-size:10px;color:var(--muted);font-weight:800}.cfCsvAnalyticsControls input,.cfCsvAnalyticsControls select{width:100%;min-height:34px}.cfCsvAnalyticsControls button{align-self:end;justify-content:center;min-height:34px}.cfCsvAnalyticsSearch{grid-column:span 3}
-      .cfCsvAnalyticsStatus{padding:8px 10px;border-radius:8px;background:var(--hover-bg);border:1px solid var(--line);font-size:10.8px;color:var(--muted)}.cfCsvAnalyticsStatus[data-tone="ok"]{color:var(--good);background:var(--softGood);border-color:transparent}.cfCsvAnalyticsStatus[data-tone="warn"]{color:var(--warn);background:var(--softWarn);border-color:transparent}.cfCsvAnalyticsStatus[data-tone="bad"]{color:var(--bad);background:var(--softBad);border-color:transparent}
-      .cfCsvAnalyticsKpis{display:grid;grid-template-columns:repeat(8,minmax(105px,1fr));gap:8px}.cfCsvAnalyticsKpi{min-width:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfCsvAnalyticsKpi span{display:block;color:var(--muted);font-size:9.8px;font-weight:800}.cfCsvAnalyticsKpi strong{display:block;margin:5px 0 3px;font-size:16px;letter-spacing:-.2px}.cfCsvAnalyticsKpi small{display:block;min-height:14px;color:var(--muted);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .cfCsvAnalyticsTrendCard,.cfCsvAnalyticsTableCard{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}.cfCsvAnalyticsSectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);font-size:10.5px;color:var(--muted)}.cfCsvAnalyticsSectionHead strong{color:var(--text);font-size:12px}.cfCsvAnalyticsTrend{height:210px;padding:10px}.cfCsvAnalyticsTrend svg{display:block;width:100%;height:170px}.cfCsvAnalyticsLine{fill:none;stroke-width:3;vector-effect:non-scaling-stroke}.cfCsvAnalyticsSales{stroke:var(--good)}.cfCsvAnalyticsSpend{stroke:var(--accent)}.cfCsvAnalyticsLegend{display:flex;align-items:center;gap:14px;color:var(--muted);font-size:9.7px}.cfCsvAnalyticsLegend span{display:inline-flex;align-items:center;gap:5px}.cfCsvAnalyticsLegend i{width:9px;height:3px;border-radius:3px;background:var(--accent)}.cfCsvAnalyticsLegend i[data-kind="sales"]{background:var(--good)}
-      .cfCsvAnalyticsTableWrap{max-width:100%;overflow:auto}.cfCsvAnalyticsTableWrap table{min-width:980px;width:100%;border-collapse:collapse}.cfCsvAnalyticsTableWrap th,.cfCsvAnalyticsTableWrap td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line);font-size:10.7px;white-space:nowrap}.cfCsvAnalyticsTableWrap th{position:sticky;top:0;background:var(--th-bg);color:var(--muted);font-size:9.8px}.cfCsvAnalyticsPager{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:9px 10px}.cfCsvAnalyticsPager span{font-size:10.2px;color:var(--muted)}.cfCsvAnalyticsEmpty{display:grid;place-items:center;min-height:120px;color:var(--muted);font-size:10.8px}
-      @media (max-width:1400px){.cfCsvAnalyticsKpis{grid-template-columns:repeat(4,minmax(120px,1fr))}.cfCsvAnalyticsControls{grid-template-columns:repeat(4,minmax(120px,1fr))}.cfCsvAnalyticsSearch{grid-column:span 2}}
-      @media (max-width:800px){.cfCsvAnalyticsHead{flex-direction:column}.cfCsvAnalyticsKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cfCsvAnalyticsControls{grid-template-columns:repeat(2,minmax(0,1fr))}.cfCsvAnalyticsSearch{grid-column:span 2}}
+      .cfCsvAnalyticsHead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.cfCsvAnalyticsHead h2{margin:2px 0 4px;font-size:19px}.cfCsvAnalyticsHead p{margin:0;color:var(--muted);font-size:12px}.cfCsvAnalyticsEyebrow{font-size:10px;font-weight:900;letter-spacing:.09em;color:var(--accent)}
+      .cfCsvAnalyticsHeadBadges,.cfCsvAnalyticsGovernance{display:flex;gap:6px;flex-wrap:wrap}.cfCsvAnalyticsBadge,.cfCsvAnalyticsGovBadge{display:inline-flex;align-items:center;min-height:27px;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--hover-bg);font-size:10.5px;font-weight:800;color:var(--muted)}.cfCsvAnalyticsBadge[data-kind="safe"],.cfCsvAnalyticsGovBadge[data-kind="safe"]{color:var(--good);background:var(--softGood);border-color:transparent}.cfCsvAnalyticsGovBadge[data-kind="warn"]{color:var(--warn);background:var(--softWarn);border-color:transparent}
+      .cfCsvAnalyticsControls{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--hover-bg)}.cfCsvAnalyticsControls label{display:flex;flex-direction:column;gap:4px;font-size:10.5px;color:var(--muted);font-weight:800}.cfCsvAnalyticsControls input,.cfCsvAnalyticsControls select{width:100%;min-height:35px}.cfCsvAnalyticsControls button{align-self:end;justify-content:center;min-height:35px}.cfCsvAnalyticsSearch{grid-column:span 3}
+      .cfCsvAnalyticsStatus{padding:8px 10px;border-radius:8px;background:var(--hover-bg);border:1px solid var(--line);font-size:11.2px;color:var(--muted)}.cfCsvAnalyticsStatus[data-tone="ok"]{color:var(--good);background:var(--softGood);border-color:transparent}.cfCsvAnalyticsStatus[data-tone="warn"]{color:var(--warn);background:var(--softWarn);border-color:transparent}.cfCsvAnalyticsStatus[data-tone="bad"]{color:var(--bad);background:var(--softBad);border-color:transparent}
+      .cfCsvAnalyticsKpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}.cfCsvAnalyticsKpi{min-width:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfCsvAnalyticsKpi span{display:block;color:var(--muted);font-size:10.2px;font-weight:800}.cfCsvAnalyticsKpi strong{display:block;margin:5px 0 3px;font-size:16.5px;letter-spacing:-.2px}.cfCsvAnalyticsKpi small{display:block;min-height:14px;color:var(--muted);font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .cfCsvAnalyticsQualityCard,.cfCsvAnalyticsTrendCard,.cfCsvAnalyticsTableCard{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}.cfCsvAnalyticsSectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid var(--line);font-size:10.8px;color:var(--muted)}.cfCsvAnalyticsSectionHead strong{color:var(--text);font-size:12.5px}
+      .cfCsvAnalyticsQuality{padding:10px}.cfCsvAnalyticsQualitySummary{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px}.cfCsvAnalyticsQualitySummary>div{padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--hover-bg)}.cfCsvAnalyticsQualitySummary span,.cfCsvAnalyticsQualitySummary small{display:block;color:var(--muted);font-size:9.8px}.cfCsvAnalyticsQualitySummary strong{display:block;margin:4px 0;font-size:15px}.cfCsvAnalyticsQualitySummary>div[data-tone="bad"] strong{color:var(--bad)}.cfCsvAnalyticsQualitySummary>div[data-tone="warn"] strong{color:var(--warn)}.cfCsvAnalyticsQualitySummary>div[data-tone="safe"] strong{color:var(--good)}.cfCsvAnalyticsQualityNote{margin-top:8px;padding:7px 9px;border-radius:8px;background:var(--softWarn);color:var(--warn);font-size:10px;font-weight:700}.cfCsvAnalyticsQualityIssues{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:8px}.cfCsvAnalyticsQualityIssue{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 9px;border:1px solid var(--line);border-radius:8px}.cfCsvAnalyticsQualityIssue span{min-width:0}.cfCsvAnalyticsQualityIssue strong,.cfCsvAnalyticsQualityIssue small{display:block}.cfCsvAnalyticsQualityIssue strong{font-size:10.5px}.cfCsvAnalyticsQualityIssue small{margin-top:2px;color:var(--muted);font-size:9.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cfCsvAnalyticsQualityIssue b{font-size:13px}.cfCsvAnalyticsQualityIssue[data-severity="critical"] b,.cfCsvAnalyticsQualityIssue[data-severity="high"] b{color:var(--bad)}.cfCsvAnalyticsQualityIssue[data-severity="medium"] b{color:var(--warn)}.cfCsvAnalyticsQualityClean{padding:12px;color:var(--good);background:var(--softGood);border-radius:8px;font-size:10.5px}
+      .cfCsvAnalyticsTrend{height:210px;padding:10px}.cfCsvAnalyticsTrend svg{display:block;width:100%;height:170px}.cfCsvAnalyticsLine{fill:none;stroke-width:3;vector-effect:non-scaling-stroke}.cfCsvAnalyticsSales{stroke:var(--good)}.cfCsvAnalyticsSpend{stroke:var(--accent)}.cfCsvAnalyticsLegend{display:flex;align-items:center;gap:14px;color:var(--muted);font-size:10px}.cfCsvAnalyticsLegend span{display:inline-flex;align-items:center;gap:5px}.cfCsvAnalyticsLegend i{width:9px;height:3px;border-radius:3px;background:var(--accent)}.cfCsvAnalyticsLegend i[data-kind="sales"]{background:var(--good)}
+      .cfCsvAnalyticsTableWrap{max-width:100%;overflow:auto}.cfCsvAnalyticsTableWrap table{min-width:980px;width:100%;border-collapse:collapse}.cfCsvAnalyticsTableWrap th,.cfCsvAnalyticsTableWrap td{padding:8px 9px;text-align:left;border-bottom:1px solid var(--line);font-size:11px;white-space:nowrap}.cfCsvAnalyticsTableWrap th{position:sticky;top:0;background:var(--th-bg);color:var(--muted);font-size:10.2px}.cfCsvAnalyticsPager{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:9px 10px}.cfCsvAnalyticsPager span{font-size:10.5px;color:var(--muted)}.cfCsvAnalyticsEmpty{display:grid;place-items:center;min-height:120px;color:var(--muted);font-size:11px}
+      @media (max-width:1400px){.cfCsvAnalyticsQualitySummary{grid-template-columns:repeat(3,minmax(120px,1fr))}.cfCsvAnalyticsControls{grid-template-columns:repeat(4,minmax(120px,1fr))}.cfCsvAnalyticsSearch{grid-column:span 2}}
+      @media (max-width:800px){.cfCsvAnalyticsHead{flex-direction:column}.cfCsvAnalyticsKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.cfCsvAnalyticsControls{grid-template-columns:repeat(2,minmax(0,1fr))}.cfCsvAnalyticsSearch{grid-column:span 2}.cfCsvAnalyticsQualitySummary{grid-template-columns:repeat(2,minmax(0,1fr))}.cfCsvAnalyticsQualityIssues{grid-template-columns:1fr}}
     `;
     global.document.head.appendChild(style);
   }
