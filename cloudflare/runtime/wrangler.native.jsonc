@@ -3,6 +3,15 @@
   "name": "ads-operations-web",
   "main": "./runtime-observed-entry.js",
   "compatibility_date": "2026-08-14",
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1
+    }
+  },
   "preview_urls": false,
   "assets": {
     "directory": "../../dist-cloudflare-native",
