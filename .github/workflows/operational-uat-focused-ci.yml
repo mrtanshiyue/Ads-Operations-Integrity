@@ -1,0 +1,32 @@
+name: Operational UAT Focused CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/operational-uat-failure-recovery.mjs'
+      - 'scripts/test-operational-uat-failure-recovery.mjs'
+      - '.github/workflows/operational-uat-focused-ci.yml'
+  push:
+    branches: ['test/**']
+    paths:
+      - 'scripts/operational-uat-failure-recovery.mjs'
+      - 'scripts/test-operational-uat-failure-recovery.mjs'
+      - '.github/workflows/operational-uat-focused-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Operational UAT failure recovery contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check scripts/operational-uat-failure-recovery.mjs
+      - run: node --check scripts/test-operational-uat-failure-recovery.mjs
+      - run: node scripts/test-operational-uat-failure-recovery.mjs
