@@ -7,8 +7,10 @@ import {
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_CSV_BYTES = 16 * 1024 * 1024;
+const MAX_JSON_BYTES = 64 * 1024;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
+const DATA_CLASSES = new Set(['unclassified', 'business', 'acceptance']);
 const CSV_CONTENT_TYPES = new Set([
   'text/csv',
   'application/csv',
@@ -33,6 +35,16 @@ export async function handleSettlementImportsApiRoute({ request, env, actor, url
       return json(request, { error:'forbidden', permission:'ads.write' }, 403);
     }
     return uploadSettlement(request, env, route, actor, storeId, url);
+  }
+  if (method === 'PATCH') {
+    if (!await hasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.write')) {
+      return json(request, { error:'forbidden', permission:'ads.write' }, 403);
+    }
+    const importId = optionalImportId(url.searchParams.get('importId'));
+    if (importId.error || !importId.value) {
+      return json(request, { error:importId.error || 'settlement_import_id_required' }, 400);
+    }
+    return classifySettlementAuthority(request, env, route, actor, storeId, importId.value);
   }
   if (method === 'GET') {
     if (!await hasStorePermission(env.CONTROL_DB, actor.user_id, storeId, 'ads.read')) {
@@ -221,6 +233,86 @@ async function uploadSettlement(request, env, route, actor, storeId, url) {
   }, 201);
 }
 
+async function classifySettlementAuthority(request, env, route, actor, storeId, importId) {
+  const body = await readJson(request);
+  if (body.error) return json(request, { error:body.error }, body.status || 400);
+  const keys = Object.keys(body.value);
+  if (keys.some((key) => !['dataClass','reason','evidence'].includes(key))) {
+    return json(request, { error:'unsupported_settlement_authority_field' }, 400);
+  }
+  const dataClass = String(body.value.dataClass || '').trim();
+  if (!DATA_CLASSES.has(dataClass)) return json(request, { error:'invalid_data_class' }, 400);
+  const reason = String(body.value.reason || '').trim();
+  if (!reason || reason.length > 1000) {
+    return json(request, { error:'settlement_authority_reason_required' }, 400);
+  }
+  const evidence = body.value.evidence == null ? {} : body.value.evidence;
+  if (!plainObject(evidence)) return json(request, { error:'invalid_settlement_authority_evidence' }, 400);
+
+  const row = await route.storeDb.prepare(`
+    SELECT b.import_id,b.status,b.content_sha256,
+           r.status AS reconciliation_status,r.difference_micros,r.mismatch_rows,
+           a.data_class,a.provenance_class,a.authority_version,
+           a.actor_user_id,a.reason,a.evidence_json,a.created_at,a.updated_at
+    FROM settlement_import_batches b
+    LEFT JOIN settlement_import_reconciliation_receipts r ON r.import_id=b.import_id
+    LEFT JOIN settlement_import_authority a ON a.import_id=b.import_id
+    WHERE b.import_id=?1 LIMIT 1
+  `).bind(importId).first();
+  if (!row) return json(request, { error:'settlement_import_not_found' }, 404);
+  if (row.status !== 'published' || row.reconciliation_status !== 'pass'
+      || Number(row.difference_micros || 0) !== 0 || Number(row.mismatch_rows || 0) !== 0) {
+    return json(request, { error:'settlement_authority_reconciliation_required' }, 409);
+  }
+  if (!row.authority_version || row.provenance_class !== 'exact_source_object') {
+    return json(request, { error:'settlement_authority_exact_source_required' }, 409);
+  }
+  if (dataClass === row.data_class) return json(request, { error:'settlement_authority_no_change' }, 409);
+
+  const nextVersion = Number(row.authority_version) + 1;
+  const now = new Date().toISOString();
+  try {
+    await route.storeDb.prepare(`
+      UPDATE settlement_import_authority
+      SET data_class=?2,authority_version=?3,actor_user_id=?4,
+          reason=?5,evidence_json=?6,updated_at=?7
+      WHERE import_id=?1 AND provenance_class='exact_source_object'
+    `).bind(importId, dataClass, nextVersion, actor.user_id, reason, JSON.stringify(evidence), now).run();
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (message.includes('SETTLEMENT_AUTHORITY_') || message.includes('SETTLEMENT_PROVENANCE_')) {
+      return json(request, { error:'settlement_authority_conflict' }, 409);
+    }
+    throw error;
+  }
+  const updated = await route.storeDb.prepare(`
+    SELECT import_id,data_class,provenance_class,authority_version,
+           actor_user_id,reason,evidence_json,created_at,updated_at
+    FROM settlement_import_authority WHERE import_id=?1 LIMIT 1
+  `).bind(importId).first();
+  await audit(env.CONTROL_DB, request, actor.user_id, storeId,
+    'settlement_import.authority_changed', 'settlement_import', importId, {
+      previous:{
+        dataClass:row.data_class,
+        provenanceClass:row.provenance_class,
+        authorityVersion:Number(row.authority_version),
+      },
+      current:{
+        dataClass,
+        provenanceClass:'exact_source_object',
+        authorityVersion:nextVersion,
+      },
+      reason,
+      contentSha256:row.content_sha256,
+      reconciliationStatus:row.reconciliation_status,
+    });
+  return json(request, {
+    store:publicStore(route.store),
+    importId,
+    authority:publicAuthority(updated),
+  }, 200);
+}
+
 async function listSettlements(request, route, url) {
   const limit = parseLimit(url.searchParams.get('limit'));
   if (limit.error) return json(request, { error:limit.error }, 400);
@@ -313,6 +405,29 @@ async function audit(db, request, actorUserId, storeId, action, entityType, enti
   }
 }
 
+async function readJson(request) {
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BYTES) {
+    return { error:'request_body_too_large', status:413 };
+  }
+  let text;
+  try { text = await request.text(); }
+  catch { return { error:'invalid_json' }; }
+  if (new TextEncoder().encode(text).byteLength > MAX_JSON_BYTES) {
+    return { error:'request_body_too_large', status:413 };
+  }
+  try {
+    const value = JSON.parse(text);
+    if (!plainObject(value)) return { error:'invalid_json' };
+    return { value };
+  } catch {
+    return { error:'invalid_json' };
+  }
+}
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 function publicValidation(parsed) {
   return {
     ok:Boolean(parsed.ok),
