@@ -34,6 +34,7 @@ const csvHistoryRolling12WindowTransitionReviewAssetPath = path.join(repoRoot, '
 const csvHistoryRolling12WindowTransitionReceiptAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js');
 const csvHistoryRolling12WindowTransitionReceiptVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-v1.js');
 const csvHistoryRolling12WindowTransitionReviewBoardAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-window-transition-review-board-v1.js');
+const csvHistoryRolling12TransitionChronologyAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js');
 const csvHistoryComparisonReceiptAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-v1.js');
 const csvHistoryComparisonReceiptVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-verification-v1.js');
 const csvHistoryAuditPackageIndexVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-audit-package-index-verification-v1.js');
@@ -79,6 +80,7 @@ const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_REVIEW_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_RECEIPT_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_RECEIPT_VERIFICATION_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_REVIEW_BOARD_ASSET_VERSION = '1.0.0';
+const CSV_HISTORY_ROLLING_12_TRANSITION_CHRONOLOGY_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_AUDIT_PACKAGE_INDEX_VERIFICATION_ASSET_VERSION = '1.0.0';
@@ -130,6 +132,8 @@ const csvHistoryRolling12WindowTransitionReceiptVerificationTag = `<script type=
 const csvHistoryRolling12WindowTransitionReceiptVerificationTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryRolling12WindowTransitionReviewBoardTag = `<script type="module" src="assets/cloudflare-native-csv-history-rolling-12-window-transition-review-board-v1.js?v=${CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_REVIEW_BOARD_ASSET_VERSION}"></script>`;
 const csvHistoryRolling12WindowTransitionReviewBoardTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-window-transition-review-board-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
+const csvHistoryRolling12TransitionChronologyTag = `<script type="module" src="assets/cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js?v=${CSV_HISTORY_ROLLING_12_TRANSITION_CHRONOLOGY_ASSET_VERSION}"></script>`;
+const csvHistoryRolling12TransitionChronologyTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-transition-chronology-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryComparisonReceiptTag = `<script type="module" src="assets/cloudflare-native-csv-history-comparison-receipt-v1.js?v=${CSV_HISTORY_COMPARISON_RECEIPT_ASSET_VERSION}"></script>`;
 const csvHistoryComparisonReceiptTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-comparison-receipt-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryComparisonReceiptVerificationTag = `<script type="module" src="assets/cloudflare-native-csv-history-comparison-receipt-verification-v1.js?v=${CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION}"></script>`;
@@ -176,6 +180,7 @@ await access(csvHistoryRolling12WindowTransitionReviewAssetPath, constants.R_OK)
 await access(csvHistoryRolling12WindowTransitionReceiptAssetPath, constants.R_OK);
 await access(csvHistoryRolling12WindowTransitionReceiptVerificationAssetPath, constants.R_OK);
 await access(csvHistoryRolling12WindowTransitionReviewBoardAssetPath, constants.R_OK);
+await access(csvHistoryRolling12TransitionChronologyAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptVerificationAssetPath, constants.R_OK);
 await access(csvHistoryAuditPackageIndexVerificationAssetPath, constants.R_OK);
@@ -209,6 +214,7 @@ nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReviewTagPa
 nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReceiptTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReceiptVerificationTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReviewBoardTagPattern, '');
+nativeIndex = nativeIndex.replace(csvHistoryRolling12TransitionChronologyTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptVerificationTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryAuditPackageIndexVerificationTagPattern, '');
@@ -241,6 +247,7 @@ nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\
   ${csvHistoryRolling12WindowTransitionReceiptTag}\
   ${csvHistoryRolling12WindowTransitionReceiptVerificationTag}\
   ${csvHistoryRolling12WindowTransitionReviewBoardTag}\
+  ${csvHistoryRolling12TransitionChronologyTag}\
   ${csvHistoryComparisonReceiptTag}\
   ${csvHistoryComparisonReceiptVerificationTag}\
   ${csvHistoryAuditPackageIndexVerificationTag}\
@@ -270,6 +277,7 @@ for (const [tag, label] of [
   [csvHistoryRolling12WindowTransitionReceiptTag, 'CSV historical Rolling-12 window transition receipt'],
   [csvHistoryRolling12WindowTransitionReceiptVerificationTag, 'CSV historical Rolling-12 window transition receipt verification'],
   [csvHistoryRolling12WindowTransitionReviewBoardTag, 'CSV historical Rolling-12 window transition review board'],
+  [csvHistoryRolling12TransitionChronologyTag, 'CSV historical Rolling-12 verified transition chronology'],
   [csvHistoryComparisonReceiptTag, 'CSV historical comparison receipt'],
   [csvHistoryComparisonReceiptVerificationTag, 'CSV historical comparison receipt verification'],
   [csvHistoryAuditPackageIndexVerificationTag, 'CSV historical audit package index verification'],
@@ -302,7 +310,8 @@ if (nativeIndex.indexOf(csvHistoryRolling12OperatingReviewTag) > nativeIndex.ind
 if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewTag) > nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptTag)) throw new Error('CSV historical Rolling-12 window transition receipt must load after transition review');
 if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptTag) > nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptVerificationTag)) throw new Error('CSV historical Rolling-12 window transition receipt verification must load after transition receipt');
 if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptVerificationTag) > nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewBoardTag)) throw new Error('CSV historical Rolling-12 window transition review board must load after transition receipt verification');
-if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewBoardTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptTag)) throw new Error('CSV historical comparison receipt must load after Rolling-12 window transition review board');
+if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewBoardTag) > nativeIndex.indexOf(csvHistoryRolling12TransitionChronologyTag)) throw new Error('CSV historical Rolling-12 verified transition chronology must load after transition review board');
+if (nativeIndex.indexOf(csvHistoryRolling12TransitionChronologyTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptTag)) throw new Error('CSV historical comparison receipt must load after Rolling-12 verified transition chronology');
 if (nativeIndex.indexOf(csvHistoryComparisonReceiptTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag)) throw new Error('CSV historical comparison receipt verification must load after comparison receipt builder');
 if (nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag) > nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag)) throw new Error('CSV historical audit package index verification must load after package/index builder');
 if (nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag) > nativeIndex.indexOf(csvProvenanceAuditTag)) throw new Error('CSV provenance audit UI must load after CSV historical audit package index verification');
@@ -341,6 +350,7 @@ await import('./test-csv-history-rolling-12-window-transition-review-contract.mj
 await import('./test-csv-history-rolling-12-window-transition-receipt-contract.mjs');
 await import('./test-csv-history-rolling-12-window-transition-receipt-verification-contract.mjs');
 await import('./test-csv-history-rolling-12-window-transition-review-board-contract.mjs');
+await import('./test-csv-history-rolling-12-transition-chronology-contract.mjs');
 await import('./test-csv-history-period-comparison-contract.mjs');
 await import('./test-csv-history-comparison-receipt-contract.mjs');
 await import('./test-csv-history-comparison-receipt-verification-contract.mjs');
