@@ -177,8 +177,8 @@ BEFORE INSERT ON advisory_review_records
 WHEN NEW.source_kind = 'csv_import'
 BEGIN
   SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
-  WHERE json_type(NEW.source_evidence_json, '$.sourceImportIds') <> 'array'
-     OR json_array_length(NEW.source_evidence_json, '$.sourceImportIds') = 0;
+  WHERE json_type(NEW.source_evidence_json, '$.sourceImportIds') IS NOT 'array'
+     OR COALESCE(json_array_length(NEW.source_evidence_json, '$.sourceImportIds'), 0) = 0;
 
   SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
   WHERE EXISTS (
