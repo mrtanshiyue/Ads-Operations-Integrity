@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeRuntimeRoute,
-  runtimeEvidenceDataPoint,
+  runtimeEvidenceHeaders,
   runtimeEvidenceRecord,
   runtimeWorkerVersion,
 } from '../cloudflare/runtime/runtime-observed-entry.js';
@@ -54,38 +54,26 @@ assert.equal(serialized.includes('sensitive-search-term'), false);
 assert.equal(serialized.includes('must-not-appear'), false);
 assert.equal(serialized.includes('authorization'), false);
 
-const dataPoint = runtimeEvidenceDataPoint(record);
-assert.deepEqual(dataPoint, {
-  indexes: ['version-123'],
-  blobs: [
-    'runtime_request_evidence',
-    'ads-operations-web-prod',
-    'production',
-    'ray-123',
-    'GET',
-    '/api/v1/stores/:store/csv-analytics/:dimension',
-    '',
-  ],
-  doubles: [200, 17],
+const evidenceHeaders = runtimeEvidenceHeaders(record);
+assert.deepEqual(evidenceHeaders, {
+  'x-runtime-worker-version': 'version-123',
+  'x-runtime-route-class': '/api/v1/stores/:store/csv-analytics/:dimension',
+  'x-runtime-duration-ms': '17',
+  'x-runtime-error-code': '',
+  'x-runtime-evidence-channel': 'response-headers',
 });
-const dataPointSerialized = JSON.stringify(dataPoint);
-assert.equal(dataPointSerialized.includes('store-secret'), false);
-assert.equal(dataPointSerialized.includes('sensitive-search-term'), false);
-assert.equal(dataPointSerialized.includes('must-not-appear'), false);
-assert.equal(dataPointSerialized.includes('authorization'), false);
-
-const writes = [];
-const runtimeDataset = { writeDataPoint(value) { writes.push(value); } };
-assert.equal(typeof runtimeDataset.writeDataPoint, 'function');
-runtimeDataset.writeDataPoint(dataPoint);
-assert.equal(writes.length, 1);
-assert.deepEqual(writes[0], dataPoint);
+const headerSerialized = JSON.stringify(evidenceHeaders);
+assert.equal(headerSerialized.includes('store-secret'), false);
+assert.equal(headerSerialized.includes('sensitive-search-term'), false);
+assert.equal(headerSerialized.includes('must-not-appear'), false);
+assert.equal(headerSerialized.includes('authorization'), false);
 
 console.log(JSON.stringify({
   ok: true,
   contract: 'runtime-request-evidence',
-  storage: 'analytics-engine',
+  channel: 'response-headers',
+  persistentRequestLogsRequired: false,
   rawRequestMetadataPersisted: false,
   record,
-  dataPoint,
+  evidenceHeaders,
 }));
