@@ -168,8 +168,8 @@ const tampered = JSON.parse(receiptMod.serializeHistoricalRolling12WindowTransit
 tampered.transition.transitionMetrics.additive.salesMicros.currentRolling12Value += 1;
 await assert.rejects(
   () => boardMod.buildHistoricalRolling12WindowTransitionReviewBoard(ledger, tampered),
-  (error) => error?.code === 'CSV_HISTORY_R12_TRANSITION_RECEIPT_FINGERPRINT_MISMATCH',
-  'Review board projection must fail before rendering if standalone receipt integrity is tampered',
+  (error) => error?.code === 'CSV_HISTORY_R12_TRANSITION_RECEIPT_ADDITIVE_TRANSITION_INVALID',
+  'Review board projection must fail during standalone receipt boundary validation before replay if additive transition integrity is tampered',
 );
 
 console.log(JSON.stringify({
