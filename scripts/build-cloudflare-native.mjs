@@ -31,6 +31,7 @@ const csvHistoryYearOverYearYtdComparisonAssetPath = path.join(repoRoot, 'dist-c
 const csvHistoryYearOverYearYtdReviewBoardAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-year-over-year-ytd-review-board-v1.js');
 const csvHistoryRolling12OperatingReviewAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-operating-review-v1.js');
 const csvHistoryRolling12WindowTransitionReviewAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-window-transition-review-v1.js');
+const csvHistoryRolling12WindowTransitionReceiptAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js');
 const csvHistoryComparisonReceiptAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-v1.js');
 const csvHistoryComparisonReceiptVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-comparison-receipt-verification-v1.js');
 const csvHistoryAuditPackageIndexVerificationAssetPath = path.join(repoRoot, 'dist-cloudflare-native', 'assets', 'cloudflare-native-csv-history-audit-package-index-verification-v1.js');
@@ -73,6 +74,7 @@ const CSV_HISTORY_YEAR_OVER_YEAR_YTD_COMPARISON_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_YEAR_OVER_YEAR_YTD_REVIEW_BOARD_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_ROLLING_12_OPERATING_REVIEW_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_REVIEW_ASSET_VERSION = '1.0.0';
+const CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_RECEIPT_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION = '1.0.0';
 const CSV_HISTORY_AUDIT_PACKAGE_INDEX_VERIFICATION_ASSET_VERSION = '1.0.0';
@@ -118,6 +120,8 @@ const csvHistoryRolling12OperatingReviewTag = `<script type="module" src="assets
 const csvHistoryRolling12OperatingReviewTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-operating-review-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryRolling12WindowTransitionReviewTag = `<script type="module" src="assets/cloudflare-native-csv-history-rolling-12-window-transition-review-v1.js?v=${CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_REVIEW_ASSET_VERSION}"></script>`;
 const csvHistoryRolling12WindowTransitionReviewTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-window-transition-review-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
+const csvHistoryRolling12WindowTransitionReceiptTag = `<script type="module" src="assets/cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js?v=${CSV_HISTORY_ROLLING_12_WINDOW_TRANSITION_RECEIPT_ASSET_VERSION}"></script>`;
+const csvHistoryRolling12WindowTransitionReceiptTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryComparisonReceiptTag = `<script type="module" src="assets/cloudflare-native-csv-history-comparison-receipt-v1.js?v=${CSV_HISTORY_COMPARISON_RECEIPT_ASSET_VERSION}"></script>`;
 const csvHistoryComparisonReceiptTagPattern = /<script type="module" src="assets\/cloudflare-native-csv-history-comparison-receipt-v1\.js(?:\?v=[^"]*)?"><\/script>/g;
 const csvHistoryComparisonReceiptVerificationTag = `<script type="module" src="assets/cloudflare-native-csv-history-comparison-receipt-verification-v1.js?v=${CSV_HISTORY_COMPARISON_RECEIPT_VERIFICATION_ASSET_VERSION}"></script>`;
@@ -161,6 +165,7 @@ await access(csvHistoryYearOverYearYtdComparisonAssetPath, constants.R_OK);
 await access(csvHistoryYearOverYearYtdReviewBoardAssetPath, constants.R_OK);
 await access(csvHistoryRolling12OperatingReviewAssetPath, constants.R_OK);
 await access(csvHistoryRolling12WindowTransitionReviewAssetPath, constants.R_OK);
+await access(csvHistoryRolling12WindowTransitionReceiptAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptAssetPath, constants.R_OK);
 await access(csvHistoryComparisonReceiptVerificationAssetPath, constants.R_OK);
 await access(csvHistoryAuditPackageIndexVerificationAssetPath, constants.R_OK);
@@ -191,6 +196,7 @@ nativeIndex = nativeIndex.replace(csvHistoryYearOverYearYtdComparisonTagPattern,
 nativeIndex = nativeIndex.replace(csvHistoryYearOverYearYtdReviewBoardTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryRolling12OperatingReviewTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReviewTagPattern, '');
+nativeIndex = nativeIndex.replace(csvHistoryRolling12WindowTransitionReceiptTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryComparisonReceiptVerificationTagPattern, '');
 nativeIndex = nativeIndex.replace(csvHistoryAuditPackageIndexVerificationTagPattern, '');
@@ -220,6 +226,7 @@ nativeIndex = nativeIndex.replace(/<\/head>/i, `  ${operatorTag}\
   ${csvHistoryYearOverYearYtdReviewBoardTag}\
   ${csvHistoryRolling12OperatingReviewTag}\
   ${csvHistoryRolling12WindowTransitionReviewTag}\
+  ${csvHistoryRolling12WindowTransitionReceiptTag}\
   ${csvHistoryComparisonReceiptTag}\
   ${csvHistoryComparisonReceiptVerificationTag}\
   ${csvHistoryAuditPackageIndexVerificationTag}\
@@ -246,6 +253,7 @@ for (const [tag, label] of [
   [csvHistoryYearOverYearYtdReviewBoardTag, 'CSV historical year-over-year YTD review board'],
   [csvHistoryRolling12OperatingReviewTag, 'CSV historical Rolling-12 operating review'],
   [csvHistoryRolling12WindowTransitionReviewTag, 'CSV historical Rolling-12 window transition review'],
+  [csvHistoryRolling12WindowTransitionReceiptTag, 'CSV historical Rolling-12 window transition receipt'],
   [csvHistoryComparisonReceiptTag, 'CSV historical comparison receipt'],
   [csvHistoryComparisonReceiptVerificationTag, 'CSV historical comparison receipt verification'],
   [csvHistoryAuditPackageIndexVerificationTag, 'CSV historical audit package index verification'],
@@ -275,7 +283,8 @@ if (nativeIndex.indexOf(csvHistoryYearToDateOperatingReviewTag) > nativeIndex.in
 if (nativeIndex.indexOf(csvHistoryYearOverYearYtdComparisonTag) > nativeIndex.indexOf(csvHistoryYearOverYearYtdReviewBoardTag)) throw new Error('CSV historical year-over-year YTD review board must load after YoY YTD comparison');
 if (nativeIndex.indexOf(csvHistoryYearOverYearYtdReviewBoardTag) > nativeIndex.indexOf(csvHistoryRolling12OperatingReviewTag)) throw new Error('CSV historical Rolling-12 operating review must load after YoY YTD review board');
 if (nativeIndex.indexOf(csvHistoryRolling12OperatingReviewTag) > nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewTag)) throw new Error('CSV historical Rolling-12 window transition review must load after Rolling-12 operating review');
-if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptTag)) throw new Error('CSV historical comparison receipt must load after Rolling-12 window transition review');
+if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReviewTag) > nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptTag)) throw new Error('CSV historical Rolling-12 window transition receipt must load after transition review');
+if (nativeIndex.indexOf(csvHistoryRolling12WindowTransitionReceiptTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptTag)) throw new Error('CSV historical comparison receipt must load after Rolling-12 window transition receipt');
 if (nativeIndex.indexOf(csvHistoryComparisonReceiptTag) > nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag)) throw new Error('CSV historical comparison receipt verification must load after comparison receipt builder');
 if (nativeIndex.indexOf(csvHistoryComparisonReceiptVerificationTag) > nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag)) throw new Error('CSV historical audit package index verification must load after package/index builder');
 if (nativeIndex.indexOf(csvHistoryAuditPackageIndexVerificationTag) > nativeIndex.indexOf(csvProvenanceAuditTag)) throw new Error('CSV provenance audit UI must load after CSV historical audit package index verification');
@@ -311,6 +320,7 @@ await import('./test-csv-history-year-over-year-ytd-comparison-contract.mjs');
 await import('./test-csv-history-year-over-year-ytd-review-board-contract.mjs');
 await import('./test-csv-history-rolling-12-operating-review-contract.mjs');
 await import('./test-csv-history-rolling-12-window-transition-review-contract.mjs');
+await import('./test-csv-history-rolling-12-window-transition-receipt-contract.mjs');
 await import('./test-csv-history-period-comparison-contract.mjs');
 await import('./test-csv-history-comparison-receipt-contract.mjs');
 await import('./test-csv-history-comparison-receipt-verification-contract.mjs');
