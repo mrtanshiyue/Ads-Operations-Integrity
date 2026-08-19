@@ -1,4 +1,5 @@
 import { parseAmazonSearchTermCsv } from './csv-search-term-import.js';
+import { bindCsvImportSourceReceipt } from './csv-import-source-object.js';
 
 export class CsvSearchTermIngestionError extends Error {
   constructor(code, cause = null) {
@@ -9,9 +10,24 @@ export class CsvSearchTermIngestionError extends Error {
   }
 }
 
-export async function ingestSearchTermCsvOnce({ importId, input, repository, now }) {
+export async function ingestSearchTermCsvOnce({ importId, input, repository, sourceObjectStore, sourceContext, now }) {
   const id = requiredText(importId, 'CSV_IMPORT_ID_REQUIRED');
   assertRepository(repository);
+  assertSourceObjectStore(sourceObjectStore);
+
+  let descriptor;
+  try {
+    descriptor = await sourceObjectStore.describe({
+      bytes:input?.sourceBytes,
+      storeId:sourceContext?.storeId,
+      sourceFileName:input?.sourceFileName,
+      contentType:sourceContext?.contentType,
+      importerUserId:sourceContext?.importerUserId,
+      uploadedAt:input?.uploadedAt,
+    });
+  } catch (error) {
+    throw new CsvSearchTermIngestionError('CSV_IMPORT_SOURCE_DESCRIBE_FAILED', error);
+  }
 
   let parsed;
   try {
@@ -19,6 +35,11 @@ export async function ingestSearchTermCsvOnce({ importId, input, repository, now
   } catch (error) {
     throw new CsvSearchTermIngestionError('CSV_IMPORT_PARSE_FAILED', error);
   }
+  parsed = Object.freeze({
+    ...parsed,
+    contentSha256:descriptor.contentSha256,
+    contentBytes:descriptor.contentBytes,
+  });
 
   if (!parsed.reportStartDate || !parsed.reportEndDate) {
     return Object.freeze({
@@ -28,6 +49,7 @@ export async function ingestSearchTermCsvOnce({ importId, input, repository, now
       importId:id,
       parsed,
       batch:null,
+      sourceObject:null,
     });
   }
 
@@ -49,13 +71,22 @@ export async function ingestSearchTermCsvOnce({ importId, input, repository, now
       importId:duplicate.import_id,
       parsed,
       batch:duplicate,
+      sourceObject:null,
     });
   }
+
+  let persistedSource;
+  try {
+    persistedSource = await sourceObjectStore.persist(descriptor);
+  } catch (error) {
+    throw new CsvSearchTermIngestionError('CSV_IMPORT_SOURCE_PERSIST_FAILED', error);
+  }
+  const sourceObject = bindCsvImportSourceReceipt(id, persistedSource);
 
   if (!parsed.ok) {
     let batch;
     try {
-      batch = await repository.recordRejectedImport({ importId:id, parsed, now });
+      batch = await repository.recordRejectedImport({ importId:id, parsed, sourceObject, now });
     } catch (error) {
       throw new CsvSearchTermIngestionError('CSV_IMPORT_REJECTION_PERSIST_FAILED', error);
     }
@@ -66,12 +97,13 @@ export async function ingestSearchTermCsvOnce({ importId, input, repository, now
       importId:id,
       parsed,
       batch,
+      sourceObject,
     });
   }
 
   let batch;
   try {
-    batch = await repository.commitValidatedImport({ importId:id, parsed, now });
+    batch = await repository.commitValidatedImport({ importId:id, parsed, sourceObject, now });
   } catch (error) {
     throw new CsvSearchTermIngestionError('CSV_IMPORT_COMMIT_FAILED', error);
   }
@@ -85,6 +117,7 @@ export async function ingestSearchTermCsvOnce({ importId, input, repository, now
     importId:id,
     parsed,
     batch,
+    sourceObject,
   });
 }
 
@@ -94,6 +127,12 @@ function assertRepository(repository) {
       || typeof repository.recordRejectedImport !== 'function'
       || typeof repository.commitValidatedImport !== 'function') {
     throw new CsvSearchTermIngestionError('CSV_IMPORT_REPOSITORY_INVALID');
+  }
+}
+
+function assertSourceObjectStore(store) {
+  if (!store || typeof store.describe !== 'function' || typeof store.persist !== 'function') {
+    throw new CsvSearchTermIngestionError('CSV_IMPORT_SOURCE_STORE_INVALID');
   }
 }
 
