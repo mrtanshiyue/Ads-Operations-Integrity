@@ -12,7 +12,41 @@
     }
   }
 
+  const inFlightCsvAnalyticsReads = new Map();
+
   async function request(path, options) {
+    const dedupeKey = csvAnalyticsDedupeKey(path, options);
+    if (!dedupeKey) return requestNetwork(path, options);
+
+    const existing = inFlightCsvAnalyticsReads.get(dedupeKey);
+    if (existing) return existing;
+
+    let pending;
+    pending = requestNetwork(path, options).finally(() => {
+      if (inFlightCsvAnalyticsReads.get(dedupeKey) === pending) {
+        inFlightCsvAnalyticsReads.delete(dedupeKey);
+      }
+    });
+    inFlightCsvAnalyticsReads.set(dedupeKey, pending);
+    return pending;
+  }
+
+  function csvAnalyticsDedupeKey(path, options) {
+    const method = String(options?.method || 'GET').toUpperCase();
+    if (method !== 'GET' || options?.body !== undefined) return null;
+    if (options?.headers && Object.keys(options.headers).length > 0) return null;
+
+    const url = new URL(String(path || ''), global.location.origin);
+    if (!/^\/api\/v1\/stores\/[^/]+\/csv-analytics\/[^/]+$/.test(url.pathname)) return null;
+
+    const params = [...url.searchParams.entries()].sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+      const keyOrder = leftKey.localeCompare(rightKey);
+      return keyOrder || leftValue.localeCompare(rightValue);
+    });
+    return JSON.stringify([method, url.pathname, params]);
+  }
+
+  async function requestNetwork(path, options) {
     const response = await fetch(path, {
       method: options?.method || 'GET',
       credentials: 'same-origin',
