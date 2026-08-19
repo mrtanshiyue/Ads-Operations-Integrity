@@ -73,4 +73,9 @@ assert.match(authorityMigration, /CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED/, 'Data
 assert.match(authorityMigration, /json_type\(NEW\.source_evidence_json, '\$\.sourceImportIds'\) IS NOT 'array'/, 'Missing review import evidence must fail closed');
 assert.doesNotMatch(authorityMigration, /202606|csv-import-0a2cb4a8|csv-import-00be434e/, 'Migration must not hard-code environment-specific imports');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v3-classification-provenance-authority' }));
+// These contracts are intentionally imported here (not merely syntax-checked by the workflow),
+// so the required CSV intelligence gate executes the built UI semantics on every canonical CI run.
+await import('./test-csv-imports-ui-contract.mjs');
+await import('./test-csv-real-data-intelligence-ui-contract.mjs');
+
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v4-with-executed-ui-contracts' }));
