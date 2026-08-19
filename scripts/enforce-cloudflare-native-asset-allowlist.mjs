@@ -30,6 +30,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-history-year-over-year-ytd-review-board-v1.js',
   'cloudflare-native-csv-history-rolling-12-operating-review-v1.js',
   'cloudflare-native-csv-history-rolling-12-window-transition-review-v1.js',
+  'cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js',
   'cloudflare-native-csv-history-comparison-receipt-v1.js',
   'cloudflare-native-csv-history-comparison-receipt-verification-v1.js',
   'cloudflare-native-csv-history-audit-package-index-verification-v1.js',
