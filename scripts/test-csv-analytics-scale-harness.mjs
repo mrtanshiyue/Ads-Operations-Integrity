@@ -5,6 +5,7 @@ import { benchmarkSqlForScale, setupSql, summarizeMetrics } from './csv-analytic
 const setup = setupSql(100000);
 assert.ok(setup.some((sql) => /100000/.test(sql)), 'setup must deterministically bound the generated fact volume');
 assert.ok(setup.some((sql) => /CREATE INDEX idx_bench_date/.test(sql)), 'benchmark facts must retain date-index behavior');
+assert.ok(setup.some((sql) => sql === 'DROP TABLE IF EXISTS __csv_analytics_benchmark_facts'), 'benchmark setup must remove any prior isolated table before creating facts');
 
 const tenK = benchmarkSqlForScale(10000);
 const hundredK = benchmarkSqlForScale(100000);
@@ -25,7 +26,7 @@ assert.deepEqual(summarizeMetrics([
 
 const source = await readFile(new URL('./csv-analytics-scale-harness.mjs', import.meta.url), 'utf8');
 assert.match(source, /CSV_SCALE_D1_DATABASE_ID/, 'live harness must require an explicitly selected D1 database');
-assert.match(source, /DROP TABLE IF EXISTS __csv_analytics_benchmark_facts/, 'benchmark table must be isolated and removable');
+assert.match(source, /finally\s*\{[\s\S]*DROP TABLE IF EXISTS \$\{TABLE\}/, 'benchmark cleanup must drop the isolated table in finally');
 assert.doesNotMatch(source, /AMAZON_ADS_ENABLED|amazon-ads|SP-API|sync\/|execution-permits/i, 'scale harness must remain independent of Amazon transport/execution');
 
 console.log(JSON.stringify({
@@ -36,5 +37,6 @@ console.log(JSON.stringify({
   qualityQueryCount: tenK.quality.length,
   diagnosticsQueryCount: tenK.diagnostics.length,
   isolatedDevTable: true,
+  cleanupInFinally: true,
   amazonExecutionAuthorized: false,
 }, null, 2));
