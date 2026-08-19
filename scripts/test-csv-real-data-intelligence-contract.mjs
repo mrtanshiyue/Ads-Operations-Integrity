@@ -77,5 +77,6 @@ assert.doesNotMatch(authorityMigration, /202606|csv-import-0a2cb4a8|csv-import-0
 // so the required CSV intelligence gate executes the built UI semantics on every canonical CI run.
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
+await import('./test-csv-analytics-foundation.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v4-with-executed-ui-contracts' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v5-with-analytics-foundation' }));
