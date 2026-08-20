@@ -4,6 +4,9 @@ import {
   OPERATIONAL_UAT_CASES,
   executeOperationalUatCase,
 } from '../cloudflare/runtime/operational-uat-live-probe.js';
+import {
+  authorizeOperationalUatEphemeralServiceAccess,
+} from '../cloudflare/runtime/operational-uat-ephemeral-service-route.js';
 
 class FakeControlDb {
   prepare(sql) {
@@ -55,9 +58,29 @@ const expected = new Map([
 assert.deepEqual(OPERATIONAL_UAT_CASES, [...expected.keys()]);
 assert.equal(OPERATIONAL_UAT_CASES.includes('failure.release-rollback'), false, 'rollback must remain a real deployment drill');
 
+const ephemeralAuthorized = authorizeOperationalUatEphemeralServiceAccess({
+  configured: true,
+  authenticated: true,
+  identity: { principalType: 'service_token', sub: 'temporary-uat-client.access' },
+});
+assert.equal(ephemeralAuthorized.ok, true);
+assert.equal(ephemeralAuthorized.authorizationMode, 'secondary_access_service_token');
+assert.equal(ephemeralAuthorized.sub, 'temporary-uat-client.access');
+
+for (const [label, access, status] of [
+  ['not configured', { configured: false, authenticated: false }, 503],
+  ['not authenticated', { configured: true, authenticated: false }, 401],
+  ['human principal', { configured: true, authenticated: true, identity: { principalType: 'user', sub: 'human-sub' } }, 403],
+  ['malformed service subject', { configured: true, authenticated: true, identity: { principalType: 'service_token', sub: 'not-access-client' } }, 403],
+]) {
+  const result = authorizeOperationalUatEphemeralServiceAccess(access);
+  assert.equal(result.ok, false, `${label} must fail closed`);
+  assert.equal(result.status, status, `${label} status`);
+}
+
 for (const [caseId, expectedStatus] of expected) {
   const env = { CONTROL_DB: new FakeControlDb() };
-  const response = await executeOperationalUatCase(caseId, { request, env, actor: { user_id: 'uat-admin' } });
+  const response = await executeOperationalUatCase(caseId, { request, env, actor: { principalType: 'service_token' } });
   assert.equal(response.status, expectedStatus, `${caseId} status`);
   const payload = await response.json();
   assert.equal(payload.caseId, caseId, `${caseId} case id`);
@@ -89,20 +112,28 @@ assert.equal(overlapBody.observed.qualityState, 'overlap_detected');
 assert.equal(overlapBody.observed.doubleCountRisk, true);
 assert.equal(overlapBody.observed.safeForNaiveAggregation, false);
 
-const source = await fs.readFile(new URL('../cloudflare/runtime/operational-uat-live-probe.js', import.meta.url), 'utf8');
-for (const forbidden of ['AMAZON_SYNC_WORKFLOW', 'advertising-api.amazon', 'sellingpartnerapi', 'amazon-ads']) {
-  assert.equal(source.includes(forbidden), false, `live probe must not reference ${forbidden}`);
+for (const path of [
+  '../cloudflare/runtime/operational-uat-live-probe.js',
+  '../cloudflare/runtime/operational-uat-ephemeral-service-route.js',
+]) {
+  const source = await fs.readFile(new URL(path, import.meta.url), 'utf8');
+  for (const forbidden of ['AMAZON_SYNC_WORKFLOW', 'advertising-api.amazon', 'sellingpartnerapi', 'amazon-ads']) {
+    assert.equal(source.includes(forbidden), false, `${path} must not reference ${forbidden}`);
+  }
 }
 
 const runtimeEntry = await fs.readFile(new URL('../cloudflare/runtime/runtime-observed-entry.js', import.meta.url), 'utf8');
-assert.match(runtimeEntry, /handleOperationalUatLiveProbeRoute/);
+assert.match(runtimeEntry, /handleOperationalUatEphemeralServiceRoute/);
 assert.match(runtimeEntry, /OPERATIONAL_UAT_ROUTE|operational-uat\/live-probe/);
+assert.doesNotMatch(runtimeEntry, /handleOperationalUatLiveProbeRoute/);
 
 console.log(JSON.stringify({
   ok: true,
   contract: 'operational-uat-live-probe',
   caseCount: OPERATIONAL_UAT_CASES.length,
   releaseRollbackExcluded: true,
+  ephemeralServiceAuthorizationOnly: true,
+  noPersistentActorBindingRequired: true,
   noAmazonExecution: true,
   noBusinessFactPersistence: true,
 }));
