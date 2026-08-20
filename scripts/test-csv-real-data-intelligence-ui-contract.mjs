@@ -44,6 +44,10 @@ assert.match(asset, /Financial comparability gate blocked/, 'Financial comparabi
 assert.match(asset, /financialValue\(/, 'Financial values must pass through a comparability suppression helper');
 assert.match(asset, /scope\?\.financiallyComparable === true/, 'Financial display must require explicit comparability');
 assert.match(asset, /data-csv-product-term/, 'Product intelligence evidence drilldown missing');
+assert.match(asset, /function buildRootMap\(roots\)/, 'Search-term rows must map back to concrete root records');
+assert.match(asset, /root\.searchTerms/, 'Root intelligence must retain root-to-search-term membership for drilldown and candidate visibility');
+assert.match(asset, /candidate\?\.matchScope === 'phrase_review'/, 'Phrase-negative review candidates must be mapped through their root membership');
+assert.match(asset, /kv\('Roots', join\(rootNames\)\)/, 'Product evidence must expose concrete root names separately from root states');
 assert.match(asset, /Human review boundary/, 'Operator Workspace must preserve the human-review boundary');
 assert.match(asset, /Amazon mutation disabled/, 'Product evidence must retain Amazon mutation disabled copy');
 assert.match(asset, /data-csv-productization-fallback/, 'Older payloads must fall back to the compatibility view instead of being treated as complete product intelligence');
@@ -79,6 +83,8 @@ console.log(JSON.stringify({
   operatorWorkspace: true,
   completeUniverseScopeVisible: true,
   financialComparabilityFailClosed: true,
+  rootMembershipVisible: true,
+  phraseReviewMappedThroughRoots: true,
   humanReviewOnly: true,
   duplicateRunsBlocked: true,
   staleResponsesRejected: true,
