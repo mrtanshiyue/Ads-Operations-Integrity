@@ -1,0 +1,135 @@
+name: Production Exact Main Build Once
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-exact-main-build-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Deploy exact current main to Production Web Worker
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'ops/manual-production-build-bc1d5a' &&
+      github.event.pull_request.base.sha == 'bc1d5a8733a5a2fc428125cb37a3fcdde8d73d0b'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      EXPECTED_MAIN_SHA: bc1d5a8733a5a2fc428125cb37a3fcdde8d73d0b
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_MAIN_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Trigger exact-main Production build and verify control-plane release
+        run: |
+          node --input-type=module <<'NODE'
+          import { discoverWorkerDeploymentTopology } from './scripts/cloudflare-deployment-discovery-client.mjs';
+
+          const API = 'https://api.cloudflare.com/client/v4';
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          const githubToken = String(process.env.GITHUB_TOKEN || '').trim();
+          const expected = String(process.env.EXPECTED_MAIN_SHA || '').trim().toLowerCase();
+          if (!accountId || !token || !githubToken || !/^[0-9a-f]{40}$/.test(expected)) throw new Error('production_exact_main_precondition_missing');
+
+          const mainResponse = await fetch('https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main', {
+            headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${githubToken}`, 'x-github-api-version': '2022-11-28' },
+          });
+          if (!mainResponse.ok) throw new Error(`github_main_http_${mainResponse.status}`);
+          const main = await mainResponse.json();
+          const actualMain = String(main?.commit?.sha || '').toLowerCase();
+          if (actualMain !== expected) throw new Error(`main_drift:${actualMain}:${expected}`);
+
+          const cfHeaders = { accept: 'application/json', authorization: `Bearer ${token}` };
+          const cfGet = async (path) => {
+            const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}${path}`, { headers: cfHeaders });
+            const text = await response.text();
+            if (!response.ok) throw new Error(`cloudflare_get_${response.status}:${path}:${text.slice(0, 240)}`);
+            const body = JSON.parse(text);
+            if (body?.success !== true) throw new Error(`cloudflare_api_failed:${path}`);
+            return body.result;
+          };
+
+          const workers = await cfGet('/workers/scripts');
+          const worker = Array.isArray(workers) ? workers.find((row) => row?.id === 'ads-operations-web-prod') : null;
+          if (!worker?.tag) throw new Error('production_worker_tag_missing');
+          const triggers = await cfGet(`/builds/workers/${encodeURIComponent(worker.tag)}/triggers`);
+          const matches = Array.isArray(triggers) ? triggers.filter((row) => row?.trigger_name === 'ads-operations-web-prod exact-main') : [];
+          if (matches.length !== 1) throw new Error(`production_exact_main_trigger_match_${matches.length}`);
+          const trigger = matches[0];
+          const branchIncludes = Array.isArray(trigger?.branch_includes) ? trigger.branch_includes : [];
+          if (branchIncludes.length !== 1 || branchIncludes[0] !== '__manual_exact_main_prod__') throw new Error('production_trigger_governance_drift');
+          if (String(trigger?.deploy_command || '') !== 'npx wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc') throw new Error('production_deploy_command_drift');
+
+          const buildResponse = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}/builds/triggers/${encodeURIComponent(trigger.trigger_uuid)}/builds`, {
+            method: 'POST',
+            headers: { ...cfHeaders, 'content-type': 'application/json' },
+            body: JSON.stringify({ branch: 'main', commit_hash: expected }),
+          });
+          const buildText = await buildResponse.text();
+          if (!buildResponse.ok) throw new Error(`production_build_trigger_http_${buildResponse.status}:${buildText.slice(0, 300)}`);
+          const buildPayload = JSON.parse(buildText);
+          if (buildPayload?.success !== true || !buildPayload?.result?.build_uuid) throw new Error('production_build_trigger_invalid_receipt');
+          const buildUuid = buildPayload.result.build_uuid;
+          console.log(JSON.stringify({ event: 'production_exact_main_build_triggered', buildUuid, expectedMainSha: expected, amazonExecutionAttempted: false }));
+
+          let finalBuild = null;
+          for (let attempt = 1; attempt <= 60; attempt += 1) {
+            const build = await cfGet(`/builds/builds/${encodeURIComponent(buildUuid)}`);
+            const outcome = String(build?.build_outcome || '').toLowerCase();
+            const status = String(build?.status || '').toLowerCase();
+            if (['success', 'fail', 'skipped', 'cancelled', 'terminated'].includes(outcome)) {
+              finalBuild = build;
+              break;
+            }
+            if (attempt < 60) await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+          if (!finalBuild) throw new Error('production_build_timeout');
+          if (String(finalBuild?.build_outcome || '').toLowerCase() !== 'success') {
+            let logs = null;
+            try { logs = await cfGet(`/builds/builds/${encodeURIComponent(buildUuid)}/logs`); } catch {}
+            console.error(JSON.stringify({ event: 'production_exact_main_build_failed', buildUuid, outcome: finalBuild?.build_outcome || null, logs }, null, 2));
+            throw new Error(`production_build_outcome_${String(finalBuild?.build_outcome || 'unknown')}`);
+          }
+
+          let topology = null;
+          for (let attempt = 1; attempt <= 30; attempt += 1) {
+            try {
+              const candidate = await discoverWorkerDeploymentTopology({ accountId, scriptName: 'ads-operations-web-prod', token });
+              if (String(candidate?.activeBuild?.commitSha || '').toLowerCase() === expected
+                  && Number(candidate?.activeDeployment?.percentage) === 100
+                  && String(candidate?.activeBuild?.outcome || '').toLowerCase() === 'success') {
+                topology = candidate;
+                break;
+              }
+            } catch {}
+            if (attempt < 30) await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+          if (!topology) throw new Error('production_exact_main_release_not_active');
+
+          console.log(JSON.stringify({
+            schema: 'production-exact-main-build-v1',
+            verified: true,
+            buildUuid,
+            expectedMainSha: expected,
+            activeCommitSha: topology.activeBuild.commitSha,
+            activeBuildUuid: topology.activeBuild.buildUuid,
+            activeBuildOutcome: topology.activeBuild.outcome,
+            activeDeploymentId: topology.activeDeployment.deploymentId,
+            activeVersionId: topology.activeVersion.versionId,
+            trafficPercentage: topology.activeDeployment.percentage,
+            worker: topology.workerName,
+            amazonExecutionAttempted: false,
+            businessFactMutationAttempted: false,
+          }, null, 2));
+          NODE
