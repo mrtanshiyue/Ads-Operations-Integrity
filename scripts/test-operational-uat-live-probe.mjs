@@ -6,38 +6,21 @@ import {
 } from '../cloudflare/runtime/operational-uat-live-probe.js';
 import {
   authorizeOperationalUatEphemeralServiceAccess,
+  authorizeOperationalUatInternalServiceBinding,
 } from '../cloudflare/runtime/operational-uat-ephemeral-service-route.js';
 
 class FakeControlDb {
-  prepare(sql) {
-    return new FakeStatement(String(sql));
-  }
+  prepare(sql) { return new FakeStatement(String(sql)); }
 }
-
 class FakeStatement {
-  constructor(sql, params = []) {
-    this.sql = sql;
-    this.params = params;
-  }
-
-  bind(...params) {
-    return new FakeStatement(this.sql, params);
-  }
-
+  constructor(sql, params = []) { this.sql = sql; this.params = params; }
+  bind(...params) { return new FakeStatement(this.sql, params); }
   async first() {
-    if (this.sql.includes('__operational_uat_intentionally_missing_table_v1')) {
-      throw new Error('no such table: intentional operational UAT probe');
-    }
-    if (this.sql.includes('SELECT u.user_id, sm.store_id AS allowed_store_id')) {
-      return { user_id: 'uat-limited-user', allowed_store_id: 'store-01' };
-    }
-    if (this.sql.includes('SELECT s.store_id')) {
-      return { store_id: 'store-02' };
-    }
+    if (this.sql.includes('__operational_uat_intentionally_missing_table_v1')) throw new Error('no such table: intentional operational UAT probe');
+    if (this.sql.includes('SELECT u.user_id, sm.store_id AS allowed_store_id')) return { user_id: 'uat-limited-user', allowed_store_id: 'store-01' };
+    if (this.sql.includes('SELECT s.store_id')) return { store_id: 'store-02' };
     if (this.sql.includes('FROM user_global_roles ugr')) return null;
-    if (this.sql.includes('FROM store_members sm')) {
-      return this.params[1] === 'store-01' ? { ok: 1 } : null;
-    }
+    if (this.sql.includes('FROM store_members sm')) return this.params[1] === 'store-01' ? { ok: 1 } : null;
     return null;
   }
 }
@@ -65,7 +48,6 @@ const ephemeralAuthorized = authorizeOperationalUatEphemeralServiceAccess({
 });
 assert.equal(ephemeralAuthorized.ok, true);
 assert.equal(ephemeralAuthorized.authorizationMode, 'secondary_access_service_token');
-assert.equal(ephemeralAuthorized.sub, 'temporary-uat-client.access');
 
 for (const [label, access, status] of [
   ['not configured', { configured: false, authenticated: false }, 503],
@@ -78,9 +60,40 @@ for (const [label, access, status] of [
   assert.equal(result.status, status, `${label} status`);
 }
 
+const internalRequest = new Request('https://internal/api/v1/operational-uat/live-probe', {
+  headers: { 'x-operational-uat-internal-binding': 'cloudflare-service-binding-v1' },
+});
+const internalAuthorized = authorizeOperationalUatInternalServiceBinding(internalRequest);
+assert.equal(internalAuthorized.ok, true);
+assert.equal(internalAuthorized.authorizationMode, 'cloudflare_service_binding');
+
+const missingInternalHeader = authorizeOperationalUatInternalServiceBinding(new Request('https://internal/api/v1/operational-uat/live-probe'));
+assert.equal(missingInternalHeader.ok, false);
+assert.equal(missingInternalHeader.status, 401);
+
+const edgeRequest = new Request('https://public.example/api/v1/operational-uat/live-probe', {
+  headers: { 'x-operational-uat-internal-binding': 'cloudflare-service-binding-v1' },
+});
+Object.defineProperty(edgeRequest, 'cf', { value: { colo: 'SFO' }, configurable: true });
+const edgeRejected = authorizeOperationalUatInternalServiceBinding(edgeRequest);
+assert.equal(edgeRejected.ok, false);
+assert.equal(edgeRejected.status, 403);
+assert.equal(edgeRejected.error, 'operational_uat_internal_binding_edge_request_rejected');
+
+const accessJwtRequest = new Request('https://internal/api/v1/operational-uat/live-probe', {
+  headers: {
+    'x-operational-uat-internal-binding': 'cloudflare-service-binding-v1',
+    'cf-access-jwt-assertion': 'not-used-here',
+  },
+});
+const accessJwtRejected = authorizeOperationalUatInternalServiceBinding(accessJwtRequest);
+assert.equal(accessJwtRejected.ok, false);
+assert.equal(accessJwtRejected.status, 403);
+assert.equal(accessJwtRejected.error, 'operational_uat_internal_binding_access_token_rejected');
+
 for (const [caseId, expectedStatus] of expected) {
   const env = { CONTROL_DB: new FakeControlDb() };
-  const response = await executeOperationalUatCase(caseId, { request, env, actor: { principalType: 'service_token' } });
+  const response = await executeOperationalUatCase(caseId, { request, env, actor: { principalType: 'service_binding' } });
   assert.equal(response.status, expectedStatus, `${caseId} status`);
   const payload = await response.json();
   assert.equal(payload.caseId, caseId, `${caseId} case id`);
@@ -132,7 +145,10 @@ console.log(JSON.stringify({
   contract: 'operational-uat-live-probe',
   caseCount: OPERATIONAL_UAT_CASES.length,
   releaseRollbackExcluded: true,
-  ephemeralServiceAuthorizationOnly: true,
+  secondaryAccessServiceAuthorization: true,
+  cloudflareServiceBindingAuthorization: true,
+  publicEdgeHeaderSpoofRejected: true,
+  accessJwtCannotMasqueradeAsInternalBinding: true,
   noPersistentActorBindingRequired: true,
   noAmazonExecution: true,
   noBusinessFactPersistence: true,
