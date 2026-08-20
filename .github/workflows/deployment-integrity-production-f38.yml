@@ -1,0 +1,133 @@
+name: Deployment Integrity Production F38
+
+on:
+  push:
+    branches:
+      - deployment-integrity-production-f38
+    paths:
+      - '.github/workflows/deployment-integrity-production-f38.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deployment-integrity-production-f38
+  cancel-in-progress: false
+
+jobs:
+  exact-production-build:
+    name: Exact Production build and live trace
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECTED_GIT_SHA: f38e80319b4a7ea3ed14a1a335e89269505447f6
+      WORKER_NAME: ads-operations-web-prod
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout deployment-integrity branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Trigger exact canonical Production build and verify live release
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { discoverWorkerDeploymentTopology } from './scripts/cloudflare-deployment-discovery-client.mjs';
+          import {
+            createExactCommitBuild,
+            waitForExactSuccessfulBuild,
+          } from './scripts/cloudflare-workers-builds-client.mjs';
+          import { waitForReleaseTrace } from './scripts/generate-cloudflare-release-trace.mjs';
+
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          const commitSha = String(process.env.EXPECTED_GIT_SHA || '').trim().toLowerCase();
+          const workerName = String(process.env.WORKER_NAME || '').trim();
+
+          if (!accountId || !token || !commitSha || !workerName) {
+            throw new Error('deployment_integrity_required_secret_or_identity_missing');
+          }
+
+          const before = await discoverWorkerDeploymentTopology({
+            accountId,
+            scriptName: workerName,
+            token,
+          });
+
+          const triggerUuid = before.activeBuild.triggerUuid;
+          const triggerListed = before.triggers.some((item) => item.triggerUuid === triggerUuid);
+          if (!triggerListed) throw new Error('deployment_integrity_active_trigger_not_listed');
+
+          console.log(JSON.stringify({
+            phase: 'before',
+            workerName: before.workerName,
+            workerTag: before.workerTag,
+            activeCommitSha: before.activeBuild.commitSha,
+            activeBuildUuid: before.activeBuild.buildUuid,
+            activeVersionId: before.activeVersion.versionId,
+            activeDeploymentId: before.activeDeployment.deploymentId,
+            activeTraffic: before.activeDeployment.percentage,
+            triggerUuid,
+            targetCommitSha: commitSha,
+          }, null, 2));
+
+          if (before.activeBuild.commitSha === commitSha && before.activeDeployment.percentage === 100) {
+            console.log(JSON.stringify({ phase: 'already-live', commitSha, workerName }, null, 2));
+          } else {
+            const created = await createExactCommitBuild({
+              accountId,
+              triggerUuid,
+              commitSha,
+              branch: 'main',
+              token,
+            });
+
+            console.log(JSON.stringify({
+              phase: 'build-created',
+              buildUuid: created.buildUuid,
+              triggerUuid: created.triggerUuid,
+              commitSha: created.commitSha,
+              branch: created.branch,
+            }, null, 2));
+
+            const completed = await waitForExactSuccessfulBuild({
+              accountId,
+              buildUuid: created.buildUuid,
+              triggerUuid,
+              commitSha,
+              workerTag: before.workerTag,
+              token,
+              attempts: 90,
+              delayMs: 5000,
+            });
+
+            console.log(JSON.stringify({ phase: 'build-success', ...completed }, null, 2));
+          }
+
+          const live = await waitForReleaseTrace({
+            expectedCommitSha: commitSha,
+            environment: 'production',
+            workerName,
+            accountId,
+            token,
+            attempts: 90,
+            delayMs: 5000,
+          });
+
+          console.log(JSON.stringify({
+            phase: 'production-live',
+            gitCommitSha: live.trace.gitCommitSha,
+            workersBuildUuid: live.trace.workersBuildUuid,
+            workersBuildTriggerUuid: live.trace.workersBuildTriggerUuid,
+            workerVersionId: live.trace.workerVersionId,
+            deploymentId: live.trace.deploymentId,
+            workerName: live.trace.workerName,
+            environment: live.trace.environment,
+            attempts: live.attempt,
+          }, null, 2));
+          NODE
