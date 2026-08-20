@@ -51,6 +51,7 @@ export async function runOperationalUatReleaseRollback(options = {}) {
     restoreRuntimeObserved: false,
     restoredInFinally: false,
     deploymentForceApplied: true,
+    deploymentReceiptVerifiedByReadback: true,
     startedAt: new Date().toISOString(),
     completedAt: null,
   };
@@ -150,6 +151,7 @@ export function previousSingleVersion(deployments, activeVersionId) {
 }
 
 export async function createDeployment({ accountId, token, scriptName, versionId, message, fetchImpl = fetch }) {
+  const expectedVersionId = requiredUuid(versionId, 'OP_UAT_ROLLBACK_VERSION_INVALID');
   const body = await cloudflareRequest({
     accountId,
     token,
@@ -159,21 +161,35 @@ export async function createDeployment({ accountId, token, scriptName, versionId
     code: 'OP_UAT_ROLLBACK_CREATE_DEPLOYMENT_FAILED',
     json: {
       strategy: 'percentage',
-      versions: [{ percentage: 100, version_id: requiredUuid(versionId, 'OP_UAT_ROLLBACK_VERSION_INVALID') }],
+      versions: [{ percentage: 100, version_id: expectedVersionId }],
       annotations: {
         'workers/message': String(message || '').slice(0, 900),
       },
     },
   });
-  const result = body?.result;
-  const deploymentId = requiredUuid(result?.id, 'OP_UAT_ROLLBACK_DEPLOYMENT_ID_INVALID');
-  const deployed = Array.isArray(result?.versions) ? result.versions : [];
-  if (deployed.length !== 1
+  const deploymentId = requiredUuid(body?.result?.id, 'OP_UAT_ROLLBACK_DEPLOYMENT_ID_INVALID');
+  const deployment = await getDeployment({ accountId, token, scriptName, deploymentId, fetchImpl });
+  const deployed = Array.isArray(deployment?.versions) ? deployment.versions : [];
+  if (requiredUuid(deployment?.id, 'OP_UAT_ROLLBACK_READBACK_DEPLOYMENT_ID_INVALID') !== deploymentId
+      || deployed.length !== 1
       || Number(deployed[0]?.percentage) !== 100
-      || requiredUuid(deployed[0]?.version_id, 'OP_UAT_ROLLBACK_DEPLOYED_VERSION_INVALID') !== versionId) {
+      || requiredUuid(deployed[0]?.version_id, 'OP_UAT_ROLLBACK_DEPLOYED_VERSION_INVALID') !== expectedVersionId) {
     throw new OperationalUatReleaseRollbackError('OP_UAT_ROLLBACK_DEPLOYMENT_RECEIPT_INVALID');
   }
-  return Object.freeze({ deploymentId, versionId });
+  return Object.freeze({ deploymentId, versionId: expectedVersionId });
+}
+
+export async function getDeployment({ accountId, token, scriptName, deploymentId, fetchImpl = fetch }) {
+  const expectedDeploymentId = requiredUuid(deploymentId, 'OP_UAT_ROLLBACK_DEPLOYMENT_ID_INVALID');
+  const body = await cloudflareRequest({
+    accountId,
+    token,
+    fetchImpl,
+    method: 'GET',
+    path: `/workers/scripts/${encodeURIComponent(scriptName)}/deployments/${encodeURIComponent(expectedDeploymentId)}`,
+    code: 'OP_UAT_ROLLBACK_GET_DEPLOYMENT_FAILED',
+  });
+  return body?.result || null;
 }
 
 export async function waitForRuntimeVersion({ healthUrl, expectedVersionId, fetchImpl = fetch, sleepImpl, attempts, delayMs }) {
