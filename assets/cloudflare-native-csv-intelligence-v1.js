@@ -1,7 +1,7 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.5';
+  const VERSION = '1.0.6';
   const STORAGE_SOURCE = 'aoi.decision.source';
   const REQUEST_TIMEOUT_MS = 30000;
   const TIMEOUT_ERROR_CODE = 'CSV_INTELLIGENCE_TIMEOUT';
@@ -92,6 +92,14 @@
       event.preventDefault();
       event.stopImmediatePropagation();
       renderProductEvidence(productEvidence.dataset.csvProductTerm || '', state.payload);
+      return;
+    }
+
+    const rootEvidence = event.target.closest?.('[data-csv-root]');
+    if (rootEvidence) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      renderRootEvidence(rootEvidence.dataset.csvRoot || '', state.payload);
     }
   }
 
@@ -253,6 +261,7 @@
 
     const scopeHealth = renderScopeHealth(scope);
     const groups = business.groups || {};
+    const rootWorkspace = renderRootIntelligence(roots, candidates, groups, { currency, scope });
     const sections = [
       renderTermGroup('Profit Winners', groups.profitWinners, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'profit' }),
       renderTermGroup('Scale Opportunities', groups.scaleOpportunities, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'scale' }),
@@ -264,6 +273,7 @@
       <div class="cfdi-callout"><strong>Search Term Intelligence Operator Workspace.</strong> Business classification is computed over the complete filtered normalized search-term universe when scope permits. This surface is human-review only; governance persistence and Amazon mutation remain disabled.</div>
       ${cards}
       ${scopeHealth}
+      ${rootWorkspace}
       ${sections}
     </div>`;
   }
@@ -302,6 +312,54 @@
       ${!complete ? `<div class="cfdi-callout" data-kind="${kind}"><strong>Fail-closed.</strong> Bounded analytics remain visible, but incomplete-universe data cannot emit Negative, Harvest, or Scale candidates.</div>` : ''}
       ${complete && !comparable ? `<div class="cfdi-callout" data-kind="${kind}"><strong>Financial comparability gate blocked.</strong> Spend, sales, ACoS, and ROAS are suppressed here rather than aggregating incompatible currency/marketplace values.</div>` : ''}
     </section>`;
+  }
+
+  function renderRootIntelligence(roots, candidates, groups, { currency, scope }) {
+    const rows = Array.isArray(roots) ? roots : [];
+    const terms = allGroupTerms(groups);
+    const termMap = new Map(terms.map((item) => [normalizeTerm(item.searchTerm), item]));
+    const body = rows.map((root) => rootRow(root, candidates, termMap, { currency, scope })).join('')
+      || '<tr><td colspan="12">No root intelligence in this analysis scope.</td></tr>';
+
+    return `<section class="cfdi-detail-section" data-csv-root-intelligence>
+      <h3>Root Intelligence <small>${number(rows.length)}</small></h3>
+      <div class="cfdi-callout"><strong>Root-level view.</strong> Metrics and root states come from the backend root aggregate. Root historical trend is not present in the current payload, so this UI does not infer one from term-level lifecycle states.</div>
+      <div class="cfdi-table-wrap"><table class="cfdi-table">
+        <thead><tr><th>Root</th><th>State</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Terms</th><th>Winner Terms</th><th>Waste Terms</th><th>Trend</th><th>Candidate</th><th>Search Terms</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </section>`;
+  }
+
+  function rootRow(root, candidates, termMap, { currency, scope }) {
+    const metrics = root?.metrics || {};
+    const comparable = scope?.financiallyComparable === true;
+    const rootCandidates = candidatesForRoot(root, candidates);
+    const memberCandidates = candidatesForRootMembers(root, candidates);
+    const candidateSummary = scope?.candidateEmissionAuthorized === true
+      ? [
+        ...rootCandidates.map((candidate) => candidate.candidateType),
+        memberCandidates.length ? `${memberCandidates.length} term candidate${memberCandidates.length === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(', ') || 'No emitted candidate'
+      : 'Candidate emission blocked by scope';
+    const states = join(root?.states);
+    const primary = root?.primaryState || root?.classification || '—';
+    const visibleMembers = (root?.searchTerms || []).filter((term) => termMap.has(normalizeTerm(term))).length;
+
+    return `<tr>
+      <td><strong>${esc(root?.root || '')}</strong><small>priority ${number(root?.priorityScore || 0)}</small></td>
+      <td><span class="cfdi-pill">${esc(primary)}</span><small>${esc(states)}</small></td>
+      <td>${financialValue(money(metrics.spendMicros, currency), comparable)}</td>
+      <td>${financialValue(money(metrics.salesMicros, currency), comparable)}</td>
+      <td>${number(metrics.orders ?? metrics.purchases)}</td>
+      <td>${financialValue(percent(metrics.acos), comparable)}</td>
+      <td>${number(root?.termCount ?? root?.searchTerms?.length ?? 0)}</td>
+      <td>${number(root?.profitTermCount)}</td>
+      <td>${number(root?.wasteTermCount)}</td>
+      <td><span>Unavailable</span><small>not in current root payload</small></td>
+      <td><span>${esc(candidateSummary)}</span><small>${root?.profitProtectionApplied ? 'profit protection applied' : `visible members ${visibleMembers}`}</small></td>
+      <td><button type="button" class="cfdi-link" data-csv-root="${esc(root?.root || '')}">View ${number(root?.searchTerms?.length || 0)} terms</button></td>
+    </tr>`;
   }
 
   function renderTermGroup(title, items, context) {
@@ -421,6 +479,56 @@
       </div>`;
   }
 
+  function renderRootEvidence(rootName, payload) {
+    if (!rootName || !payload?.productization) return;
+    const productization = payload.productization;
+    const business = productization.businessIntelligence || {};
+    const root = (business.rootIntelligence?.roots || []).find((item) => normalizeTerm(item.root) === normalizeTerm(rootName));
+    if (!root) return;
+
+    const scope = productization.analysisScope || {};
+    const currency = scope.financiallyComparable ? single(scope.currencyCodes) || payload.profile?.currencyCode : null;
+    const comparable = scope.financiallyComparable === true;
+    const terms = allBusinessTerms(business);
+    const termMap = new Map(terms.map((item) => [normalizeTerm(item.searchTerm), item]));
+    const memberRows = (root.searchTerms || []).map((searchTerm) => {
+      const item = termMap.get(normalizeTerm(searchTerm));
+      const metrics = item?.metrics || {};
+      const candidates = (business.candidates || []).filter((candidate) => normalizeTerm(candidate.value) === normalizeTerm(searchTerm));
+      return `<tr>
+        <td><strong>${esc(searchTerm)}</strong></td>
+        <td>${esc(item?.classificationLabel || item?.classification || 'Unclassified')}</td>
+        <td>${financialValue(money(metrics.spendMicros, currency), comparable)}</td>
+        <td>${financialValue(money(metrics.salesMicros, currency), comparable)}</td>
+        <td>${number(metrics.orders)}</td>
+        <td>${financialValue(percent(metrics.acos), comparable)}</td>
+        <td>${esc(candidates.map((candidate) => candidate.candidateType).join(', ') || '—')}</td>
+      </tr>`;
+    }).join('');
+    const rootCandidates = candidatesForRoot(root, business.candidates || []);
+    const memberCandidates = candidatesForRootMembers(root, business.candidates || []);
+    const candidateText = scope.candidateEmissionAuthorized === true
+      ? [
+        ...rootCandidates.map((candidate) => candidate.candidateType),
+        memberCandidates.length ? `${memberCandidates.length} term candidate${memberCandidates.length === 1 ? '' : 's'}` : '',
+      ].filter(Boolean).join(', ') || 'No emitted candidate'
+      : 'Suppressed by scope gate';
+    const metrics = root.metrics || {};
+    const drawer = document.querySelector('#cfDecisionPanel [data-drawer]');
+    if (!drawer) return;
+    drawer.hidden = false;
+    drawer.innerHTML = `<header class="cfdi-drawer-header"><div><span>Root Intelligence Evidence</span><strong>${esc(root.root)}</strong><small>Backend root aggregate · Human review only · Amazon mutation disabled</small></div><button type="button" data-drawer-close aria-label="Close drawer">×</button></header>
+      <div class="cfdi-drawer-body">
+        <div class="cfdi-badges"><span class="cfdi-pill">${esc(root.primaryState || root.classification || '—')}</span><span class="cfdi-pill">${esc(join(root.states))}</span><span class="cfdi-pill warn">Persistence Disabled</span><span class="cfdi-pill danger">Amazon Execution Disabled</span></div>
+        ${section('Root performance', `<dl>${kv('Root', root.root)}${kv('Primary state', root.primaryState || root.classification || '—')}${kv('States', join(root.states))}${kv('Spend', financialValue(money(metrics.spendMicros, currency), comparable))}${kv('Sales', financialValue(money(metrics.salesMicros, currency), comparable))}${kv('Orders', number(metrics.orders ?? metrics.purchases))}${kv('ACoS', financialValue(percent(metrics.acos), comparable))}${kv('Terms', root.termCount ?? root.searchTerms?.length ?? 0)}${kv('Winner terms', root.profitTermCount)}${kv('Waste terms', root.wasteTermCount)}${kv('Priority', root.priorityScore)}${kv('Profit protection applied', yesNo(root.profitProtectionApplied === true))}${kv('Recommendation governed', yesNo(root.recommendationGoverned === true))}</dl>`)}
+        ${section('Candidate review', `<dl>${kv('Candidate', candidateText)}${kv('Direct root candidates', rootCandidates.length)}${kv('Member term candidates', memberCandidates.length)}</dl>`)}
+        ${section('Root trend', '<div class="cfdi-callout"><strong>Unavailable in current payload.</strong> No root-level historical trend field is emitted, so this UI does not derive one from term lifecycle states.</div>')}
+        ${section('Search Terms', `<div class="cfdi-table-wrap"><table class="cfdi-table"><thead><tr><th>Search term</th><th>Classification</th><th>Spend</th><th>Sales</th><th>Orders</th><th>ACoS</th><th>Candidate</th></tr></thead><tbody>${memberRows || '<tr><td colspan="7">No member search terms.</td></tr>'}</tbody></table></div>`)}
+        ${section('Governance', `<dl>${kv('Universe complete', yesNo(scope.complete === true))}${kv('Financially comparable', yesNo(comparable))}${kv('Candidate emission authorized', yesNo(scope.candidateEmissionAuthorized === true))}${kv('Governance persistence allowed', 'no')}${kv('Execution authorized', 'no')}${kv('Amazon mutation authorized', 'no')}</dl>`)}
+        <div class="cfdi-callout"><strong>Root review boundary.</strong> Root intelligence supports pattern-level judgment and drilldown only. It cannot execute a phrase negative, change a bid, or write to Amazon.</div>
+      </div>`;
+  }
+
   function renderCsvEvidence(item, payload) {
     const drawer = document.querySelector('#cfDecisionPanel [data-drawer]');
     if (!drawer) return;
@@ -473,13 +581,29 @@
     return map;
   }
 
+  function candidatesForRoot(root, candidates) {
+    return (Array.isArray(candidates) ? candidates : []).filter((candidate) =>
+      candidate?.matchScope === 'phrase_review'
+      && normalizeTerm(candidate?.value) === normalizeTerm(root?.root));
+  }
+
+  function candidatesForRootMembers(root, candidates) {
+    const memberSet = new Set((root?.searchTerms || []).map(normalizeTerm));
+    return (Array.isArray(candidates) ? candidates : []).filter((candidate) =>
+      candidate?.matchScope !== 'phrase_review'
+      && memberSet.has(normalizeTerm(candidate?.value)));
+  }
+
   function allBusinessTerms(business) {
-    const groups = business?.groups || {};
+    return allGroupTerms(business?.groups || {});
+  }
+
+  function allGroupTerms(groups) {
     return [
-      ...(groups.profitWinners || []),
-      ...(groups.scaleOpportunities || []),
-      ...(groups.wasteTerms || []),
-      ...(groups.watchlist || []),
+      ...(groups?.profitWinners || []),
+      ...(groups?.scaleOpportunities || []),
+      ...(groups?.wasteTerms || []),
+      ...(groups?.watchlist || []),
     ];
   }
 
