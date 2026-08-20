@@ -57,6 +57,12 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      EXPECTED_GIT_SHA: ${{ github.sha }}
+      RELEASE_TRACE_ENVIRONMENT: production
+      RELEASE_TRACE_WORKER_NAME: ads-operations-web-prod
+      RELEASE_TRACE_OUTPUT_PATH: artifacts/cloudflare-release-trace-production-pre-rollback.json
+      RELEASE_TRACE_ATTEMPTS: '60'
+      RELEASE_TRACE_DELAY_MS: '5000'
       OPERATIONAL_UAT_ROLLBACK_CONFIRM: ROLLBACK_AND_RESTORE_PRODUCTION
       OPERATIONAL_UAT_WORKER_NAME: ads-operations-web-prod
       OPERATIONAL_UAT_HEALTH_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health
@@ -73,6 +79,8 @@ jobs:
         run: |
           node --check scripts/operational-uat-release-rollback.mjs
           node scripts/test-operational-uat-release-rollback.mjs
+      - name: Wait for exact merge SHA to become live before rollback
+        run: node scripts/generate-cloudflare-release-trace.mjs
       - name: Execute real production rollback and guaranteed restore
         run: node scripts/operational-uat-release-rollback.mjs
       - name: Upload immutable rollback evidence
@@ -80,6 +88,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operational-uat-release-rollback-${{ github.run_id }}
-          path: artifacts/operational-uat-release-rollback.json
+          path: |
+            artifacts/cloudflare-release-trace-production-pre-rollback.json
+            artifacts/operational-uat-release-rollback.json
           if-no-files-found: warn
           retention-days: 90
