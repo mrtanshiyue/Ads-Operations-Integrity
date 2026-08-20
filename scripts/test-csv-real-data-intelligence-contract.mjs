@@ -74,11 +74,13 @@ assert.match(authorityMigration, /json_type\(NEW\.source_evidence_json, '\$\.sou
 assert.doesNotMatch(authorityMigration, /202606|csv-import-0a2cb4a8|csv-import-00be434e/, 'Migration must not hard-code environment-specific imports');
 
 // These contracts are intentionally imported here (not merely syntax-checked by the workflow),
-// so the required CSV intelligence gate executes the built UI semantics on every canonical CI run.
+// so the required CSV intelligence gate executes the built UI and product semantics on every canonical CI run.
 await import('./test-csv-imports-ui-contract.mjs');
 await import('./test-csv-real-data-intelligence-ui-contract.mjs');
 await import('./test-csv-analytics-foundation.mjs');
 await import('./test-csv-analytics-dashboard.mjs');
 await import('./test-csv-analytics-quality.mjs');
+await import('./test-csv-search-term-business-intelligence.mjs');
+await import('./test-csv-search-term-lifecycle.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v7-with-analytics-quality' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v8-with-business-lifecycle-productization' }));
