@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Read sanitized Access reusable-policy posture
+      - name: Resolve one-click Worker Access application by exact AUD
         run: |
           node --input-type=module <<'NODE'
           const API = 'https://api.cloudflare.com/client/v4';
@@ -31,6 +31,8 @@ jobs:
           const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
           if (!accountId || !token) throw new Error('cloudflare_credentials_missing');
           const headers = { accept: 'application/json', authorization: `Bearer ${token}` };
+          const aud = '4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8';
+          const domain = 'ads-operations-web-prod.tanshiyuesir.workers.dev';
           const read = async (path) => {
             const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}${path}`, { headers });
             const text = await response.text();
@@ -45,86 +47,79 @@ jobs:
               apiErrorMessage: body?.errors?.[0]?.message ?? null,
             };
           };
-          const ruleType = (rule) => {
-            if (!rule || typeof rule !== 'object') return 'unknown';
-            return ['service_token','any_valid_service_token','email','email_domain','group','everyone','ip','access_group','cloudflare_account_member']
-              .find((key) => Object.prototype.hasOwnProperty.call(rule, key)) || Object.keys(rule)[0] || 'unknown';
+          const summarizeApps = (response) => {
+            const rows = Array.isArray(response.result) ? response.result : [];
+            return {
+              ok: response.ok,
+              status: response.status,
+              totalCount: response.resultInfo?.total_count ?? null,
+              rows: rows.map((app) => ({
+                id: app.id || null,
+                name: app.name || null,
+                domain: app.domain || null,
+                type: app.type || null,
+                audMatchesExpected: String(app.aud || '').toLowerCase() === aud,
+                destinations: Array.isArray(app.destinations)
+                  ? app.destinations.map((destination) => ({
+                      type: destination?.type || null,
+                      workerId: destination?.worker_id || null,
+                      uri: destination?.uri || null,
+                    }))
+                  : [],
+                policyCountEmbedded: Array.isArray(app.policies) ? app.policies.length : null,
+              })),
+            };
           };
-          const sanitizeLocation = (value) => {
-            if (!value) return null;
-            try {
-              const url = new URL(value);
-              return { protocol: url.protocol, host: url.host, pathname: url.pathname, queryKeys: [...url.searchParams.keys()].sort() };
-            } catch { return { unparsable: true }; }
-          };
-
-          const [appsResponse, tokenResponse, policiesResponse, subdomainResponse] = await Promise.all([
-            read('/access/apps?per_page=50&page=1'),
-            read('/access/service_tokens?per_page=50&page=1'),
-            read('/access/policies?per_page=50&page=1'),
-            read('/workers/scripts/ads-operations-web-prod/subdomain'),
-          ]);
-
-          const apps = Array.isArray(appsResponse.result) ? appsResponse.result : [];
-          const serviceTokens = Array.isArray(tokenResponse.result) ? tokenResponse.result : [];
-          const policies = Array.isArray(policiesResponse.result) ? policiesResponse.result : [];
-          const healthResponse = await fetch(`https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health?accessFingerprint=${Date.now()}`, {
-            method: 'GET', redirect: 'manual', cache: 'no-store', headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+          const audResponse = await read(`/access/apps?aud=${encodeURIComponent(aud)}&per_page=50&page=1`);
+          const domainResponse = await read(`/access/apps?domain=${encodeURIComponent(domain)}&exact=true&per_page=50&page=1`);
+          const searchResponse = await read(`/access/apps?search=${encodeURIComponent('ads-operations-web-prod')}&per_page=50&page=1`);
+          const candidates = [
+            ...(Array.isArray(audResponse.result) ? audResponse.result : []),
+            ...(Array.isArray(domainResponse.result) ? domainResponse.result : []),
+            ...(Array.isArray(searchResponse.result) ? searchResponse.result : []),
+          ];
+          const unique = [...new Map(candidates.filter((row) => row?.id).map((row) => [row.id, row])).values()];
+          const policies = [];
+          for (const app of unique) {
+            const response = await read(`/access/apps/${encodeURIComponent(app.id)}/policies?per_page=50&page=1`);
+            policies.push({
+              appId: app.id,
+              status: response.status,
+              rows: Array.isArray(response.result)
+                ? response.result.map((policy) => ({
+                    id: policy.id || null,
+                    name: policy.name || null,
+                    decision: policy.decision || null,
+                    precedence: policy.precedence ?? null,
+                    includeRuleKeys: Array.isArray(policy.include)
+                      ? policy.include.map((rule) => Object.keys(rule || {})[0] || 'unknown')
+                      : [],
+                    reusable: policy.reusable === true,
+                  }))
+                : [],
+            });
+          }
+          const healthResponse = await fetch(`https://${domain}/api/health?audResolve=${Date.now()}`, {
+            method: 'GET',
+            redirect: 'manual',
+            cache: 'no-store',
+            headers: { accept: 'application/json', 'cache-control': 'no-cache' },
           });
-          await healthResponse.arrayBuffer();
-
+          const location = healthResponse.headers.get('location');
+          let kid = null;
+          if (location) {
+            try { kid = new URL(location).searchParams.get('kid'); } catch {}
+          }
           console.log(JSON.stringify({
-            schema: 'production-access-readonly-v4',
-            accessApi: {
-              apps: {
-                ok: appsResponse.ok,
-                status: appsResponse.status,
-                count: apps.length,
-                totalCount: appsResponse.resultInfo?.total_count ?? null,
-                rows: apps.map((app) => ({
-                  id: app.id || null,
-                  name: app.name || null,
-                  domain: app.domain || null,
-                  type: app.type || null,
-                  destinations: Array.isArray(app.destinations) ? app.destinations.map((destination) => ({ type: destination?.type || null, workerId: destination?.worker_id || null, uri: destination?.uri || null })) : [],
-                  audPresent: Boolean(app.aud),
-                })),
-              },
-              reusablePolicies: {
-                ok: policiesResponse.ok,
-                status: policiesResponse.status,
-                apiErrorCode: policiesResponse.apiErrorCode,
-                count: policies.length,
-                totalCount: policiesResponse.resultInfo?.total_count ?? null,
-                rows: policies.map((policy) => ({
-                  id: policy.id || null,
-                  name: policy.name || null,
-                  decision: policy.decision || null,
-                  reusable: policy.reusable === true,
-                  appCount: policy.app_count ?? null,
-                  includeRuleTypes: Array.isArray(policy.include) ? policy.include.map(ruleType) : [],
-                  requireRuleTypes: Array.isArray(policy.require) ? policy.require.map(ruleType) : [],
-                  excludeRuleTypes: Array.isArray(policy.exclude) ? policy.exclude.map(ruleType) : [],
-                })),
-              },
-              serviceTokens: {
-                ok: tokenResponse.ok,
-                status: tokenResponse.status,
-                count: serviceTokens.length,
-                rows: serviceTokens.map((row) => ({ id: row.id || null, name: row.name || null, duration: row.duration || null, expiresAt: row.expires_at || null })),
-              },
-            },
-            workerSubdomain: {
-              ok: subdomainResponse.ok,
-              enabled: subdomainResponse.result?.enabled ?? null,
-              previewsEnabled: subdomainResponse.result?.previews_enabled ?? null,
-            },
-            healthFingerprint: {
-              status: healthResponse.status,
-              contentType: healthResponse.headers.get('content-type'),
-              location: sanitizeLocation(healthResponse.headers.get('location')),
-              cfAppSessionCookiePresent: /(?:^|[,;]\s*)CF_AppSession=/.test(String(healthResponse.headers.get('set-cookie') || '')),
-            },
+            schema: 'production-access-aud-resolution-v1',
+            expectedAud: aud,
+            edgeKidMatchesExpectedAud: String(kid || '').toLowerCase() === aud,
+            edgeStatus: healthResponse.status,
+            byAud: summarizeApps(audResponse),
+            byExactDomain: summarizeApps(domainResponse),
+            bySearch: summarizeApps(searchResponse),
+            uniqueCandidateCount: unique.length,
+            policies,
             cloudflareMutationAttempted: false,
             amazonExecutionAttempted: false,
           }, null, 2));
