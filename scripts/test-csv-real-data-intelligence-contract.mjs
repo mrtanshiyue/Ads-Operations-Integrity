@@ -32,6 +32,10 @@ assert.match(api, /governancePersistenceAllowed: false/, 'CSV recommendations mu
 assert.match(api, /identityResolutionRequired: true/, 'CSV recommendations must require Amazon identity resolution');
 assert.match(api, /authoritative: false/, 'CSV authority must remain non-authoritative for Amazon mutation');
 assert.match(api, /amazonMutationAuthorized: false/, 'CSV intelligence must never authorize Amazon mutation');
+assert.match(api, /buildCsvIntelligenceProductSurface/, 'CSV intelligence API must expose the decision-intelligence product surface');
+assert.match(api, /targetingIdentityState/, 'CSV intelligence product surface must receive observed targeting identity state');
+assert.match(api, /const productization = buildCsvIntelligenceProductSurface\(payload\)/, 'CSV product surface must be built from the same governed API payload');
+assert.match(api, /return json\(request, \{ \.\.\.payload, productization \}, 200\)/, 'CSV product surface must be returned on the existing same-origin endpoint');
 assert.doesNotMatch(api, /INSERT\s+INTO\s+optimization_actions|UPDATE\s+optimization_actions|DELETE\s+FROM\s+optimization_actions/i, 'CSV intelligence must not mutate optimization actions');
 assert.doesNotMatch(api, /FROM\s+report_jobs|JOIN\s+report_jobs/i, 'CSV intelligence must not masquerade as Amazon report lineage');
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV intelligence must not touch Amazon execution controls');
@@ -82,5 +86,6 @@ await import('./test-csv-analytics-dashboard.mjs');
 await import('./test-csv-analytics-quality.mjs');
 await import('./test-csv-search-term-business-intelligence.mjs');
 await import('./test-csv-search-term-lifecycle.mjs');
+await import('./test-csv-intelligence-product-surface.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v8-with-business-lifecycle-productization' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v9-with-same-origin-product-surface' }));
