@@ -238,7 +238,8 @@
     const candidates = business.candidates || [];
     const currency = scope.financiallyComparable ? single(scope.currencyCodes) || payload.profile?.currencyCode : null;
     const lifecycleMap = new Map(lifecycleItems.map((item) => [normalizeTerm(item.searchTerm), item]));
-    const candidateMap = buildCandidateMap(candidates);
+    const rootMap = buildRootMap(roots);
+    const candidateMap = buildCandidateMap(candidates, roots);
 
     const cards = `<div class="cfdi-summary" data-csv-product-overview>
       ${summaryCard('Profit Winners', summary.profitWinnerCount || 0)}
@@ -253,10 +254,10 @@
     const scopeHealth = renderScopeHealth(scope);
     const groups = business.groups || {};
     const sections = [
-      renderTermGroup('Profit Winners', groups.profitWinners, { currency, scope, lifecycleMap, candidateMap, mode: 'profit' }),
-      renderTermGroup('Scale Opportunities', groups.scaleOpportunities, { currency, scope, lifecycleMap, candidateMap, mode: 'scale' }),
-      renderTermGroup('Waste Terms', groups.wasteTerms, { currency, scope, lifecycleMap, candidateMap, mode: 'waste' }),
-      renderTermGroup('Watchlist', groups.watchlist, { currency, scope, lifecycleMap, candidateMap, mode: 'watch' }),
+      renderTermGroup('Profit Winners', groups.profitWinners, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'profit' }),
+      renderTermGroup('Scale Opportunities', groups.scaleOpportunities, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'scale' }),
+      renderTermGroup('Waste Terms', groups.wasteTerms, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'waste' }),
+      renderTermGroup('Watchlist', groups.watchlist, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'watch' }),
     ].join('');
 
     return `<div data-csv-operator-workspace>
@@ -316,12 +317,14 @@
     </section>`;
   }
 
-  function productTermRow(item, { currency, scope, lifecycleMap, candidateMap, mode }) {
+  function productTermRow(item, { currency, scope, lifecycleMap, rootMap, candidateMap, mode }) {
     const metrics = item?.metrics || {};
     const term = String(item?.searchTerm || '');
     const lifecycle = lifecycleMap.get(normalizeTerm(term));
+    const roots = rootMap.get(normalizeTerm(term)) || [];
     const candidates = candidateMap.get(normalizeTerm(term)) || [];
     const financiallyComparable = scope?.financiallyComparable === true;
+    const rootNames = roots.length ? roots.map((root) => root.root).join(', ') : '—';
     const rootStates = join(item?.rootStates);
     const reason = item?.reason || classificationReasonFallback(mode);
     const candidateText = candidates.length ? candidates.map((candidate) => candidate.candidateType).join(', ') : 'No emitted candidate';
@@ -334,7 +337,7 @@
       <td>${financialValue(percent(metrics.acos), financiallyComparable)}</td>
       <td>${financialValue(decimal(metrics.roas), financiallyComparable)}</td>
       <td>${percent(metrics.cvr)}</td>
-      <td><span class="cfdi-pill">${esc(rootStates)}</span></td>
+      <td><span class="cfdi-pill">${esc(rootNames)}</span><small>${esc(rootStates)}</small></td>
       <td><span class="cfdi-pill">${esc(lifecycle?.stateLabel || lifecycle?.state || '—')}</span><small>${esc(lifecycle?.reason || '')}</small></td>
       <td><span>${esc(reason)}</span><small>${esc(candidateNote)}</small></td>
       <td><button type="button" class="cfdi-link" data-csv-product-term="${esc(term)}">Evidence</button></td>
@@ -390,7 +393,12 @@
     const historical = productization.historicalIntelligence || {};
     const term = allBusinessTerms(business).find((item) => normalizeTerm(item.searchTerm) === normalizeTerm(searchTerm));
     const lifecycle = (historical.lifecycle?.items || []).find((item) => normalizeTerm(item.searchTerm) === normalizeTerm(searchTerm));
-    const candidates = (business.candidates || []).filter((item) => normalizeTerm(item.value) === normalizeTerm(searchTerm));
+    const roots = (business.rootIntelligence?.roots || []).filter((root) => (root.searchTerms || []).some((value) => normalizeTerm(value) === normalizeTerm(searchTerm)));
+    const rootNames = roots.map((root) => root.root);
+    const candidates = (business.candidates || []).filter((item) => {
+      if (normalizeTerm(item.value) === normalizeTerm(searchTerm)) return true;
+      return item.matchScope === 'phrase_review' && roots.some((root) => normalizeTerm(root.root) === normalizeTerm(item.value));
+    });
     if (!term) return;
     const drawer = document.querySelector('#cfDecisionPanel [data-drawer]');
     if (!drawer) return;
@@ -404,7 +412,7 @@
     drawer.innerHTML = `<header class="cfdi-drawer-header"><div><span>CSV Product Intelligence Evidence</span><strong>${esc(term.searchTerm)}</strong><small>Human review only · Non-authoritative · Amazon mutation disabled</small></div><button type="button" data-drawer-close aria-label="Close drawer">×</button></header>
       <div class="cfdi-drawer-body">
         <div class="cfdi-badges"><span class="cfdi-pill">${esc(term.classificationLabel || term.classification || 'Watchlist')}</span><span class="cfdi-pill">${esc(join(term.rootStates))}</span><span class="cfdi-pill warn">Persistence Disabled</span><span class="cfdi-pill danger">Amazon Execution Disabled</span></div>
-        ${section('Classification', `<dl>${kv('Classification', term.classificationLabel || term.classification)}${kv('Priority', term.priorityScore)}${kv('Reason', term.reason)}${kv('Root states', join(term.rootStates))}${kv('Recommendation governed', yesNo(term.recommendationGoverned === true))}</dl>`)}
+        ${section('Classification', `<dl>${kv('Classification', term.classificationLabel || term.classification)}${kv('Priority', term.priorityScore)}${kv('Reason', term.reason)}${kv('Roots', join(rootNames))}${kv('Root states', join(term.rootStates))}${kv('Recommendation governed', yesNo(term.recommendationGoverned === true))}</dl>`)}
         ${section('Current performance', `<dl>${kv('Spend', financialValue(money(metrics.spendMicros, currency), scope.financiallyComparable === true))}${kv('Sales', financialValue(money(metrics.salesMicros, currency), scope.financiallyComparable === true))}${kv('Orders', number(metrics.orders))}${kv('ACoS', financialValue(percent(metrics.acos), scope.financiallyComparable === true))}${kv('ROAS', financialValue(decimal(metrics.roas), scope.financiallyComparable === true))}${kv('CVR', percent(metrics.cvr))}</dl>`)}
         ${section('Lifecycle', `<dl>${kv('Current lifecycle', lifecycle?.stateLabel || lifecycle?.state || '—')}${kv('Lifecycle reason', lifecycle?.reason || '—')}${kv('Current window', dateWindow(lifecycle?.currentWindow))}${kv('Previous window', dateWindow(lifecycle?.previousWindow))}${kv('Current classification', lifecycle?.currentClassification || '—')}${kv('Previous classification', lifecycle?.previousClassification || '—')}</dl>`)}
         ${section('Candidate review', `<dl>${candidateHtml}</dl>`)}
@@ -434,15 +442,33 @@
       </div>`;
   }
 
-  function buildCandidateMap(candidates) {
+  function buildRootMap(roots) {
     const map = new Map();
+    for (const root of Array.isArray(roots) ? roots : []) {
+      for (const term of root?.searchTerms || []) {
+        const key = normalizeTerm(term);
+        if (!key) continue;
+        const current = map.get(key) || [];
+        current.push(root);
+        map.set(key, current);
+      }
+    }
+    return map;
+  }
+
+  function buildCandidateMap(candidates, roots) {
+    const map = new Map();
+    const rootByName = new Map((Array.isArray(roots) ? roots : []).map((root) => [normalizeTerm(root?.root), root]));
     for (const candidate of Array.isArray(candidates) ? candidates : []) {
-      if (candidate?.matchScope === 'phrase_review') continue;
-      const key = normalizeTerm(candidate?.value);
-      if (!key) continue;
-      const current = map.get(key) || [];
-      current.push(candidate);
-      map.set(key, current);
+      const keys = candidate?.matchScope === 'phrase_review'
+        ? (rootByName.get(normalizeTerm(candidate?.value))?.searchTerms || []).map(normalizeTerm)
+        : [normalizeTerm(candidate?.value)];
+      for (const key of keys) {
+        if (!key) continue;
+        const current = map.get(key) || [];
+        current.push(candidate);
+        map.set(key, current);
+      }
     }
     return map;
   }
