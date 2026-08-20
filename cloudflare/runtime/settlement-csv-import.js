@@ -371,7 +371,9 @@ function normalizeHeader(value) {
 }
 function normalizeMarketplace(value) {
   const text = optionalText(value, 100);
-  return text ? text.toLowerCase() : null;
+  if (!text) return null;
+  const normalized = text.toLowerCase();
+  return normalized === 'us' ? 'amazon.com' : normalized;
 }
 function cell(row, index) { return index == null ? '' : row[index] ?? ''; }
 function isBlankRow(row) { return row.every((value) => String(value ?? '').trim() === ''); }
