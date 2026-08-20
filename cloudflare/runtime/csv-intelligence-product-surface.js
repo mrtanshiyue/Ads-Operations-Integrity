@@ -1,7 +1,7 @@
 import { buildCsvSearchTermBusinessIntelligence } from './csv-search-term-business-intelligence.js';
 import { buildCsvSearchTermLifecycle } from './csv-search-term-lifecycle.js';
 
-export const CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION = 'csv-intelligence-product-surface-v1';
+export const CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION = 'csv-intelligence-product-surface-v2';
 
 const PRODUCT_SURFACE_AUTHORITY = Object.freeze({
   sourceKind: 'csv_import',
@@ -40,7 +40,7 @@ export function buildCsvIntelligenceProductSurface(payload) {
     analysisScope,
     businessIntelligence,
     historicalIntelligence: Object.freeze({
-      schemaVersion: 'csv-historical-search-term-intelligence-v1',
+      schemaVersion: 'csv-historical-search-term-intelligence-v2',
       authority: PRODUCT_SURFACE_AUTHORITY,
       analysisScope,
       currentWindow,
@@ -50,6 +50,8 @@ export function buildCsvIntelligenceProductSurface(payload) {
       summary: Object.freeze({
         lifecycleTermCount: lifecycle.summary.analyzedTermCount,
         completeScope: analysisScope.complete,
+        financiallyComparable: analysisScope.financiallyComparable,
+        candidateEmissionAuthorized: analysisScope.candidateEmissionAuthorized,
         executionAuthorized: false,
         amazonMutationAuthorized: false,
       }),
@@ -58,7 +60,7 @@ export function buildCsvIntelligenceProductSurface(payload) {
 }
 
 function constrainBusinessCandidates(raw, analysisScope) {
-  if (analysisScope.complete) {
+  if (analysisScope.candidateEmissionAuthorized) {
     return Object.freeze({
       ...raw,
       analysisScope,
@@ -90,17 +92,31 @@ function constrainBusinessCandidates(raw, analysisScope) {
 
 function deriveAnalysisScope(payload, items) {
   const requestedLimit = positiveIntOrNull(payload?.filters?.limit);
-  const explicitComplete = payload?.productizationScope?.complete;
+  const explicit = payload?.productizationScope && typeof payload.productizationScope === 'object'
+    ? payload.productizationScope
+    : null;
+  const explicitComplete = explicit?.complete;
   const complete = explicitComplete === true
     || (explicitComplete !== false && requestedLimit !== null && items.length < requestedLimit);
+  const financiallyComparable = explicit?.financiallyComparable !== false;
+  const candidateEmissionAuthorized = complete && financiallyComparable && explicit?.candidateEmissionAuthorized !== false;
   return Object.freeze({
-    kind: text(payload?.productizationScope?.kind) || 'filtered_response_universe',
+    kind: text(explicit?.kind) || 'filtered_response_universe',
     complete,
+    financiallyComparable,
     itemCount: items.length,
     requestedLimit,
-    candidateEmissionAuthorized: complete,
+    hardCap: positiveIntOrNull(explicit?.hardCap),
+    observedTermCount: positiveIntOrZero(explicit?.observedTermCount, items.length),
+    overflowObserved: explicit?.overflowObserved === true,
+    candidateEmissionAuthorized,
+    currencyCodes: Object.freeze(uniqueTexts(explicit?.currencyCodes)),
+    marketplaces: Object.freeze(uniqueTexts(explicit?.marketplaces)),
+    profileIds: Object.freeze(uniqueTexts(explicit?.profileIds)),
+    reasons: Object.freeze(uniqueTexts(explicit?.reasons)),
     completenessRule: explicitComplete == null ? 'complete_only_when_item_count_is_below_requested_limit' : 'explicit_scope_contract',
-    incompleteBehavior: 'analytics_visible_candidates_fail_closed',
+    incompleteBehavior: text(explicit?.incompleteBehavior) || 'analytics_visible_candidates_fail_closed',
+    financialMismatchBehavior: text(explicit?.financialMismatchBehavior) || 'financial_intelligence_suppressed',
   });
 }
 
@@ -157,11 +173,12 @@ function normalizeWindow(value) {
 }
 
 function uniqueTexts(values) {
-  if (!Array.isArray(values)) return Object.freeze([]);
-  return Object.freeze([...new Set(values.map(text).filter(Boolean))].sort());
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values.map(text).filter(Boolean))].sort();
 }
 
 function positiveIntOrNull(value) { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : null; }
+function positiveIntOrZero(value, fallback = 0) { const number = Number(value); return Number.isInteger(number) && number >= 0 ? number : fallback; }
 function text(value) { return String(value ?? '').trim(); }
 function nonNegative(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : 0; }
 function round4(value) { return Math.round(value * 10_000) / 10_000; }

@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 await import('../cloudflare/runtime/csv-productization-api.js');
 const api = await readFile(path.join(root, 'cloudflare/runtime/csv-search-term-intelligence-api.js'), 'utf8');
 const productization = await readFile(path.join(root, 'cloudflare/runtime/csv-productization-api.js'), 'utf8');
+const productUniverse = await readFile(path.join(root, 'cloudflare/runtime/csv-search-term-product-universe.js'), 'utf8');
 const advisoryMigration = await readFile(path.join(root, 'cloudflare/foundation/migrations/store/0019_store_advisory_review_workflow.sql'), 'utf8');
 const authorityMigration = await readFile(path.join(root, 'cloudflare/foundation/migrations/store/0022_store_csv_import_authority.sql'), 'utf8');
 const entry = await readFile(path.join(root, 'cloudflare/runtime/web-entry.js'), 'utf8');
@@ -33,12 +34,23 @@ assert.match(api, /identityResolutionRequired: true/, 'CSV recommendations must 
 assert.match(api, /authoritative: false/, 'CSV authority must remain non-authoritative for Amazon mutation');
 assert.match(api, /amazonMutationAuthorized: false/, 'CSV intelligence must never authorize Amazon mutation');
 assert.match(api, /buildCsvIntelligenceProductSurface/, 'CSV intelligence API must expose the decision-intelligence product surface');
+assert.match(api, /queryCsvSearchTermProductUniverse/, 'CSV intelligence API must build productization from a filtered normalized-term universe');
+assert.match(api, /Promise\.all\(\[/, 'Display rows and product universe must not be serialized unnecessarily');
 assert.match(api, /targetingIdentityState/, 'CSV intelligence product surface must receive observed targeting identity state');
-assert.match(api, /const productization = buildCsvIntelligenceProductSurface\(payload\)/, 'CSV product surface must be built from the same governed API payload');
+assert.match(api, /productizationScope: productUniverse\.scope/, 'CSV product surface must receive explicit universe scope');
+assert.match(api, /items: productUniverse\.productItems/, 'CSV product surface must not use paginated display rows');
+assert.match(api, /const productization = buildCsvIntelligenceProductSurface\(productizationPayload\)/, 'CSV product surface must be built from the universe payload');
 assert.match(api, /return json\(request, \{ \.\.\.payload, productization \}, 200\)/, 'CSV product surface must be returned on the existing same-origin endpoint');
 assert.doesNotMatch(api, /INSERT\s+INTO\s+optimization_actions|UPDATE\s+optimization_actions|DELETE\s+FROM\s+optimization_actions/i, 'CSV intelligence must not mutate optimization actions');
 assert.doesNotMatch(api, /FROM\s+report_jobs|JOIN\s+report_jobs/i, 'CSV intelligence must not masquerade as Amazon report lineage');
 assert.doesNotMatch(api, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-permit/i, 'CSV intelligence must not touch Amazon execution controls');
+
+assert.match(productUniverse, /GROUP BY f\.normalized_search_term/, 'Product universe must aggregate at normalized Search Term level');
+assert.match(productUniverse, /CSV_SEARCH_TERM_PRODUCT_UNIVERSE_HARD_CAP \+ 1/, 'Product universe must detect hard-cap overflow');
+assert.match(productUniverse, /COALESCE\(f\.targeting_identity_state,'unresolved'\) <> 'resolved_id'/, 'Product universe identity aggregation must fail closed on mixed evidence');
+assert.match(productUniverse, /financialMismatchBehavior: 'financial_intelligence_suppressed'/, 'Cross-currency/marketplace financial intelligence must fail closed');
+assert.match(productUniverse, /candidateEmissionAuthorized: complete && financialScopeUsable/, 'Candidate emission must require complete, financially comparable universe');
+assert.doesNotMatch(productUniverse, /optimization_actions|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED/i, 'Product universe must remain analytics-only and Amazon-independent');
 
 assert.match(productization, /request\.method\.toUpperCase\(\) === 'PATCH'/, 'Explicit import authority mutation route missing');
 assert.match(productization, /initial_import_authority_requires_both_classes/, 'Legacy imports must require explicit initial classification and provenance');
@@ -87,5 +99,6 @@ await import('./test-csv-analytics-quality.mjs');
 await import('./test-csv-search-term-business-intelligence.mjs');
 await import('./test-csv-search-term-lifecycle.mjs');
 await import('./test-csv-intelligence-product-surface.mjs');
+await import('./test-csv-search-term-product-universe.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v9-with-same-origin-product-surface' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v10-with-complete-product-universe' }));
