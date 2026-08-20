@@ -11,7 +11,7 @@ const builtAsset = await readFile(path.join(dist, 'assets', 'cloudflare-native-c
 const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const allowlist = await readFile(path.join(root, 'scripts/enforce-cloudflare-native-asset-allowlist.mjs'), 'utf8');
 const tag = '<script src="assets/cloudflare-native-csv-product-ui-v2.js"></script>';
-const csvIntelligenceTag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.5"></script>';
+const csvIntelligenceTag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.6"></script>';
 const phase9Tag = '<script src="assets/cloudflare-native-phase9-productization-v1.js?v=1.2.1"></script>';
 
 new vm.Script(source, { filename: 'cloudflare-native-csv-product-ui-v2.js' });
