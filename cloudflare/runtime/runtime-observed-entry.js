@@ -1,11 +1,18 @@
 import application from './web-entry.js';
+import {
+  handleOperationalUatLiveProbeRoute,
+  OPERATIONAL_UAT_ROUTE,
+} from './operational-uat-live-probe.js';
 
 export default {
   async fetch(request, env, ctx) {
     const startedAt = Date.now();
     const url = new URL(request.url);
     const workerVersion = runtimeWorkerVersion(env);
-    const response = await application.fetch(request, env, ctx);
+    const uatResponse = url.pathname === OPERATIONAL_UAT_ROUTE
+      ? await handleOperationalUatLiveProbeRoute({ request, env, url })
+      : null;
+    const response = uatResponse || await application.fetch(request, env, ctx);
     const record = runtimeEvidenceRecord({
       request,
       env,
@@ -28,6 +35,7 @@ export function runtimeWorkerVersion(env = {}) {
 export function normalizeRuntimeRoute(pathname) {
   const path = String(pathname || '');
   if (path === '/api/health') return '/api/health';
+  if (path === OPERATIONAL_UAT_ROUTE) return '/api/v1/operational-uat/live-probe';
   if (/^\/api\/v1\/stores\/[^/]+\/csv-analytics\/[^/]+$/.test(path)) {
     return '/api/v1/stores/:store/csv-analytics/:dimension';
   }
