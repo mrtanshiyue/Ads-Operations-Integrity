@@ -1,7 +1,7 @@
 (function initCsvIntelligenceExtension(global) {
   'use strict';
 
-  const VERSION = '1.0.6';
+  const VERSION = '1.0.7';
   const STORAGE_SOURCE = 'aoi.decision.source';
   const REQUEST_TIMEOUT_MS = 30000;
   const TIMEOUT_ERROR_CODE = 'CSV_INTELLIGENCE_TIMEOUT';
@@ -100,6 +100,14 @@
       event.preventDefault();
       event.stopImmediatePropagation();
       renderRootEvidence(rootEvidence.dataset.csvRoot || '', state.payload);
+      return;
+    }
+
+    const lifecycleEvidence = event.target.closest?.('[data-csv-lifecycle-term]');
+    if (lifecycleEvidence) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      renderLifecycleEvidence(lifecycleEvidence.dataset.csvLifecycleTerm || '', state.payload);
     }
   }
 
@@ -262,6 +270,7 @@
     const scopeHealth = renderScopeHealth(scope);
     const groups = business.groups || {};
     const rootWorkspace = renderRootIntelligence(roots, candidates, groups, { currency, scope });
+    const lifecycleWorkspace = renderLifecycleWorkspace(lifecycleItems, candidateMap, { currency, scope });
     const sections = [
       renderTermGroup('Profit Winners', groups.profitWinners, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'profit' }),
       renderTermGroup('Scale Opportunities', groups.scaleOpportunities, { currency, scope, lifecycleMap, rootMap, candidateMap, mode: 'scale' }),
@@ -274,6 +283,7 @@
       ${cards}
       ${scopeHealth}
       ${rootWorkspace}
+      ${lifecycleWorkspace}
       ${sections}
     </div>`;
   }
@@ -359,6 +369,50 @@
       <td><span>Unavailable</span><small>not in current root payload</small></td>
       <td><span>${esc(candidateSummary)}</span><small>${root?.profitProtectionApplied ? 'profit protection applied' : `visible members ${visibleMembers}`}</small></td>
       <td><button type="button" class="cfdi-link" data-csv-root="${esc(root?.root || '')}">View ${number(root?.searchTerms?.length || 0)} terms</button></td>
+    </tr>`;
+  }
+
+  function renderLifecycleWorkspace(items, candidateMap, { currency, scope }) {
+    const rows = [...(Array.isArray(items) ? items : [])].sort((a, b) => lifecyclePriority(a?.state) - lifecyclePriority(b?.state) || String(a?.searchTerm || '').localeCompare(String(b?.searchTerm || '')));
+    const counts = countLifecycleStates(rows);
+    const cards = `<div class="cfdi-summary" data-csv-lifecycle-summary>
+      ${summaryCard('Emerging Winner', counts.emergingWinner)}
+      ${summaryCard('Declining', counts.declining)}
+      ${summaryCard('Emerging Waste', counts.emergingWaste)}
+      ${summaryCard('Persistent Waste', counts.persistentWaste)}
+      ${summaryCard('Recovered', counts.recovered)}
+      ${summaryCard('Stable Winner', counts.stableWinner)}
+      ${summaryCard('New', counts.new)}
+      ${summaryCard('Watchlist', counts.watchlist)}
+    </div>`;
+    const body = rows.map((item) => lifecycleRow(item, candidateMap, { currency, scope })).join('')
+      || '<tr><td colspan="7">No lifecycle intelligence in this analysis scope.</td></tr>';
+    return `<section class="cfdi-detail-section" data-csv-lifecycle-workspace>
+      <h3>Lifecycle <small>${number(rows.length)}</small></h3>
+      <div class="cfdi-callout"><strong>Period-over-period lifecycle.</strong> Lifecycle states come from the existing historical intelligence contract. They prioritize review but do not create or authorize an Amazon action by themselves.</div>
+      ${cards}
+      <div class="cfdi-table-wrap"><table class="cfdi-table">
+        <thead><tr><th>Search term</th><th>Current lifecycle</th><th>Previous performance</th><th>Current performance</th><th>Change</th><th>Candidate</th><th>Evidence</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table></div>
+    </section>`;
+  }
+
+  function lifecycleRow(item, candidateMap, { currency, scope }) {
+    const term = String(item?.searchTerm || '');
+    const candidates = candidateMap.get(normalizeTerm(term)) || [];
+    const comparable = scope?.financiallyComparable === true;
+    const candidateText = scope?.candidateEmissionAuthorized === true
+      ? candidates.map((candidate) => candidate.candidateType).join(', ') || 'No emitted candidate'
+      : 'Candidate emission blocked by scope';
+    return `<tr>
+      <td><strong>${esc(term)}</strong><small>${esc(item?.currentClassification || 'observe')} ← ${esc(item?.previousClassification || 'observe')}</small></td>
+      <td><span class="cfdi-pill ${lifecycleAttention(item?.state) ? 'warn' : ''}">${esc(item?.stateLabel || item?.state || '—')}</span><small>${esc(item?.reason || '')}</small></td>
+      <td>${lifecyclePerformance(item?.previousMetrics, currency, comparable)}</td>
+      <td>${lifecyclePerformance(item?.currentMetrics, currency, comparable)}</td>
+      <td>${lifecycleChange(item?.change, comparable)}</td>
+      <td><span>${esc(candidateText)}</span><small>${item?.requiresHumanReview === false ? 'review flag absent' : 'human review required'}</small></td>
+      <td><button type="button" class="cfdi-link" data-csv-lifecycle-term="${esc(term)}">Evidence</button></td>
     </tr>`;
   }
 
@@ -529,6 +583,38 @@
       </div>`;
   }
 
+  function renderLifecycleEvidence(searchTerm, payload) {
+    if (!searchTerm || !payload?.productization) return;
+    const productization = payload.productization;
+    const business = productization.businessIntelligence || {};
+    const historical = productization.historicalIntelligence || {};
+    const lifecycle = (historical.lifecycle?.items || []).find((item) => normalizeTerm(item.searchTerm) === normalizeTerm(searchTerm));
+    if (!lifecycle) return;
+    const scope = productization.analysisScope || historical.analysisScope || {};
+    const comparable = scope.financiallyComparable === true;
+    const currency = comparable ? single(scope.currencyCodes) || payload.profile?.currencyCode : null;
+    const candidateMap = buildCandidateMap(business.candidates || [], business.rootIntelligence?.roots || []);
+    const candidates = candidateMap.get(normalizeTerm(searchTerm)) || [];
+    const candidateText = scope.candidateEmissionAuthorized === true
+      ? candidates.map((candidate) => candidate.candidateType).join(', ') || 'No emitted candidate'
+      : 'Suppressed by scope gate';
+    const change = lifecycle.change || {};
+    const drawer = document.querySelector('#cfDecisionPanel [data-drawer]');
+    if (!drawer) return;
+    drawer.hidden = false;
+    drawer.innerHTML = `<header class="cfdi-drawer-header"><div><span>Lifecycle Evidence</span><strong>${esc(lifecycle.searchTerm)}</strong><small>Period-over-period diagnostic · Human review only · Amazon mutation disabled</small></div><button type="button" data-drawer-close aria-label="Close drawer">×</button></header>
+      <div class="cfdi-drawer-body">
+        <div class="cfdi-badges"><span class="cfdi-pill ${lifecycleAttention(lifecycle.state) ? 'warn' : ''}">${esc(lifecycle.stateLabel || lifecycle.state || '—')}</span><span class="cfdi-pill warn">Persistence Disabled</span><span class="cfdi-pill danger">Amazon Execution Disabled</span></div>
+        ${section('Lifecycle', `<dl>${kv('Current lifecycle', lifecycle.stateLabel || lifecycle.state || '—')}${kv('Reason', lifecycle.reason || '—')}${kv('Current classification', lifecycle.currentClassification || '—')}${kv('Previous classification', lifecycle.previousClassification || '—')}${kv('Current window', dateWindow(lifecycle.currentWindow))}${kv('Previous window', dateWindow(lifecycle.previousWindow))}${kv('Requires human review', yesNo(lifecycle.requiresHumanReview !== false))}</dl>`)}
+        ${section('Previous performance', lifecycleMetricDl(lifecycle.previousMetrics, currency, comparable))}
+        ${section('Current performance', lifecycleMetricDl(lifecycle.currentMetrics, currency, comparable))}
+        ${section('Change', `<dl>${kv('Impressions Δ', signedPercent(change.impressionsPct))}${kv('Clicks Δ', signedPercent(change.clicksPct))}${kv('Spend Δ', financialValue(signedPercent(change.spendPct), comparable))}${kv('Orders Δ', signedPercent(change.ordersPct))}${kv('Sales Δ', financialValue(signedPercent(change.salesPct), comparable))}${kv('ACoS Δ', financialValue(signedRatioPp(change.acosDelta), comparable))}${kv('ROAS Δ', financialValue(signedDecimal(change.roasDelta), comparable))}${kv('CVR Δ', signedRatioPp(change.cvrDelta))}${kv('CPC Δ', financialValue(signedPercent(change.cpcPct), comparable))}</dl>`)}
+        ${section('Candidate review', `<dl>${kv('Candidate', candidateText)}${kv('Candidate emission authorized', yesNo(scope.candidateEmissionAuthorized === true))}</dl>`)}
+        ${section('Evidence provenance', `<dl>${kv('Current source import IDs', join(lifecycle.sourceImportIds?.current))}${kv('Previous source import IDs', join(lifecycle.sourceImportIds?.previous))}${kv('Universe complete', yesNo(scope.complete === true))}${kv('Financially comparable', yesNo(comparable))}</dl>`)}
+        <div class="cfdi-callout"><strong>Lifecycle review boundary.</strong> A lifecycle state is a diagnostic signal, not an execution authorization. Only candidates already emitted through the governed business-intelligence gate are shown for review; this UI cannot persist an action or write to Amazon.</div>
+      </div>`;
+  }
+
   function renderCsvEvidence(item, payload) {
     const drawer = document.querySelector('#cfDecisionPanel [data-drawer]');
     if (!drawer) return;
@@ -605,6 +691,43 @@
       ...(groups?.wasteTerms || []),
       ...(groups?.watchlist || []),
     ];
+  }
+
+  function countLifecycleStates(items) {
+    const counts = { new: 0, emergingWinner: 0, stableWinner: 0, declining: 0, emergingWaste: 0, persistentWaste: 0, recovered: 0, watchlist: 0 };
+    for (const item of items) {
+      if (Object.hasOwn(counts, item?.state)) counts[item.state] += 1;
+    }
+    return counts;
+  }
+
+  function lifecyclePriority(state) {
+    return ({ emergingWaste: 1, persistentWaste: 2, declining: 3, emergingWinner: 4, recovered: 5, stableWinner: 6, new: 7, watchlist: 8 })[state] || 9;
+  }
+
+  function lifecycleAttention(state) {
+    return ['emergingWinner', 'declining', 'emergingWaste', 'persistentWaste', 'recovered'].includes(state);
+  }
+
+  function lifecyclePerformance(metrics, currency, comparable) {
+    const value = metrics || {};
+    const financial = comparable
+      ? `${money(value.spendMicros, currency)} spend · ${money(value.salesMicros, currency)} sales · ${percent(value.acos)} ACoS`
+      : 'Financial metrics suppressed';
+    return `<span>${esc(financial)}</span><small>${number(value.orders)} orders · ${percent(value.cvr)} CVR</small>`;
+  }
+
+  function lifecycleChange(change, comparable) {
+    const value = change || {};
+    const financial = comparable
+      ? `Sales ${signedPercent(value.salesPct)} · ACoS ${signedRatioPp(value.acosDelta)}`
+      : 'Financial deltas suppressed';
+    return `<span>Orders ${esc(signedPercent(value.ordersPct))} · CVR ${esc(signedRatioPp(value.cvrDelta))}</span><small>${esc(financial)}</small>`;
+  }
+
+  function lifecycleMetricDl(metrics, currency, comparable) {
+    const value = metrics || {};
+    return `<dl>${kv('Impressions', number(value.impressions))}${kv('Clicks', number(value.clicks))}${kv('Spend', financialValue(money(value.spendMicros, currency), comparable))}${kv('Orders', number(value.orders))}${kv('Sales', financialValue(money(value.salesMicros, currency), comparable))}${kv('ACoS', financialValue(percent(value.acos), comparable))}${kv('ROAS', financialValue(decimal(value.roas), comparable))}${kv('CVR', percent(value.cvr))}${kv('CPC', financialValue(money(value.cpcMicros, currency), comparable))}</dl>`;
   }
 
   function classificationReasonFallback(mode) {
@@ -704,6 +827,12 @@
     return value == null ? '—' : Number(value).toFixed(2);
   }
 
+  function signedDecimal(value) {
+    if (value == null) return '—';
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}` : '—';
+  }
+
   function money(micros, currency) {
     const numeric = Number(micros);
     if (!Number.isFinite(numeric)) return '—';
@@ -729,6 +858,10 @@
 
   function signedPp(value) {
     return value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}pp`;
+  }
+
+  function signedRatioPp(value) {
+    return value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${(Number(value) * 100).toFixed(1)}pp`;
   }
 
   function esc(value) {
