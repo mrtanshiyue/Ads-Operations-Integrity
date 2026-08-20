@@ -1,0 +1,50 @@
+name: Operational UAT Live Closure CE5E7D
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/operational-uat-live-closure-once.mjs'
+      - '.github/workflows/operational-uat-live-closure-ce5e7d.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-uat-live-closure-production
+  cancel-in-progress: false
+
+jobs:
+  live-closure:
+    name: Production live UAT 10-case closure
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'ops/live-production-uat-closure-ce5e7d' &&
+      github.event.pull_request.base.sha == 'ce5e7dc4a80f1fcd0806acbc61156b1c682f7467'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      EXPECTED_MAIN_SHA: ce5e7dc4a80f1fcd0806acbc61156b1c682f7467
+      EXPECTED_PRODUCTION_VERSION: 2b6ba6cc-9efd-4903-8734-2518aaa0f3e8
+      UAT_ACCESS_AUD: b86d09befdfc53ffbf72a9a13f1db537e290aed444077df92635b129d1dd7337
+      PRODUCTION_HOST: ads-operations-web-prod.tanshiyuesir.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Execute temporary machine-auth UAT and guaranteed cleanup
+        run: node scripts/operational-uat-live-closure-once.mjs
+      - name: Upload immutable closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-uat-live-closure-${{ github.run_id }}
+          path: artifacts/operational-uat-live-closure.json
+          if-no-files-found: warn
+          retention-days: 90
