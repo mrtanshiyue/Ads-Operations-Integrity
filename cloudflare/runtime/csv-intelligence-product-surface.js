@@ -16,38 +16,91 @@ export function buildCsvIntelligenceProductSurface(payload) {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const currentWindow = normalizeWindow(payload.range);
   const previousWindow = normalizeWindow(payload.comparisonRange);
+  const analysisScope = deriveAnalysisScope(payload, items);
   const currentFacts = items.map((item) => factFromItem(item, 'metrics', currentWindow?.endDate, payload, true));
   const previousFacts = items.map((item) => factFromItem(item, 'previousMetrics', previousWindow?.endDate, payload, false));
   const identityConfidence = deriveIdentityConfidence(payload);
 
-  const businessIntelligence = buildCsvSearchTermBusinessIntelligence(currentFacts, {
+  const rawBusinessIntelligence = buildCsvSearchTermBusinessIntelligence(currentFacts, {
     analysisWindow: currentWindow,
     identityConfidence,
   });
-  const lifecycle = buildCsvSearchTermLifecycle({
+  const businessIntelligence = constrainBusinessCandidates(rawBusinessIntelligence, analysisScope);
+  const rawLifecycle = buildCsvSearchTermLifecycle({
     currentFacts,
     previousFacts,
     currentWindow,
     previousWindow,
   });
+  const lifecycle = Object.freeze({ ...rawLifecycle, analysisScope });
 
   return Object.freeze({
     schemaVersion: CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION,
     authority: PRODUCT_SURFACE_AUTHORITY,
+    analysisScope,
     businessIntelligence,
     historicalIntelligence: Object.freeze({
       schemaVersion: 'csv-historical-search-term-intelligence-v1',
       authority: PRODUCT_SURFACE_AUTHORITY,
+      analysisScope,
       currentWindow,
       previousWindow,
       periodCapabilities: lifecycle.periodCapabilities,
       lifecycle,
       summary: Object.freeze({
         lifecycleTermCount: lifecycle.summary.analyzedTermCount,
+        completeScope: analysisScope.complete,
         executionAuthorized: false,
         amazonMutationAuthorized: false,
       }),
     }),
+  });
+}
+
+function constrainBusinessCandidates(raw, analysisScope) {
+  if (analysisScope.complete) {
+    return Object.freeze({
+      ...raw,
+      analysisScope,
+      summary: Object.freeze({
+        ...raw.summary,
+        emittedCandidateCount: raw.candidates.length,
+        suppressedByScopeCandidateCount: 0,
+        candidateEmissionAuthorized: true,
+      }),
+    });
+  }
+  const suppressedByScopeCandidateCount = raw.candidates.length;
+  return Object.freeze({
+    ...raw,
+    analysisScope,
+    candidates: Object.freeze([]),
+    summary: Object.freeze({
+      ...raw.summary,
+      emittedCandidateCount: 0,
+      suppressedByScopeCandidateCount,
+      exactNegativeCandidateCount: 0,
+      phraseNegativeReviewCandidateCount: 0,
+      harvestCandidateCount: 0,
+      scaleCandidateCount: 0,
+      candidateEmissionAuthorized: false,
+    }),
+  });
+}
+
+function deriveAnalysisScope(payload, items) {
+  const requestedLimit = positiveIntOrNull(payload?.filters?.limit);
+  const explicitComplete = payload?.productizationScope?.complete;
+  const complete = explicitComplete === true
+    || (explicitComplete !== false && requestedLimit !== null && items.length < requestedLimit);
+  return Object.freeze({
+    kind: text(payload?.productizationScope?.kind) || 'filtered_response_universe',
+    complete,
+    itemCount: items.length,
+    requestedLimit,
+    candidateEmissionAuthorized: complete,
+    completenessRule: explicitComplete == null ? 'complete_only_when_item_count_is_below_requested_limit' : 'explicit_scope_contract',
+    incompleteBehavior: 'analytics_visible_candidates_fail_closed',
   });
 }
 
@@ -108,6 +161,7 @@ function uniqueTexts(values) {
   return Object.freeze([...new Set(values.map(text).filter(Boolean))].sort());
 }
 
+function positiveIntOrNull(value) { const number = Number(value); return Number.isInteger(number) && number > 0 ? number : null; }
 function text(value) { return String(value ?? '').trim(); }
 function nonNegative(value) { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : 0; }
 function round4(value) { return Math.round(value * 10_000) / 10_000; }
