@@ -1,9 +1,8 @@
 name: Operational UAT Release Rollback
 
 on:
-  push:
-    branches:
-      - 'ops/operational-uat-service-binding-rollback-20260820'
+  pull_request:
+    branches: [main]
     paths:
       - '.github/workflows/operational-uat-release-rollback.yml'
 
@@ -31,9 +30,9 @@ jobs:
   live-production-drill:
     name: Production rollback and restore drill
     if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/ops/operational-uat-service-binding-rollback-20260820' &&
-      contains(github.event.head_commit.message, 'execute service-binding production rollback drill')
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.ref == 'ops/operational-uat-service-binding-rollback-20260820' &&
+      github.event.pull_request.base.ref == 'main'
     needs: contracts
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -53,8 +52,10 @@ jobs:
       OPERATIONAL_UAT_HEALTH_ATTEMPTS: '30'
       OPERATIONAL_UAT_HEALTH_DELAY_MS: '2000'
     steps:
-      - name: Checkout execution branch
+      - name: Checkout PR head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
