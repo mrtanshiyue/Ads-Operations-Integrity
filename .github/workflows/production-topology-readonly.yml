@@ -37,13 +37,36 @@ jobs:
 
           const worker = 'ads-operations-web-prod';
           const topology = await discoverWorkerDeploymentTopology({ accountId, scriptName: worker, token });
-          const healthResponse = await fetch(`https://${worker}.tanshiyuesir.workers.dev/api/health?readonlyTopology=${Date.now()}`, {
-            headers: { 'cache-control': 'no-cache' },
-            cache: 'no-store',
-          });
-          if (!healthResponse.ok) throw new Error(`readonly_topology_health_http_${healthResponse.status}`);
-          const health = await healthResponse.json();
-          const live = assertLiveRuntimeVersion({ versionId: topology.activeVersion.versionId, health });
+
+          let runtimeVersionId = null;
+          let healthOk = false;
+          let healthEnvironment = null;
+          let healthStatus = null;
+          let healthContentType = null;
+          let healthAccessInterstitial = false;
+          let healthError = null;
+          try {
+            const healthResponse = await fetch(`https://${worker}.tanshiyuesir.workers.dev/api/health?readonlyTopology=${Date.now()}`, {
+              headers: { 'cache-control': 'no-cache' },
+              cache: 'no-store',
+              redirect: 'manual',
+            });
+            healthStatus = healthResponse.status;
+            healthContentType = healthResponse.headers.get('content-type');
+            const healthText = await healthResponse.text();
+            healthAccessInterstitial = /<!doctype html|cloudflare access|cdn-cgi\/access/i.test(healthText);
+            if (healthResponse.ok && /application\/json/i.test(String(healthContentType || ''))) {
+              const health = JSON.parse(healthText);
+              const live = assertLiveRuntimeVersion({ versionId: topology.activeVersion.versionId, health });
+              runtimeVersionId = live.versionId;
+              healthOk = health?.ok === true;
+              healthEnvironment = health?.environment || null;
+            } else {
+              healthError = `health_not_json_or_not_ok:${healthResponse.status}`;
+            }
+          } catch (error) {
+            healthError = String(error?.code || error?.message || error).slice(0, 240);
+          }
 
           const deploymentResponse = await fetch(
             `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/scripts/${worker}/deployments`,
@@ -56,7 +79,7 @@ jobs:
             ? deploymentPayload.result.deployments
             : [];
 
-          const recentDeployments = deployments.slice(0, 8).map((deployment) => ({
+          const recentDeployments = deployments.slice(0, 10).map((deployment) => ({
             deploymentId: deployment?.id || null,
             createdOn: deployment?.created_on || null,
             source: deployment?.source || null,
@@ -75,7 +98,7 @@ jobs:
           );
 
           console.log(JSON.stringify({
-            schema: 'production-topology-readonly-v1',
+            schema: 'production-topology-readonly-v2',
             worker,
             active: {
               deploymentId: topology.activeDeployment.deploymentId,
@@ -85,11 +108,17 @@ jobs:
               buildOutcome: topology.activeBuild.outcome,
               commitSha: topology.activeBuild.commitSha,
               branch: topology.activeBuild.branch,
-              runtimeVersionId: live.versionId,
-              healthOk: health?.ok === true,
-              environment: health?.environment || null,
+              runtimeVersionId,
+              healthOk,
+              environment: healthEnvironment,
             },
-            rollbackDeploymentCountInRecent8: rollbackDeployments.length,
+            healthObservation: {
+              status: healthStatus,
+              contentType: healthContentType,
+              accessInterstitialDetected: healthAccessInterstitial,
+              error: healthError,
+            },
+            rollbackDeploymentCountInRecent10: rollbackDeployments.length,
             rollbackDeployments,
             recentDeployments,
             amazonExecutionAttempted: false,
