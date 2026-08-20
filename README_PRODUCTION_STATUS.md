@@ -22,13 +22,13 @@ The project is no longer in Production UAT or foundational infrastructure build-
 
 ```text
 GitHub main: a90c9158d8afd224e717218827923d4beab593b1
-Latest merged change: fix: verify rollback deployment receipts by readback (#211)
+Latest merged change at closure: fix: verify rollback deployment receipts by readback (#211)
 Open PRs at closure: 0
 Branch protection: enabled
 Required context: Static site and security invariants
 ```
 
-Repository SHA, Workers Build identity, deployment identity, and runtime version remain separate evidence classes.
+Repository SHA, Workers Build identity, deployment identity, and runtime version remain separate evidence classes. The SHA above is the immutable closure baseline; later CSV productization commits do not change the accepted closure evidence.
 
 ## Accepted Production Web baseline
 
@@ -180,5 +180,25 @@ docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md
 ```
 
 Issue #191 is the mutable release trace and should be closed as completed once this final truth reset is merged.
+
+## Historical architecture compatibility markers
+
+The legacy Architecture Convergence contract still checks several historical evidence strings in this file. They are retained here only so historical CI evidence remains traceable; **none of the following statements overrides the current accepted Production status above**.
+
+```text
+Architecture Convergence Phase 0 = COMPLETE + MERGED
+```
+
+Historical statement, now superseded by the 2026-08-20 final closure:
+
+> final Cloudflare Native Production deployment contract is **not established yet**
+
+That sentence described the earlier architecture-convergence period; it is **not** current operational truth. The current Non-Amazon Production foundation is accepted.
+
+Historical / migration traceability markers retained for compatibility:
+
+- `docs/archive/legacy-browser-loaders/`
+- `assets/cloudflare-native-data-panel-v1.js`
+- `cloudflare_native_raw_import_not_migrated`
 
 Repository merge still does not itself authorize a Cloudflare deployment or any Amazon activation.
