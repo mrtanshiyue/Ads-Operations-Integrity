@@ -1,0 +1,112 @@
+name: Production Access Readonly
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-access-readonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  access:
+    name: Read Production Access machine-auth posture
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read sanitized Access application and service-token posture
+        run: |
+          node --input-type=module <<'NODE'
+          const API = 'https://api.cloudflare.com/client/v4';
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          if (!accountId || !token) throw new Error('cloudflare_credentials_missing');
+          const headers = { accept: 'application/json', authorization: `Bearer ${token}` };
+          const read = async (path) => {
+            const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}${path}`, { headers });
+            const text = await response.text();
+            let body = null;
+            try { body = JSON.parse(text); } catch {}
+            return {
+              ok: response.ok && body?.success === true,
+              status: response.status,
+              result: body?.result ?? null,
+              apiErrorCode: body?.errors?.[0]?.code ?? null,
+              apiErrorMessage: body?.errors?.[0]?.message ?? null,
+            };
+          };
+
+          const appsResponse = await read('/access/apps?per_page=1000');
+          const tokenResponse = await read('/access/service_tokens?per_page=1000');
+          const apps = Array.isArray(appsResponse.result) ? appsResponse.result : [];
+          const productionApps = apps.filter((app) => String(app?.domain || '').includes('ads-operations-web-prod'));
+
+          const sanitizeRule = (rule) => {
+            if (!rule || typeof rule !== 'object') return 'unknown';
+            if (rule.service_token) return 'service_token';
+            if (rule.any_valid_service_token) return 'any_valid_service_token';
+            if (rule.email) return 'email';
+            if (rule.email_domain) return 'email_domain';
+            if (rule.group) return 'group';
+            if (rule.everyone) return 'everyone';
+            if (rule.ip) return 'ip';
+            if (rule.access_group) return 'access_group';
+            return Object.keys(rule)[0] || 'unknown';
+          };
+
+          const appSummaries = [];
+          for (const app of productionApps) {
+            const policiesResponse = await read(`/access/apps/${encodeURIComponent(app.id)}/policies?per_page=1000`);
+            const policies = Array.isArray(policiesResponse.result) ? policiesResponse.result : [];
+            appSummaries.push({
+              id: app.id || null,
+              name: app.name || null,
+              domain: app.domain || null,
+              type: app.type || null,
+              audPresent: Boolean(app.aud),
+              policiesReadStatus: policiesResponse.status,
+              policies: policies.map((policy) => ({
+                id: policy.id || null,
+                name: policy.name || null,
+                decision: policy.decision || null,
+                precedence: policy.precedence ?? null,
+                includeRuleTypes: Array.isArray(policy.include) ? policy.include.map(sanitizeRule) : [],
+                requireRuleTypes: Array.isArray(policy.require) ? policy.require.map(sanitizeRule) : [],
+                excludeRuleTypes: Array.isArray(policy.exclude) ? policy.exclude.map(sanitizeRule) : [],
+              })),
+            });
+          }
+
+          const serviceTokens = Array.isArray(tokenResponse.result) ? tokenResponse.result : [];
+          console.log(JSON.stringify({
+            schema: 'production-access-readonly-v1',
+            appsRead: {
+              ok: appsResponse.ok,
+              status: appsResponse.status,
+              apiErrorCode: appsResponse.apiErrorCode,
+              matchingProductionApps: appSummaries,
+            },
+            serviceTokensRead: {
+              ok: tokenResponse.ok,
+              status: tokenResponse.status,
+              apiErrorCode: tokenResponse.apiErrorCode,
+              tokens: serviceTokens.map((row) => ({
+                id: row.id || null,
+                name: row.name || null,
+                duration: row.duration || null,
+                expiresAt: row.expires_at || null,
+              })),
+            },
+            cloudflareMutationAttempted: false,
+            amazonExecutionAttempted: false,
+          }, null, 2));
+          NODE
