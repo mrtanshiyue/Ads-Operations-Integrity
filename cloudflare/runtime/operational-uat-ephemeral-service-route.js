@@ -8,6 +8,8 @@ import {
 
 const CASE_SET = new Set(OPERATIONAL_UAT_CASES);
 const MAX_BODY_BYTES = 4096;
+const INTERNAL_BINDING_HEADER = 'x-operational-uat-internal-binding';
+const INTERNAL_BINDING_VALUE = 'cloudflare-service-binding-v1';
 const JSON_HEADERS = Object.freeze({
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
@@ -33,6 +35,27 @@ export function authorizeOperationalUatEphemeralServiceAccess(access = {}) {
     status: 200,
     sub,
     authorizationMode: 'secondary_access_service_token',
+  });
+}
+
+export function authorizeOperationalUatInternalServiceBinding(request) {
+  if (!request || typeof request !== 'object') {
+    return Object.freeze({ ok: false, status: 401, error: 'operational_uat_internal_binding_required' });
+  }
+  if (request.cf != null) {
+    return Object.freeze({ ok: false, status: 403, error: 'operational_uat_internal_binding_edge_request_rejected' });
+  }
+  if (String(request.headers?.get?.('cf-access-jwt-assertion') || '').trim()) {
+    return Object.freeze({ ok: false, status: 403, error: 'operational_uat_internal_binding_access_token_rejected' });
+  }
+  if (request.headers?.get?.(INTERNAL_BINDING_HEADER) !== INTERNAL_BINDING_VALUE) {
+    return Object.freeze({ ok: false, status: 401, error: 'operational_uat_internal_binding_required' });
+  }
+  return Object.freeze({
+    ok: true,
+    status: 200,
+    sub: 'cloudflare-service-binding',
+    authorizationMode: 'cloudflare_service_binding',
   });
 }
 
@@ -70,8 +93,11 @@ async function handleMatchedRoute({ request, env }) {
   }
   if (!env.CONTROL_DB) return json(request, { error: 'control_db_not_bound' }, 503);
 
-  const access = await evaluateAccessIdentity(request, env);
-  const authorization = authorizeOperationalUatEphemeralServiceAccess(access);
+  let authorization = authorizeOperationalUatInternalServiceBinding(request);
+  if (!authorization.ok) {
+    const access = await evaluateAccessIdentity(request, env);
+    authorization = authorizeOperationalUatEphemeralServiceAccess(access);
+  }
   if (!authorization.ok) return json(request, { error: authorization.error }, authorization.status);
 
   if (request.headers.get('x-operational-uat-confirm') !== OPERATIONAL_UAT_CONFIRMATION) {
@@ -87,7 +113,7 @@ async function handleMatchedRoute({ request, env }) {
     request,
     env,
     actor: Object.freeze({
-      principalType: 'service_token',
+      principalType: authorization.authorizationMode === 'cloudflare_service_binding' ? 'service_binding' : 'service_token',
       sub: authorization.sub,
       authorizationMode: authorization.authorizationMode,
     }),
