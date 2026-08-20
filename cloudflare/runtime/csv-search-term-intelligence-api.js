@@ -7,6 +7,7 @@ import {
   deriveSearchTermMetrics,
 } from './decision-intelligence.js';
 import { buildCsvIntelligenceProductSurface } from './csv-intelligence-product-surface.js';
+import { queryCsvSearchTermProductUniverse } from './csv-search-term-product-universe.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const DEFAULT_LIMIT = 50;
@@ -51,8 +52,7 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
   const q = normalizeSearch(url.searchParams.get('q'));
   const campaignName = optionalText(url.searchParams.get('campaignName'), 300);
   const adGroupName = optionalText(url.searchParams.get('adGroupName'), 300);
-
-  const rows = await queryCsvSearchTermIntelligence(route.storeDb, {
+  const sharedQuery = {
     profileId,
     startDate: range.startDate,
     endDate: range.endDate,
@@ -61,9 +61,16 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
     q,
     campaignName,
     adGroupName,
-    sort: sort.value,
-    limit: limit.value,
-  });
+  };
+
+  const [rows, productUniverse] = await Promise.all([
+    queryCsvSearchTermIntelligence(route.storeDb, {
+      ...sharedQuery,
+      sort: sort.value,
+      limit: limit.value,
+    }),
+    queryCsvSearchTermProductUniverse(route.storeDb, sharedQuery),
+  ]);
 
   const items = [];
   for (const row of rows) {
@@ -188,13 +195,14 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
   const payload = {
     schemaVersion: SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION,
     modelVersion: SEARCH_TERM_MODEL_VERSION,
-    ruleVersion: `${SEARCH_TERM_RULE_VERSION}+csv-authority-v2`,
+    ruleVersion: `${SEARCH_TERM_RULE_VERSION}+csv-authority-v3`,
     source: Object.freeze({
       kind: 'csv_import',
       schemaVersion: 'csv-import-v1',
       authority: 'non-authoritative',
       dataClassGate: 'business',
       recommendationProvenanceGate: ['exact_source_object', 'reconciled_exact_source'],
+      productizationUniverse: 'complete_filtered_search_term_universe',
       amazonEntityIdentityResolved: false,
       governancePersistenceAllowed: false,
       amazonMutationAuthorized: false,
@@ -233,11 +241,29 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
       governancePersistenceAllowed: false,
       identityResolutionRequired: candidateCount,
       freshness: summarizeFreshness(items),
+      productizationUniverseComplete: productUniverse.scope.complete,
+      productizationFinanciallyComparable: productUniverse.scope.financiallyComparable,
+      productizationCandidateEmissionAuthorized: productUniverse.scope.candidateEmissionAuthorized,
       amazonMutationAuthorized: false,
     },
     items,
   };
-  const productization = buildCsvIntelligenceProductSurface(payload);
+
+  // Display rows remain bounded by the request limit. Product intelligence is deliberately built
+  // from a separate normalized-term universe so pagination cannot change Profit/Waste/Root or
+  // candidate decisions. Financially ambiguous universes provide no product facts at all.
+  const productizationPayload = {
+    ...payload,
+    profile: {
+      ...payload.profile,
+      profileId: productUniverse.profile.profileId,
+      countryCode: productUniverse.profile.countryCode,
+      currencyCode: productUniverse.profile.currencyCode,
+    },
+    productizationScope: productUniverse.scope,
+    items: productUniverse.productItems,
+  };
+  const productization = buildCsvIntelligenceProductSurface(productizationPayload);
   return json(request, { ...payload, productization }, 200);
 }
 
@@ -259,7 +285,12 @@ async function queryCsvSearchTermIntelligence(db, input) {
         f.ad_group_name,
         f.targeting,
         f.match_type,
-        MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.targeting_identity_state END) AS targeting_identity_state,
+        CASE
+          WHEN SUM(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN 1 ELSE 0 END) > 0
+           AND SUM(CASE WHEN f.report_date BETWEEN ?3 AND ?4 AND COALESCE(f.targeting_identity_state,'unresolved') <> 'resolved_id' THEN 1 ELSE 0 END) = 0
+          THEN 'resolved_id'
+          ELSE 'unresolved'
+        END AS targeting_identity_state,
         MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.search_term END) AS search_term,
         f.normalized_search_term,
         MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.currency_code END) AS currency_code,
