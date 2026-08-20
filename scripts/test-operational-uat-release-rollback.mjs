@@ -41,6 +41,7 @@ assert.equal(evidence.restoreVersionId, ACTIVE);
 assert.equal(evidence.rollbackRuntimeObserved, true);
 assert.equal(evidence.restoreRuntimeObserved, true);
 assert.equal(evidence.restoredInFinally, true);
+assert.equal(evidence.deploymentForceApplied, true);
 assert.equal(evidence.amazonExecutionAttempted, false);
 assert.equal(evidence.businessFactPersistenceAttempted, false);
 assert.deepEqual(happy.deployedVersions, [PREVIOUS, ACTIVE]);
@@ -68,6 +69,7 @@ console.log(JSON.stringify({
   ok: true,
   contract: 'operational-uat-release-rollback',
   realDeploymentRequired: true,
+  forceDeploymentRequired: true,
   restoreInFinally: true,
   noAmazonExecution: true,
 }));
@@ -82,7 +84,9 @@ function fakeCloudflare({ healthFailureForRollback }) {
       return jsonResponse({ success: true, result: { deployments: topology } });
     }
     if (url.hostname === 'api.cloudflare.com' && init.method === 'POST' && url.pathname.endsWith('/deployments')) {
+      assert.equal(url.searchParams.get('force'), 'true', 'rollback/restore deployment must explicitly force older-version activation');
       const body = JSON.parse(init.body);
+      assert.deepEqual(Object.keys(body.annotations || {}), ['workers/message'], 'deployment request must not spoof server-owned annotations');
       const version = body.versions[0].version_id;
       deployedVersions.push(version);
       current = version;
