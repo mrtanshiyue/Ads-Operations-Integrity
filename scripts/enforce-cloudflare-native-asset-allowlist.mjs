@@ -1,4 +1,4 @@
-import { access, readdir, rm } from 'node:fs/promises';
+import { access, readFile, readdir, rm } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,9 @@ const allowedAssets = new Set([
   'cloudflare-native-access-console-v1.js',
   'cloudflare-native-api-v1.js',
   'cloudflare-native-audit-console-v1.js',
+  'cloudflare-native-csv-analytics-dashboard-v1.js',
+  'cloudflare-native-csv-analytics-drilldown-v1.js',
+  'cloudflare-native-csv-local-diagnostics-v1.js',
   'cloudflare-native-csv-intelligence-v1.js',
   'cloudflare-native-csv-joint-analysis-v1.js',
   'cloudflare-native-csv-data-quality-command-center-v1.js',
@@ -101,6 +104,15 @@ const forbiddenAssets = new Set([
   'generated/inline-script-11.js',
 ]);
 
+const nativeApiSource = await readFile(path.join(repoRoot, 'assets', 'cloudflare-native-api-v1.js'), 'utf8');
+const dynamicLoaderAssets = [...nativeApiSource.matchAll(/loadReadOnlyAnalyticsAsset\(['"]assets\/([^'"]+)['"]/g)]
+  .map((match) => match[1]);
+if (!dynamicLoaderAssets.length) throw new Error('Cloudflare Native API dynamic asset loader contract was not found');
+const dynamicAssetsMissingFromAllowlist = dynamicLoaderAssets.filter((relativePath) => !allowedAssets.has(relativePath));
+if (dynamicAssetsMissingFromAllowlist.length) {
+  throw new Error(`Cloudflare Native dynamic loader assets missing from deployment allowlist: ${dynamicAssetsMissingFromAllowlist.join(', ')}`);
+}
+
 const discovered = await collectFiles(assetsRoot);
 const removed = [];
 for (const relativePath of discovered) {
@@ -128,6 +140,7 @@ console.log(JSON.stringify({
   ok: true,
   policy: 'explicit-file-allowlist-v2',
   allowedAssetCount: allowedAssets.size,
+  dynamicLoaderAssets,
   removedAssetCount: removed.length,
   removedAssets: removed,
   forbiddenAssets: [...forbiddenAssets],
