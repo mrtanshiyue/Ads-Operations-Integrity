@@ -46,12 +46,23 @@ export async function runOperationalUatReleaseRollback(options = {}) {
     rollbackVersionId,
     rollbackDeploymentId: null,
     restoreDeploymentId: null,
+    preRollbackRuntimeObserved: false,
     rollbackRuntimeObserved: false,
     restoreRuntimeObserved: false,
     restoredInFinally: false,
     startedAt: new Date().toISOString(),
     completedAt: null,
   };
+
+  await waitForRuntimeVersion({
+    healthUrl,
+    expectedVersionId: restoreVersionId,
+    fetchImpl,
+    sleepImpl,
+    attempts,
+    delayMs,
+  });
+  evidence.preRollbackRuntimeObserved = true;
 
   let primaryError = null;
   try {
@@ -93,7 +104,8 @@ export async function runOperationalUatReleaseRollback(options = {}) {
 
   evidence.completedAt = new Date().toISOString();
   if (primaryError) throw new OperationalUatReleaseRollbackError(`OP_UAT_ROLLBACK_PRIMARY_FAILED:${primaryError}`);
-  evidence.verified = evidence.rollbackRuntimeObserved === true
+  evidence.verified = evidence.preRollbackRuntimeObserved === true
+    && evidence.rollbackRuntimeObserved === true
     && evidence.restoreRuntimeObserved === true
     && evidence.restoredInFinally === true
     && evidence.rollbackVersionId !== evidence.restoreVersionId;
