@@ -1,7 +1,7 @@
 import { deriveSearchTermMetrics } from './decision-intelligence.js';
 import { analyzeCsvTermProfitability } from './csv-term-profitability-analysis.js';
 
-export const CSV_SEARCH_TERM_BUSINESS_INTELLIGENCE_SCHEMA_VERSION = 'csv-search-term-business-intelligence-v1';
+export const CSV_SEARCH_TERM_BUSINESS_INTELLIGENCE_SCHEMA_VERSION = 'csv-search-term-business-intelligence-v2';
 
 export const SEARCH_TERM_BUSINESS_CLASSIFICATIONS = Object.freeze({
   profitWinner: 'Profit Winners',
@@ -50,7 +50,7 @@ export function buildCsvSearchTermBusinessIntelligence(facts, options = {}) {
   const aggregates = aggregateFactsByTerm(facts);
   const profitByTerm = new Map(base.profitTerms.map((item) => [item.searchTerm, item]));
   const wasteByTerm = new Map(base.wasteTerms.map((item) => [item.searchTerm, item]));
-  const roots = buildRootIntelligence(base);
+  const roots = buildRootIntelligence(base, aggregates);
   const rootStatesByTerm = buildRootStatesByTerm(roots);
 
   const terms = [...aggregates.values()].map((aggregate) => {
@@ -80,31 +80,25 @@ export function buildCsvSearchTermBusinessIntelligence(facts, options = {}) {
       rootStates,
       analysisWindow,
       identityConfidence,
+      recommendationGoverned: aggregate.recommendationGoverned,
       reason: classificationReason(classification),
     });
   }).sort(compareBusinessTerm);
 
   const termByName = new Map(terms.map((item) => [item.searchTerm, item]));
+  const exactNegativeSuggestions = base.negativeSuggestions.filter((item) => item.matchScope === 'exact');
+  const phraseNegativeSuggestions = base.negativeSuggestions.filter((item) => item.matchScope === 'phrase_review');
+  const scaleTerms = terms.filter((item) => item.classification === 'scaleOpportunity');
+  const candidatePotentialCount = exactNegativeSuggestions.length
+    + phraseNegativeSuggestions.length
+    + base.harvestSuggestions.length
+    + scaleTerms.length;
+
   const candidates = [
-    ...base.negativeSuggestions.map((suggestion) => {
-      if (suggestion.matchScope === 'phrase_review') {
-        const root = roots.find((item) => item.root === suggestion.value) || null;
-        return candidateRecord({
-          candidateType: CANDIDATE_TYPES.phraseNegativeReview,
-          actionType: 'negative_keyword.review_phrase',
-          matchScope: 'phrase_review',
-          value: suggestion.value,
-          priorityScore: suggestion.priorityScore,
-          metrics: suggestion.metrics,
-          analysisWindow,
-          rootStates: root?.states || Object.freeze([ROOT_INTELLIGENCE_STATES.toxic]),
-          identityConfidence,
-          sourceImportIds: Object.freeze([]),
-          reason: 'Shared root shows repeated inefficient spend; phrase-level blocking requires human review because root scope can affect multiple search terms.',
-        });
-      }
+    ...exactNegativeSuggestions.flatMap((suggestion) => {
       const term = termByName.get(suggestion.value) || null;
-      return candidateRecord({
+      if (!term?.recommendationGoverned) return [];
+      return [candidateRecord({
         candidateType: CANDIDATE_TYPES.exactNegative,
         actionType: 'negative_keyword.review_exact',
         matchScope: 'exact',
@@ -112,15 +106,33 @@ export function buildCsvSearchTermBusinessIntelligence(facts, options = {}) {
         priorityScore: suggestion.priorityScore,
         metrics: suggestion.metrics,
         analysisWindow,
-        rootStates: term?.rootStates || Object.freeze([]),
+        rootStates: term.rootStates,
         identityConfidence,
-        sourceImportIds: term?.sourceImportIds || Object.freeze([]),
+        sourceImportIds: term.sourceImportIds,
         reason: 'Search term crossed the configured waste threshold with spend and clicks but no acceptable conversion outcome.',
-      });
+      })];
     }),
-    ...base.harvestSuggestions.map((suggestion) => {
+    ...phraseNegativeSuggestions.flatMap((suggestion) => {
+      const root = roots.find((item) => item.root === suggestion.value) || null;
+      if (!root?.recommendationGoverned) return [];
+      return [candidateRecord({
+        candidateType: CANDIDATE_TYPES.phraseNegativeReview,
+        actionType: 'negative_keyword.review_phrase',
+        matchScope: 'phrase_review',
+        value: suggestion.value,
+        priorityScore: suggestion.priorityScore,
+        metrics: suggestion.metrics,
+        analysisWindow,
+        rootStates: root.states || Object.freeze([ROOT_INTELLIGENCE_STATES.toxic]),
+        identityConfidence,
+        sourceImportIds: root.sourceImportIds,
+        reason: 'Shared root shows repeated inefficient spend; phrase-level blocking requires human review because root scope can affect multiple search terms.',
+      })];
+    }),
+    ...base.harvestSuggestions.flatMap((suggestion) => {
       const term = termByName.get(suggestion.value) || null;
-      return candidateRecord({
+      if (!term?.recommendationGoverned) return [];
+      return [candidateRecord({
         candidateType: CANDIDATE_TYPES.harvest,
         actionType: 'keyword.review_harvest',
         matchScope: 'exact_review',
@@ -128,25 +140,28 @@ export function buildCsvSearchTermBusinessIntelligence(facts, options = {}) {
         priorityScore: suggestion.priorityScore,
         metrics: suggestion.metrics,
         analysisWindow,
-        rootStates: term?.rootStates || Object.freeze([]),
+        rootStates: term.rootStates,
         identityConfidence,
-        sourceImportIds: term?.sourceImportIds || Object.freeze([]),
+        sourceImportIds: term.sourceImportIds,
         reason: 'Search term is converting within the configured profitability threshold and is eligible for human-reviewed keyword harvesting.',
-      });
+      })];
     }),
-    ...terms.filter((item) => item.classification === 'scaleOpportunity').map((item) => candidateRecord({
-      candidateType: CANDIDATE_TYPES.scale,
-      actionType: 'keyword.review_scale',
-      matchScope: 'operator_review',
-      value: item.searchTerm,
-      priorityScore: item.priorityScore,
-      metrics: item.metrics,
-      analysisWindow,
-      rootStates: item.rootStates,
-      identityConfidence,
-      sourceImportIds: item.sourceImportIds,
-      reason: 'Profitable search term also has sufficient order, click, and priority evidence to justify a human-reviewed scale decision.',
-    })),
+    ...scaleTerms.flatMap((item) => {
+      if (!item.recommendationGoverned) return [];
+      return [candidateRecord({
+        candidateType: CANDIDATE_TYPES.scale,
+        actionType: 'keyword.review_scale',
+        matchScope: 'operator_review',
+        value: item.searchTerm,
+        priorityScore: item.priorityScore,
+        metrics: item.metrics,
+        analysisWindow,
+        rootStates: item.rootStates,
+        identityConfidence,
+        sourceImportIds: item.sourceImportIds,
+        reason: 'Profitable search term also has sufficient priority, order, and click evidence to justify a human-reviewed scale decision.',
+      })];
+    }),
   ].sort(compareCandidate);
 
   const groups = Object.freeze({
@@ -181,6 +196,9 @@ export function buildCsvSearchTermBusinessIntelligence(facts, options = {}) {
       toxicRootCount: rootIntelligence.toxicRoots.length,
       mixedRootCount: rootIntelligence.mixedRoots.length,
       protectedRootCount: rootIntelligence.protectedRoots.length,
+      candidatePotentialCount,
+      governedCandidateCount: candidates.length,
+      suppressedByGovernanceCandidateCount: candidatePotentialCount - candidates.length,
       exactNegativeCandidateCount: candidates.filter((item) => item.candidateType === CANDIDATE_TYPES.exactNegative).length,
       phraseNegativeReviewCandidateCount: candidates.filter((item) => item.candidateType === CANDIDATE_TYPES.phraseNegativeReview).length,
       harvestCandidateCount: candidates.filter((item) => item.candidateType === CANDIDATE_TYPES.harvest).length,
@@ -205,6 +223,8 @@ function aggregateFactsByTerm(facts) {
         searchTerm,
         variants: new Set(),
         sourceImportIds: new Set(),
+        recommendationGovernanceObserved: false,
+        recommendationGoverned: true,
         impressions: 0,
         clicks: 0,
         orders: 0,
@@ -216,6 +236,13 @@ function aggregateFactsByTerm(facts) {
     }
     if (cleanText(fact?.searchTerm)) row.variants.add(cleanText(fact.searchTerm));
     if (cleanText(fact?.sourceImportId)) row.sourceImportIds.add(cleanText(fact.sourceImportId));
+    for (const sourceImportId of Array.isArray(fact?.sourceImportIds) ? fact.sourceImportIds : []) {
+      if (cleanText(sourceImportId)) row.sourceImportIds.add(cleanText(sourceImportId));
+    }
+    if (Object.prototype.hasOwnProperty.call(fact || {}, 'recommendationGoverned')) {
+      row.recommendationGovernanceObserved = true;
+      row.recommendationGoverned = row.recommendationGoverned && fact.recommendationGoverned === true;
+    }
     row.impressions += nonNegative(fact?.impressions);
     row.clicks += nonNegative(fact?.clicks);
     row.orders += nonNegative(fact?.purchases ?? fact?.orders);
@@ -229,6 +256,7 @@ function aggregateFactsByTerm(facts) {
       searchTerm: row.searchTerm,
       observedVariants: Object.freeze([...row.variants].sort()),
       sourceImportIds: Object.freeze([...row.sourceImportIds].sort()),
+      recommendationGoverned: row.recommendationGovernanceObserved ? row.recommendationGoverned : true,
       metrics: deriveSearchTermMetrics({
         impressions: row.impressions,
         clicks: row.clicks,
@@ -242,7 +270,7 @@ function aggregateFactsByTerm(facts) {
   return rows;
 }
 
-function buildRootIntelligence(base) {
+function buildRootIntelligence(base, aggregates) {
   const byRoot = new Map();
   for (const root of [...base.profitableRoots, ...base.toxicRoots, ...base.protectedRoots]) {
     const current = byRoot.get(root.root);
@@ -256,6 +284,10 @@ function buildRootIntelligence(base) {
     if (root.classification === 'toxic') states.push(ROOT_INTELLIGENCE_STATES.toxic);
     if (root.profitTermCount > 0 && root.wasteTermCount > 0) states.push(ROOT_INTELLIGENCE_STATES.mixed);
     if (root.profitProtectionApplied) states.push(ROOT_INTELLIGENCE_STATES.protected);
+    const termAggregates = (root.searchTerms || []).map((term) => aggregates.get(term)).filter(Boolean);
+    const sourceImportIds = new Set();
+    for (const term of termAggregates) for (const sourceImportId of term.sourceImportIds || []) sourceImportIds.add(sourceImportId);
+    const recommendationGoverned = termAggregates.length > 0 && termAggregates.every((term) => term.recommendationGoverned === true);
     return Object.freeze({
       root: root.root,
       termCount: root.termCount,
@@ -266,6 +298,8 @@ function buildRootIntelligence(base) {
       primaryState: primaryRootState(states),
       priorityScore: root.priorityScore,
       metrics: root.metrics,
+      sourceImportIds: Object.freeze([...sourceImportIds].sort()),
+      recommendationGoverned,
       profitProtectionApplied: Boolean(root.profitProtectionApplied),
     });
   }).sort((left, right) => right.priorityScore - left.priorityScore || left.root.localeCompare(right.root));
@@ -306,6 +340,8 @@ function candidateRecord({ candidateType, actionType, matchScope, value, priorit
       rootStates: Object.freeze([...(rootStates || [])]),
       identityConfidence,
       sourceImportIds: Object.freeze([...(sourceImportIds || [])]),
+      recommendationGoverned: true,
+      provenanceGate: 'exact_or_reconciled_source',
       reason,
     }),
   });

@@ -6,6 +6,7 @@ import {
   buildRecommendationPreview,
   deriveSearchTermMetrics,
 } from './decision-intelligence.js';
+import { buildCsvIntelligenceProductSurface } from './csv-intelligence-product-surface.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const DEFAULT_LIMIT = 50;
@@ -88,6 +89,7 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
       targetId: null,
       targeting: row.targeting,
       matchType: row.match_type || null,
+      targetingIdentityState: row.targeting_identity_state || 'unresolved',
       identityResolved: false,
       negativeKeywordExists: null,
       harvestedKeywordExists: null,
@@ -156,6 +158,7 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
         csvProvenanceValid: csvEvidence.provenanceValid,
         sourceImportIds: csvEvidence.sourceImportIds,
         contentSha256s: csvEvidence.contentSha256s,
+        targetingIdentityState: row.targeting_identity_state || 'unresolved',
         identityResolved: false,
       }),
       confidence: preview.decision.confidence,
@@ -182,7 +185,7 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
   const currencyCodes = uniqueTexts(rows.map((row) => row.currency_code));
   const marketplaces = uniqueTexts(rows.map((row) => row.marketplace));
 
-  return json(request, {
+  const payload = {
     schemaVersion: SEARCH_TERM_INTELLIGENCE_SCHEMA_VERSION,
     modelVersion: SEARCH_TERM_MODEL_VERSION,
     ruleVersion: `${SEARCH_TERM_RULE_VERSION}+csv-authority-v2`,
@@ -233,7 +236,9 @@ export async function handleCsvSearchTermIntelligenceApiRoute({ request, env, ac
       amazonMutationAuthorized: false,
     },
     items,
-  }, 200);
+  };
+  const productization = buildCsvIntelligenceProductSurface(payload);
+  return json(request, { ...payload, productization }, 200);
 }
 
 async function queryCsvSearchTermIntelligence(db, input) {
@@ -254,6 +259,7 @@ async function queryCsvSearchTermIntelligence(db, input) {
         f.ad_group_name,
         f.targeting,
         f.match_type,
+        MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.targeting_identity_state END) AS targeting_identity_state,
         MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.search_term END) AS search_term,
         f.normalized_search_term,
         MIN(CASE WHEN f.report_date BETWEEN ?3 AND ?4 THEN f.currency_code END) AS currency_code,
