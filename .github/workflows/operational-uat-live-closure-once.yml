@@ -1,0 +1,417 @@
+name: Operational UAT Live Closure Once
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/operational-uat-live-closure-once.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operational-uat-live-closure-production
+  cancel-in-progress: false
+
+jobs:
+  live-closure:
+    name: Production live UAT 10-case closure
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'ops/live-production-uat-closure-5d1e46' &&
+      github.event.pull_request.base.sha == '5d1e46c153277a1d5799b902559c4ba80c2ea9bc'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      EXPECTED_MAIN_SHA: 5d1e46c153277a1d5799b902559c4ba80c2ea9bc
+      EXPECTED_PRODUCTION_VERSION: a43d7cb4-67d3-4cdb-be2b-0f371dd1c503
+      CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+      UAT_ACCESS_AUD: b86d09befdfc53ffbf72a9a13f1db537e290aed444077df92635b129d1dd7337
+      PRODUCTION_HOST: ads-operations-web-prod.tanshiyuesir.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_MAIN_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Execute temporary machine-auth UAT and guaranteed cleanup
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs/promises';
+          import { discoverWorkerDeploymentTopology } from './scripts/cloudflare-deployment-discovery-client.mjs';
+          import { runOperationalUatReleaseRollback } from './scripts/operational-uat-release-rollback.mjs';
+
+          const API = 'https://api.cloudflare.com/client/v4';
+          const accountId = required(process.env.CLOUDFLARE_ACCOUNT_ID, 'account_id_missing');
+          const apiToken = required(process.env.CLOUDFLARE_API_TOKEN, 'api_token_missing');
+          const githubToken = required(process.env.GITHUB_TOKEN, 'github_token_missing');
+          const expectedMain = required(process.env.EXPECTED_MAIN_SHA, 'expected_main_missing').toLowerCase();
+          const expectedVersion = required(process.env.EXPECTED_PRODUCTION_VERSION, 'expected_version_missing').toLowerCase();
+          const controlDbId = required(process.env.CONTROL_DB_ID, 'control_db_id_missing');
+          const uatAud = required(process.env.UAT_ACCESS_AUD, 'uat_aud_missing').toLowerCase();
+          const host = required(process.env.PRODUCTION_HOST, 'production_host_missing');
+          const runTag = `${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT || '1'}`;
+          const serviceName = `operational-uat-live-${runTag}`;
+          const appName = `operational-uat-live-${runTag}`;
+          const serviceUserId = `operational-uat-service-${runTag}`;
+          const limitedUserId = `!operational-uat-limited-${runTag}`;
+          const serviceEmail = `operational-uat-service-${runTag}@invalid.local`;
+          const limitedEmail = `operational-uat-limited-${runTag}@invalid.local`;
+          const liveProbeUrl = `https://${host}/api/v1/operational-uat/live-probe`;
+          const healthUrl = `https://${host}/api/health`;
+          const cases = [
+            'csv.duplicate-import',
+            'csv.missing-identifiers',
+            'csv.date-gaps',
+            'csv.import-overlap',
+            'permission.store-access-mismatch',
+            'failure.d1-query',
+            'failure.stale-request',
+            'failure.worker-error',
+            'failure.missing-binding',
+          ];
+          const state = {
+            serviceTokenId: null,
+            serviceClientId: null,
+            serviceClientSecret: null,
+            accessAppId: null,
+            accessPolicyId: null,
+            serviceActorCreated: false,
+            limitedActorCreated: false,
+          };
+          const evidence = {
+            schema: 'operational-uat-live-closure-v1',
+            strictBaselineBefore: 21,
+            expectedMainSha: expectedMain,
+            expectedProductionVersion: expectedVersion,
+            productionAmazonHardOff: false,
+            failClosed: true,
+            amazonExecutionAttempted: false,
+            businessFactMutationAttempted: false,
+            accessObjectsTemporary: true,
+            liveCases: [],
+            rollback: null,
+            cleanup: null,
+            completed: false,
+          };
+          let primaryError = null;
+
+          const cfHeaders = () => ({ accept: 'application/json', authorization: `Bearer ${apiToken}` });
+          async function cf(path, { method = 'GET', json = undefined } = {}) {
+            const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}${path}`, {
+              method,
+              headers: { ...cfHeaders(), ...(json === undefined ? {} : { 'content-type': 'application/json' }) },
+              ...(json === undefined ? {} : { body: JSON.stringify(json) }),
+            });
+            const text = await response.text();
+            let body = null;
+            try { body = text ? JSON.parse(text) : {}; } catch {}
+            if (!response.ok || body?.success !== true) {
+              const code = body?.errors?.[0]?.code ?? 'UNKNOWN';
+              const message = String(body?.errors?.[0]?.message || '').slice(0, 180);
+              throw new Error(`cloudflare_${method}_${path}_http_${response.status}_api_${code}:${message}`);
+            }
+            return body.result;
+          }
+
+          async function d1(sql, params = []) {
+            const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}/d1/database/${encodeURIComponent(controlDbId)}/query`, {
+              method: 'POST',
+              headers: { ...cfHeaders(), 'content-type': 'application/json' },
+              body: JSON.stringify({ sql, params }),
+            });
+            const text = await response.text();
+            let body = null;
+            try { body = JSON.parse(text); } catch {}
+            const rows = Array.isArray(body?.result) ? body.result : [];
+            if (!response.ok || body?.success !== true || rows.length === 0 || rows.some((row) => row?.success !== true)) {
+              const code = body?.errors?.[0]?.code ?? 'UNKNOWN';
+              throw new Error(`d1_query_failed_http_${response.status}_api_${code}`);
+            }
+            return rows;
+          }
+
+          async function githubMainSha() {
+            const response = await fetch('https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main', {
+              headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${githubToken}`, 'x-github-api-version': '2022-11-28' },
+            });
+            if (!response.ok) throw new Error(`github_main_http_${response.status}`);
+            return String((await response.json())?.commit?.sha || '').toLowerCase();
+          }
+
+          async function serviceFetch(url, init = {}) {
+            if (!state.serviceClientId || !state.serviceClientSecret) throw new Error('service_credentials_unavailable');
+            const headers = new Headers(init.headers || {});
+            headers.set('CF-Access-Client-Id', state.serviceClientId);
+            headers.set('CF-Access-Client-Secret', state.serviceClientSecret);
+            headers.set('cache-control', 'no-cache');
+            return fetch(url, { ...init, headers, redirect: 'manual', cache: 'no-store' });
+          }
+
+          async function waitForHealth() {
+            let last = null;
+            for (let attempt = 1; attempt <= 30; attempt += 1) {
+              const response = await serviceFetch(`${healthUrl}?uatMachineAuth=${Date.now()}-${attempt}`, { method: 'GET', headers: { accept: 'application/json' } });
+              const contentType = response.headers.get('content-type') || '';
+              const text = await response.text();
+              last = { status: response.status, contentType, location: response.headers.get('location') || null, text: text.slice(0, 200) };
+              if (response.ok && /application\/json/i.test(contentType)) {
+                const payload = JSON.parse(text);
+                if (String(payload?.deployment?.versionId || '').toLowerCase() === expectedVersion
+                    && payload?.environment === 'production'
+                    && payload?.syncTriggerEnabled === false) {
+                  return payload;
+                }
+              }
+              if (attempt < 30) await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
+            throw new Error(`machine_auth_health_not_ready:${JSON.stringify(last)}`);
+          }
+
+          async function callCase(caseId) {
+            const response = await serviceFetch(`${liveProbeUrl}?uat=${encodeURIComponent(caseId)}&nonce=${Date.now()}`, {
+              method: 'POST',
+              headers: {
+                accept: 'application/json',
+                'content-type': 'application/json',
+                'x-operational-uat-confirm': 'non-amazon-live-probe-v1',
+              },
+              body: JSON.stringify({ caseId }),
+            });
+            const contentType = response.headers.get('content-type') || '';
+            const text = await response.text();
+            if (!/application\/json/i.test(contentType)) {
+              throw new Error(`${caseId}:non_json_http_${response.status}:location_${response.headers.get('location') || 'none'}`);
+            }
+            const payload = JSON.parse(text);
+            const runtimeVersion = String(response.headers.get('x-runtime-worker-version') || '').toLowerCase();
+            const routeClass = response.headers.get('x-runtime-route-class') || null;
+            const verified = payload?.caseId === caseId
+              && payload?.verified === true
+              && payload?.amazonExecutionAttempted === false
+              && payload?.crossStoreLeakageDetected === false
+              && payload?.fabricatedZeroPerformance === false
+              && payload?.businessFactPersistenceAttempted === false
+              && payload?.failClosed === true
+              && runtimeVersion === expectedVersion
+              && routeClass === '/api/v1/operational-uat/live-probe';
+            return {
+              caseId,
+              verified,
+              status: response.status,
+              runtimeVersion,
+              routeClass,
+              runtimeErrorCode: response.headers.get('x-runtime-error-code') || null,
+              requestIdPresent: Boolean(response.headers.get('x-request-id')),
+              observed: payload?.observed || null,
+              flags: {
+                amazonExecutionAttempted: payload?.amazonExecutionAttempted ?? null,
+                crossStoreLeakageDetected: payload?.crossStoreLeakageDetected ?? null,
+                fabricatedZeroPerformance: payload?.fabricatedZeroPerformance ?? null,
+                businessFactPersistenceAttempted: payload?.businessFactPersistenceAttempted ?? null,
+                failClosed: payload?.failClosed ?? null,
+              },
+            };
+          }
+
+          async function cleanup() {
+            const result = {
+              appDeleted: false,
+              serviceTokenDeleted: false,
+              serviceActorDeleted: false,
+              limitedActorDeleted: false,
+              appAbsentVerified: false,
+              serviceTokenAbsentVerified: false,
+              actorsAbsentVerified: false,
+              errors: [],
+            };
+            if (state.accessAppId) {
+              try {
+                await cf(`/access/apps/${encodeURIComponent(state.accessAppId)}`, { method: 'DELETE' });
+                result.appDeleted = true;
+              } catch (error) { result.errors.push(`app_delete:${String(error?.message || error).slice(0, 240)}`); }
+            } else { result.appDeleted = true; }
+            if (state.serviceTokenId) {
+              try {
+                await cf(`/access/service_tokens/${encodeURIComponent(state.serviceTokenId)}`, { method: 'DELETE' });
+                result.serviceTokenDeleted = true;
+              } catch (error) { result.errors.push(`token_delete:${String(error?.message || error).slice(0, 240)}`); }
+            } else { result.serviceTokenDeleted = true; }
+            try {
+              await d1('DELETE FROM user_global_roles WHERE user_id IN (?1, ?2); DELETE FROM store_members WHERE user_id IN (?1, ?2); DELETE FROM users WHERE user_id IN (?1, ?2);', [serviceUserId, limitedUserId]);
+              result.serviceActorDeleted = true;
+              result.limitedActorDeleted = true;
+            } catch (error) { result.errors.push(`actor_delete:${String(error?.message || error).slice(0, 240)}`); }
+            try {
+              const apps = await cf(`/access/apps?aud=${encodeURIComponent(uatAud)}&per_page=50&page=1`);
+              result.appAbsentVerified = Array.isArray(apps) && apps.every((app) => app?.id !== state.accessAppId && String(app?.aud || '').toLowerCase() !== uatAud);
+            } catch (error) { result.errors.push(`app_verify:${String(error?.message || error).slice(0, 240)}`); }
+            try {
+              const tokens = await cf('/access/service_tokens?per_page=100&page=1');
+              result.serviceTokenAbsentVerified = Array.isArray(tokens) && tokens.every((token) => token?.id !== state.serviceTokenId);
+            } catch (error) { result.errors.push(`token_verify:${String(error?.message || error).slice(0, 240)}`); }
+            try {
+              const rows = await d1('SELECT user_id FROM users WHERE user_id IN (?1, ?2)', [serviceUserId, limitedUserId]);
+              result.actorsAbsentVerified = Array.isArray(rows?.[0]?.results) && rows[0].results.length === 0;
+            } catch (error) { result.errors.push(`actor_verify:${String(error?.message || error).slice(0, 240)}`); }
+            return result;
+          }
+
+          try {
+            const liveMain = await githubMainSha();
+            if (liveMain !== expectedMain) throw new Error(`main_drift:${liveMain}:${expectedMain}`);
+            const topology = await discoverWorkerDeploymentTopology({ accountId, scriptName: 'ads-operations-web-prod', token: apiToken });
+            if (String(topology?.activeBuild?.commitSha || '').toLowerCase() !== expectedMain
+                || String(topology?.activeVersion?.versionId || '').toLowerCase() !== expectedVersion
+                || Number(topology?.activeDeployment?.percentage) !== 100
+                || String(topology?.activeBuild?.outcome || '').toLowerCase() !== 'success') {
+              throw new Error('production_topology_precondition_failed');
+            }
+
+            const existingApps = await cf(`/access/apps?aud=${encodeURIComponent(uatAud)}&per_page=50&page=1`);
+            if (Array.isArray(existingApps) && existingApps.some((app) => String(app?.aud || '').toLowerCase() === uatAud)) {
+              throw new Error('uat_secondary_audience_already_has_application');
+            }
+
+            const db = await cf(`/d1/database/${encodeURIComponent(controlDbId)}`);
+            if (String(db?.name || '') !== 'ads-ops-control-prod') throw new Error('control_db_identity_mismatch');
+            const preflight = await d1("SELECT COUNT(*) AS users_manage_admin FROM role_permissions WHERE role_key='admin' AND permission_key='users.manage'; SELECT store_id FROM stores WHERE status <> 'disabled' ORDER BY sort_order ASC, store_code ASC LIMIT 2;", []);
+            if (Number(preflight?.[0]?.results?.[0]?.users_manage_admin || 0) !== 1) throw new Error('admin_users_manage_permission_missing');
+            const stores = Array.isArray(preflight?.[1]?.results) ? preflight[1].results : [];
+            if (stores.length < 2) throw new Error('permission_mismatch_requires_two_active_stores');
+
+            const service = await cf('/access/service_tokens', { method: 'POST', json: { name: serviceName, duration: '30m' } });
+            state.serviceTokenId = required(service?.id, 'service_token_id_missing');
+            state.serviceClientId = required(service?.client_id, 'service_client_id_missing');
+            state.serviceClientSecret = required(service?.client_secret, 'service_client_secret_missing');
+            if (!state.serviceClientId.endsWith('.access')) throw new Error('service_client_id_shape_invalid');
+            console.log(`::add-mask::${state.serviceClientId}`);
+            console.log(`::add-mask::${state.serviceClientSecret}`);
+
+            const app = await cf('/access/apps', {
+              method: 'POST',
+              json: {
+                name: appName,
+                type: 'self_hosted',
+                domain: `${host}/api/v1/operational-uat/live-probe`,
+                aud: uatAud,
+                session_duration: '30m',
+                app_launcher_visible: false,
+                destinations: [
+                  { type: 'public', uri: `${host}/api/v1/operational-uat/live-probe` },
+                  { type: 'public', uri: `${host}/api/health` },
+                ],
+              },
+            });
+            state.accessAppId = required(app?.id, 'access_app_id_missing');
+            if (String(app?.aud || '').toLowerCase() !== uatAud) throw new Error('access_app_audience_mismatch');
+
+            const policy = await cf(`/access/apps/${encodeURIComponent(state.accessAppId)}/policies`, {
+              method: 'POST',
+              json: {
+                name: `${appName}-service-auth`,
+                decision: 'non_identity',
+                precedence: 1,
+                include: [{ service_token: { token_id: state.serviceTokenId } }],
+              },
+            });
+            state.accessPolicyId = required(policy?.id, 'access_policy_id_missing');
+
+            await d1('INSERT INTO users(user_id, cf_access_sub, email, email_norm, display_name, status) VALUES (?1, ?2, ?3, ?3, ?4, \'active\'); INSERT INTO user_global_roles(user_id, role_key) VALUES (?1, \'admin\');', [serviceUserId, state.serviceClientId, serviceEmail, 'Operational UAT Service']);
+            state.serviceActorCreated = true;
+            await d1('INSERT INTO users(user_id, cf_access_sub, email, email_norm, display_name, status) VALUES (?1, NULL, ?2, ?2, ?3, \'active\'); INSERT INTO store_members(store_id, user_id, role_key) VALUES (?4, ?1, \'viewer\');', [limitedUserId, limitedEmail, 'Operational UAT Limited', stores[0].store_id]);
+            state.limitedActorCreated = true;
+
+            const health = await waitForHealth();
+            evidence.productionAmazonHardOff = health?.syncTriggerEnabled === false;
+            evidence.health = {
+              ok: health?.ok === true,
+              environment: health?.environment || null,
+              versionId: health?.deployment?.versionId || null,
+              syncTriggerEnabled: health?.syncTriggerEnabled ?? null,
+              storeDatabases: health?.dependencies?.storeDatabases ?? null,
+            };
+
+            for (const caseId of cases) {
+              try {
+                const row = await callCase(caseId);
+                evidence.liveCases.push(row);
+                console.log(JSON.stringify({ event: 'operational_uat_live_case', caseId, verified: row.verified, status: row.status, runtimeVersion: row.runtimeVersion }));
+              } catch (error) {
+                evidence.liveCases.push({ caseId, verified: false, error: String(error?.message || error).slice(0, 500) });
+              }
+            }
+
+            const accessAwareFetch = async (input, init = {}) => {
+              const url = new URL(String(input));
+              if (url.hostname === host && url.pathname === '/api/health') return serviceFetch(url, init);
+              return fetch(input, init);
+            };
+            try {
+              evidence.rollback = await runOperationalUatReleaseRollback({
+                accountId,
+                token: apiToken,
+                scriptName: 'ads-operations-web-prod',
+                healthUrl,
+                fetchImpl: accessAwareFetch,
+                sleepImpl: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+                healthAttempts: 30,
+                healthDelayMs: 2000,
+              });
+            } catch (error) {
+              evidence.rollback = { caseId: 'failure.release-rollback', verified: false, error: String(error?.code || error?.message || error).slice(0, 500) };
+            }
+
+            const verifiedNine = evidence.liveCases.length === cases.length && evidence.liveCases.every((row) => row.verified === true);
+            const verifiedRollback = evidence.rollback?.verified === true;
+            evidence.strictLivePassAfter = 21 + evidence.liveCases.filter((row) => row.verified === true).length + (verifiedRollback ? 1 : 0);
+            evidence.completed = verifiedNine && verifiedRollback && evidence.productionAmazonHardOff === true;
+            if (!evidence.completed) primaryError = new Error(`operational_uat_incomplete:${evidence.strictLivePassAfter}/31`);
+          } catch (error) {
+            primaryError = error;
+          } finally {
+            evidence.cleanup = await cleanup();
+            const cleanupVerified = evidence.cleanup.appDeleted
+              && evidence.cleanup.serviceTokenDeleted
+              && evidence.cleanup.serviceActorDeleted
+              && evidence.cleanup.limitedActorDeleted
+              && evidence.cleanup.appAbsentVerified
+              && evidence.cleanup.serviceTokenAbsentVerified
+              && evidence.cleanup.actorsAbsentVerified
+              && evidence.cleanup.errors.length === 0;
+            evidence.cleanupVerified = cleanupVerified;
+            if (!cleanupVerified && !primaryError) primaryError = new Error('operational_uat_cleanup_incomplete');
+            await fs.mkdir('artifacts', { recursive: true });
+            await fs.writeFile('artifacts/operational-uat-live-closure.json', `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+            console.log(JSON.stringify({
+              event: 'operational_uat_live_closure_summary',
+              completed: evidence.completed,
+              strictLivePassAfter: evidence.strictLivePassAfter ?? 21,
+              productionAmazonHardOff: evidence.productionAmazonHardOff,
+              cleanupVerified: evidence.cleanupVerified,
+              liveCases: evidence.liveCases.map((row) => ({ caseId: row.caseId, verified: row.verified, status: row.status ?? null })),
+              rollbackVerified: evidence.rollback?.verified === true,
+              amazonExecutionAttempted: false,
+            }, null, 2));
+          }
+
+          if (primaryError) throw primaryError;
+
+          function required(value, code) {
+            const text = String(value || '').trim();
+            if (!text) throw new Error(code);
+            return text;
+          }
+          NODE
+      - name: Upload immutable closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-uat-live-closure-${{ github.run_id }}
+          path: artifacts/operational-uat-live-closure.json
+          if-no-files-found: warn
+          retention-days: 90
