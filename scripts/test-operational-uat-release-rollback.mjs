@@ -42,9 +42,11 @@ assert.equal(evidence.rollbackRuntimeObserved, true);
 assert.equal(evidence.restoreRuntimeObserved, true);
 assert.equal(evidence.restoredInFinally, true);
 assert.equal(evidence.deploymentForceApplied, true);
+assert.equal(evidence.deploymentReceiptVerifiedByReadback, true);
 assert.equal(evidence.amazonExecutionAttempted, false);
 assert.equal(evidence.businessFactPersistenceAttempted, false);
 assert.deepEqual(happy.deployedVersions, [PREVIOUS, ACTIVE]);
+assert.deepEqual(happy.readbackDeploymentIds, [DEPLOY_ROLLBACK, DEPLOY_RESTORE]);
 assert.equal(happy.currentVersion(), ACTIVE);
 
 const failure = fakeCloudflare({ healthFailureForRollback: true });
@@ -63,6 +65,7 @@ await assert.rejects(
     && String(error.code).startsWith('OP_UAT_ROLLBACK_PRIMARY_FAILED:'),
 );
 assert.deepEqual(failure.deployedVersions, [PREVIOUS, ACTIVE], 'restore must run after rollback verification failure');
+assert.deepEqual(failure.readbackDeploymentIds, [DEPLOY_ROLLBACK, DEPLOY_RESTORE], 'both deployment receipts must be verified by readback');
 assert.equal(failure.currentVersion(), ACTIVE, 'restore version must be active after failure path');
 
 console.log(JSON.stringify({
@@ -70,6 +73,7 @@ console.log(JSON.stringify({
   contract: 'operational-uat-release-rollback',
   realDeploymentRequired: true,
   forceDeploymentRequired: true,
+  deploymentReceiptReadbackRequired: true,
   restoreInFinally: true,
   noAmazonExecution: true,
 }));
@@ -78,6 +82,8 @@ function fakeCloudflare({ healthFailureForRollback }) {
   let current = ACTIVE;
   let deployCount = 0;
   const deployedVersions = [];
+  const deploymentReceipts = new Map();
+  const readbackDeploymentIds = [];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
     if (url.hostname === 'api.cloudflare.com' && init.method === 'GET' && url.pathname.endsWith('/deployments')) {
@@ -91,14 +97,16 @@ function fakeCloudflare({ healthFailureForRollback }) {
       deployedVersions.push(version);
       current = version;
       deployCount += 1;
-      return jsonResponse({
-        success: true,
-        result: {
-          id: deployCount === 1 ? DEPLOY_ROLLBACK : DEPLOY_RESTORE,
-          strategy: 'percentage',
-          versions: [{ version_id: version, percentage: 100 }],
-        },
-      });
+      const id = deployCount === 1 ? DEPLOY_ROLLBACK : DEPLOY_RESTORE;
+      deploymentReceipts.set(id, deployment(id, version, 100));
+      return jsonResponse({ success: true, result: { id } });
+    }
+    if (url.hostname === 'api.cloudflare.com' && init.method === 'GET' && /\/deployments\/[0-9a-f-]+$/i.test(url.pathname)) {
+      const id = url.pathname.split('/').pop();
+      readbackDeploymentIds.push(id);
+      const receipt = deploymentReceipts.get(id);
+      if (!receipt) return jsonResponse({ success: false, errors: [{ code: 1001, message: 'missing deployment' }], result: null }, 404);
+      return jsonResponse({ success: true, result: receipt });
     }
     if (url.pathname === '/api/health') {
       const visible = healthFailureForRollback && current === PREVIOUS ? ACTIVE : current;
@@ -106,11 +114,11 @@ function fakeCloudflare({ healthFailureForRollback }) {
     }
     throw new Error(`unexpected fetch ${init.method || 'GET'} ${url}`);
   };
-  return { fetchImpl, deployedVersions, currentVersion: () => current };
+  return { fetchImpl, deployedVersions, readbackDeploymentIds, currentVersion: () => current };
 }
 
 function deployment(id, versionId, percentage) {
-  return { id, versions: [{ version_id: versionId, percentage }] };
+  return { id, strategy: 'percentage', versions: [{ version_id: versionId, percentage }] };
 }
 
 function jsonResponse(payload, status = 200) {
