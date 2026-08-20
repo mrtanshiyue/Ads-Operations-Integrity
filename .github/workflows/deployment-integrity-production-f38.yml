@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 concurrency:
   group: deployment-integrity-production-f38
@@ -24,6 +25,7 @@ jobs:
       WORKER_NAME: ads-operations-web-prod
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout deployment-integrity branch
         uses: actions/checkout@v4
@@ -131,3 +133,15 @@ jobs:
             attempts: live.attempt,
           }, null, 2));
           NODE
+
+      - name: Report success to Production Release Trace
+        if: success()
+        shell: bash
+        run: |
+          gh issue comment 191 --repo "$GITHUB_REPOSITORY" --body "## Deployment Integrity — exact Production release LIVE\n\n- target main: \`$EXPECTED_GIT_SHA\`\n- worker: \`$WORKER_NAME\`\n- workflow result: **SUCCESS**\n- run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nThe workflow verified exact Workers Build identity and waited until the target commit was the active Production deployment at 100% traffic. Amazon execution was not involved."
+
+      - name: Report failure to Production Release Trace
+        if: failure()
+        shell: bash
+        run: |
+          gh issue comment 191 --repo "$GITHUB_REPOSITORY" --body "## Deployment Integrity — exact Production release NOT VERIFIED\n\n- target main: \`$EXPECTED_GIT_SHA\`\n- worker: \`$WORKER_NAME\`\n- workflow result: **FAILURE**\n- run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\n\nNo Production-live claim is made. Inspect the run log before any UAT rerun. Amazon execution was not involved."
