@@ -136,4 +136,27 @@ assert.equal(mismatch.reconciliation.status, 'fail');
 assert.equal(mismatch.reconciliation.mismatchRows, 1);
 assert.equal(mismatch.errors[0].errorCode, 'SETTLEMENT_ROW_TOTAL_MISMATCH');
 
+const usContext = await parseAmazonSettlementCsv({
+  csvBytes:source,
+  sourceFileName:'settlement-us-context.csv',
+  uploadedAt:'2026-08-19T10:00:00.000Z',
+  marketplace:'US',
+});
+assert.equal(usContext.ok, true);
+assert.equal(usContext.acceptedRows, 2);
+assert.equal(usContext.rejectedRows, 0);
+assert.equal(usContext.marketplace, 'amazon.com');
+assert.deepEqual(usContext.errors, []);
+
+const trueMarketplaceMismatch = await parseAmazonSettlementCsv({
+  csvBytes:source,
+  sourceFileName:'settlement-wrong-marketplace.csv',
+  uploadedAt:'2026-08-19T10:00:00.000Z',
+  marketplace:'amazon.co.uk',
+});
+assert.equal(trueMarketplaceMismatch.ok, false);
+assert.equal(trueMarketplaceMismatch.acceptedRows, 0);
+assert.equal(trueMarketplaceMismatch.rejectedRows, 2);
+assert.equal(trueMarketplaceMismatch.errors.at(-1)?.errorCode, 'SETTLEMENT_MARKETPLACE_CONTEXT_MISMATCH');
+
 console.log('settlement CSV parser and reconciliation: PASS');
