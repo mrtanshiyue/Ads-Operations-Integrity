@@ -6,12 +6,18 @@ on:
     paths:
       - 'scripts/operational-uat-failure-recovery.mjs'
       - 'scripts/test-operational-uat-failure-recovery.mjs'
+      - 'cloudflare/runtime/operational-uat-live-probe.js'
+      - 'cloudflare/runtime/runtime-observed-entry.js'
+      - 'scripts/test-operational-uat-live-probe.mjs'
       - '.github/workflows/operational-uat-focused-ci.yml'
   push:
-    branches: ['test/**']
+    branches: ['test/**', 'feature/**']
     paths:
       - 'scripts/operational-uat-failure-recovery.mjs'
       - 'scripts/test-operational-uat-failure-recovery.mjs'
+      - 'cloudflare/runtime/operational-uat-live-probe.js'
+      - 'cloudflare/runtime/runtime-observed-entry.js'
+      - 'scripts/test-operational-uat-live-probe.mjs'
       - '.github/workflows/operational-uat-focused-ci.yml'
 
 permissions:
@@ -29,4 +35,8 @@ jobs:
           node-version: '22'
       - run: node --check scripts/operational-uat-failure-recovery.mjs
       - run: node --check scripts/test-operational-uat-failure-recovery.mjs
+      - run: node --check cloudflare/runtime/operational-uat-live-probe.js
+      - run: node --check cloudflare/runtime/runtime-observed-entry.js
+      - run: node --check scripts/test-operational-uat-live-probe.mjs
       - run: node scripts/test-operational-uat-failure-recovery.mjs
+      - run: node scripts/test-operational-uat-live-probe.mjs
