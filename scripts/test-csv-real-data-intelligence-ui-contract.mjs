@@ -7,12 +7,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist-cloudflare-native');
 const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const asset = await readFile(path.join(dist, 'assets', 'cloudflare-native-csv-intelligence-v1.js'), 'utf8');
-const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.4"></script>';
+const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.5"></script>';
 
 assert.equal(index.split(tag).length - 1, 1, 'CSV Intelligence extension must be injected exactly once with cache-busting version');
 assert.doesNotMatch(index, /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js"><\/script>/, 'Unversioned CSV Intelligence script tag must not survive the canonical build');
 assert.match(asset, /CloudflareCsvIntelligence/, 'CSV Intelligence public marker missing');
-assert.match(asset, /VERSION\s*=\s*'1\.0\.4'/, 'CSV Intelligence runtime version must advance after canonical identity copy correction');
+assert.match(asset, /VERSION\s*=\s*'1\.0\.5'/, 'CSV Intelligence runtime version must advance for Operator Workspace productization');
 assert.match(asset, /csvIntelligenceVersion = VERSION/, 'Runtime version must be exposed on the decision panel for authenticated acceptance diagnostics');
 assert.match(asset, /name="dataSource"/, 'Decision Intelligence data-source switch missing');
 assert.match(asset, /Imported CSV/, 'Imported CSV source option missing');
@@ -28,6 +28,25 @@ assert.match(asset, /Observed ad group ID/, 'Observed CSV ad-group ID evidence m
 assert.match(asset, /Observed targeting ID/, 'Observed CSV targeting ID evidence must be visible');
 assert.match(asset, /Observed CSV IDs alone do not authorize persistence or Amazon mutation/, 'Observed IDs must not be presented as canonical authorization');
 assert.doesNotMatch(asset, /campaign\/ad-group\/keyword IDs are unresolved/, 'UI must not falsely claim observed CSV entity IDs are absent');
+
+assert.match(asset, /payload\?\.productization/, 'Operator Workspace must progressively consume payload.productization');
+assert.match(asset, /data-csv-operator-workspace/, 'Search Term Intelligence Operator Workspace surface missing');
+assert.match(asset, /data-csv-product-overview/, 'Product overview summary missing');
+for (const label of ['Profit Winners', 'Scale Opportunities', 'Waste Terms', 'Watchlist', 'Candidate Count', 'Root Count', 'Lifecycle Count']) {
+  assert.ok(asset.includes(label), `Operator Workspace overview must expose ${label}`);
+}
+assert.match(asset, /data-csv-scope-health/, 'Analysis Scope health surface missing');
+for (const label of ['Universe Complete?', 'Financially Comparable?', 'Candidate Emission Authorized?', 'Observed Search Term Count', 'Hard Cap', 'Scope Reasons']) {
+  assert.ok(asset.includes(label), `Analysis Scope must expose ${label}`);
+}
+assert.match(asset, /incomplete-universe data cannot emit Negative, Harvest, or Scale candidates/, 'Incomplete universe must fail closed in operator copy');
+assert.match(asset, /Financial comparability gate blocked/, 'Financial comparability gate must be explicit');
+assert.match(asset, /financialValue\(/, 'Financial values must pass through a comparability suppression helper');
+assert.match(asset, /scope\?\.financiallyComparable === true/, 'Financial display must require explicit comparability');
+assert.match(asset, /data-csv-product-term/, 'Product intelligence evidence drilldown missing');
+assert.match(asset, /Human review boundary/, 'Operator Workspace must preserve the human-review boundary');
+assert.match(asset, /Amazon mutation disabled/, 'Product evidence must retain Amazon mutation disabled copy');
+assert.match(asset, /data-csv-productization-fallback/, 'Older payloads must fall back to the compatibility view instead of being treated as complete product intelligence');
 
 assert.match(asset, /REQUEST_TIMEOUT_MS\s*=\s*30000/, 'CSV intelligence must bound pending requests');
 assert.match(asset, /TIMEOUT_ERROR_CODE\s*=\s*'CSV_INTELLIGENCE_TIMEOUT'/, 'CSV intelligence must classify watchdog timeouts deterministically');
@@ -52,11 +71,15 @@ assert.doesNotMatch(asset, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-pe
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-real-data-intelligence-ui-v4-canonical-identity-copy',
-  runtimeVersion: '1.0.4',
+  contract: 'csv-real-data-intelligence-ui-v5-operator-workspace',
+  runtimeVersion: '1.0.5',
   requestTimeoutMs: 30000,
   independentWatchdog: true,
   cacheBustedAsset: true,
+  operatorWorkspace: true,
+  completeUniverseScopeVisible: true,
+  financialComparabilityFailClosed: true,
+  humanReviewOnly: true,
   duplicateRunsBlocked: true,
   staleResponsesRejected: true,
   observedCsvIdsAreNotCanonicalAuthority: true,
