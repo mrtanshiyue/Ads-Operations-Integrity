@@ -50,6 +50,7 @@ export async function runOperationalUatReleaseRollback(options = {}) {
     rollbackRuntimeObserved: false,
     restoreRuntimeObserved: false,
     restoredInFinally: false,
+    deploymentForceApplied: true,
     startedAt: new Date().toISOString(),
     completedAt: null,
   };
@@ -154,14 +155,13 @@ export async function createDeployment({ accountId, token, scriptName, versionId
     token,
     fetchImpl,
     method: 'POST',
-    path: `/workers/scripts/${encodeURIComponent(scriptName)}/deployments`,
+    path: `/workers/scripts/${encodeURIComponent(scriptName)}/deployments?force=true`,
     code: 'OP_UAT_ROLLBACK_CREATE_DEPLOYMENT_FAILED',
     json: {
       strategy: 'percentage',
       versions: [{ percentage: 100, version_id: requiredUuid(versionId, 'OP_UAT_ROLLBACK_VERSION_INVALID') }],
       annotations: {
         'workers/message': String(message || '').slice(0, 900),
-        'workers/triggered_by': 'operational-uat-release-rollback',
       },
     },
   });
@@ -228,7 +228,8 @@ async function cloudflareRequest({ accountId, token, fetchImpl, method, path, co
   }
   if (!response.ok || body?.success !== true) {
     const apiCode = body?.errors?.[0]?.code ?? 'UNKNOWN';
-    throw new OperationalUatReleaseRollbackError(`${code}:HTTP_${response.status}:API_${apiCode}`);
+    const apiMessage = String(body?.errors?.[0]?.message || 'UNKNOWN').replace(/\s+/g, '_').slice(0, 220);
+    throw new OperationalUatReleaseRollbackError(`${code}:HTTP_${response.status}:API_${apiCode}:${apiMessage}`);
   }
   return body;
 }
