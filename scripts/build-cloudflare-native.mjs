@@ -60,7 +60,7 @@ const CSV_ANALYSIS_ENGINE_FILES = Object.freeze([
   'csv-history-ledger.js',
   'csv-library-review-bridge.js',
 ]);
-const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.4';
+const CSV_INTELLIGENCE_ASSET_VERSION = '1.0.5';
 const CSV_JOINT_ANALYSIS_ASSET_VERSION = '1.0.0';
 const CSV_DATA_QUALITY_COMMAND_CENTER_ASSET_VERSION = '1.0.0';
 const CSV_HIERARCHY_QUALITY_ASSET_VERSION = '1.0.0';
