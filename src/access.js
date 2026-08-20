@@ -1,5 +1,6 @@
 const JWKS_TTL_MS = 60 * 60 * 1000;
 const ACCESS_MODES = new Set(['off', 'observe', 'enforce']);
+const OPERATIONAL_UAT_ROUTE = '/api/v1/operational-uat/live-probe';
 const jwksCache = new Map();
 
 export function normalizeAccessMode(env = {}) {
@@ -7,10 +8,13 @@ export function normalizeAccessMode(env = {}) {
   return ACCESS_MODES.has(mode) ? mode : 'off';
 }
 
-export function accessRuntimeConfig(env = {}) {
+export function accessRuntimeConfig(env = {}, options = {}) {
   const mode = normalizeAccessMode(env);
   const rawDomain = String(env.TEAM_DOMAIN || '').trim();
-  const audience = String(env.ACCESS_AUD || env.POLICY_AUD || '').trim();
+  const hasAudienceOverride = Object.prototype.hasOwnProperty.call(options, 'audience');
+  const audience = String(
+    hasAudienceOverride ? (options.audience || '') : (env.ACCESS_AUD || env.POLICY_AUD || ''),
+  ).trim();
   let teamDomain = '';
   try {
     teamDomain = rawDomain ? normalizeTeamDomain(rawDomain) : '';
@@ -25,8 +29,27 @@ export function accessRuntimeConfig(env = {}) {
   };
 }
 
+export function operationalUatAccessScope(request, env = {}) {
+  let pathname = '';
+  try {
+    pathname = new URL(request?.url || '').pathname;
+  } catch {
+    pathname = '';
+  }
+  const production = String(env.APP_ENV || '').trim().toLowerCase() === 'production';
+  const isOperationalUat = production && pathname === OPERATIONAL_UAT_ROUTE;
+  return {
+    isOperationalUat,
+    audience: isOperationalUat ? String(env.OPERATIONAL_UAT_ACCESS_AUD || '').trim() : null,
+  };
+}
+
 export async function evaluateAccessIdentity(request, env = {}) {
-  const config = accessRuntimeConfig(env);
+  const uatScope = operationalUatAccessScope(request, env);
+  const config = accessRuntimeConfig(
+    env,
+    uatScope.isOperationalUat ? { audience: uatScope.audience } : {},
+  );
   if (config.mode === 'off') {
     return {
       mode: 'off',
@@ -59,7 +82,10 @@ export async function evaluateAccessIdentity(request, env = {}) {
   }
 
   try {
-    const identity = await verifyAccessIdentity(request, env);
+    const identity = await verifyAccessIdentity(request, env, { audience: config.audience });
+    if (uatScope.isOperationalUat && identity.principalType !== 'service_token') {
+      throw new Error('Operational UAT requires a service-token principal');
+    }
     return {
       mode: config.mode,
       configured: true,
@@ -78,7 +104,7 @@ export async function evaluateAccessIdentity(request, env = {}) {
   }
 }
 
-export async function verifyAccessIdentity(request, env = {}) {
+export async function verifyAccessIdentity(request, env = {}, options = {}) {
   const token = String(request.headers.get('cf-access-jwt-assertion') || '').trim();
   if (!token) throw new Error('Missing Cf-Access-Jwt-Assertion');
 
@@ -90,7 +116,10 @@ export async function verifyAccessIdentity(request, env = {}) {
   if (header.alg !== 'RS256' || !header.kid) throw new Error('Unsupported Access JWT algorithm');
 
   const teamDomain = normalizeTeamDomain(env.TEAM_DOMAIN);
-  const expectedAudience = String(env.ACCESS_AUD || env.POLICY_AUD || '').trim();
+  const hasAudienceOverride = Object.prototype.hasOwnProperty.call(options, 'audience');
+  const expectedAudience = String(
+    hasAudienceOverride ? (options.audience || '') : (env.ACCESS_AUD || env.POLICY_AUD || ''),
+  ).trim();
   if (!expectedAudience) throw new Error('ACCESS_AUD is not configured');
 
   const jwk = await findJwk(teamDomain, header.kid);
