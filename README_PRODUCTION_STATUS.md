@@ -1,124 +1,133 @@
 # Ads Operations Integrity — Current Platform Status
 
-> Operational truth for the Productization Roadmap V2 reset. Phase 0–3 documents and immutable deployment receipts remain historical implementation evidence. Future scope authority is `docs/architecture/PRODUCT_ROADMAP_V2.md`.
+> Operational truth after CSV / Cloudflare Non-Amazon Final Closure. Long-term product direction remains in `docs/architecture/PRODUCT_ROADMAP_V2.md`; current delivery sequencing is governed by `docs/architecture/CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md` while that directive remains active.
 
 ## Strategic status
 
 ```text
-Architecture Convergence Phase 0 = COMPLETE + MERGED
-Security Integrity Phase 1 = COMPLETE + MERGED
-Deployment Integrity Phase 2 = COMPLETE + MERGED + POST-MERGE CORRELATED
-Operator Product Surface Phase 3 = COMPLETE + MERGED + EXACT-SHA LIVE ACCEPTED
-Phase 4 Project Truth & Productization Reset = ACTIVE
-Production = NOT READY
-Amazon implementation = READY FOR CONTROLLED STORE 01 LIVE-READ PREFLIGHT
-Amazon live execution = DISABLED
+Architecture / Security / Deployment foundation = ACCEPTED
+Production Non-Amazon foundation = ACCEPTED
+Operational UAT = 31/31 LIVE PASS
+Failure Recovery = PASS
+Real rollback / restore = LIVE PASS
+Temporary execution resources = CLEANED UP
+blockers=[]
+Current Product Phase = CSV Decision Intelligence Productization
+Amazon execution = DISABLED / FROZEN
 ```
 
-Do not reopen Phase 0–3 unless a real regression, source-of-truth conflict, or security/data-integrity drift is observed. The old Gate sequence is no longer the future delivery roadmap.
+The project is no longer in Production UAT or foundational infrastructure build-out. Do not reopen completed closure work unless a real regression, security issue, availability issue, or data-integrity drift is observed.
 
-## Repository baseline at Phase 4 reset
-
-The reset started from canonical `main`:
+## Canonical repository baseline
 
 ```text
-SHA: 7e77565ece9a1328e7348c8c534bac9895f410b2
-Tree: c884171a88c79027d26e2c147f12628e9d9866b1
-Required context: Static site and security invariants
+GitHub main: a90c9158d8afd224e717218827923d4beab593b1
+Latest merged change: fix: verify rollback deployment receipts by readback (#211)
+Open PRs at closure: 0
 Branch protection: enabled
+Required context: Static site and security invariants
 ```
 
-That baseline merged PR #62 and preserves the Gate 3.5 immutable deployment receipt. Repository SHA and live Worker version remain separate identities.
+Repository SHA, Workers Build identity, deployment identity, and runtime version remain separate evidence classes.
 
-## Canonical CI and deployment semantics
-
-Canonical CI is validation-only. It does not directly deploy Cloudflare resources, promote historical branches, mutate Production, provision Amazon credentials, or activate Amazon execution.
-
-Canonical deployment provenance remains:
+## Accepted Production Web baseline
 
 ```text
-Canonical CI SUCCESS
-→ exact Git SHA
-→ Workers Builds exact commit_hash
-→ build UUID
-→ immutable Worker version
-→ deployment
-→ runtime acceptance
-→ immutable receipt
-```
-
-Therefore:
-
-```text
-repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation
-```
-
-The historical deployment branch and historical receipts remain evidence only; future product work must not rewrite immutable receipts.
-
-## Accepted Web Dev runtime
-
-The latest accepted Phase 3.5 Dev runtime is:
-
-```text
-Worker: ads-operations-web-dev
-Active deployment: 5fbad8a1-a9e1-47a6-9ab1-b94e53c576b9
-Active version: 761dc627-385d-44ee-a960-5237fea02703
+Worker: ads-operations-web-prod
+Exact-main build: f4ed6b12-5beb-44f8-944c-061b300c7ec1
+Build outcome: success
+Build commit: a90c9158d8afd224e717218827923d4beab593b1
+Exact-main deployment: 0ccd32ac-0328-4a02-b6f1-7445495a128b
+Final runtime version: 44716995-a894-47ee-a9ed-5d371a771e83
+Restored active deployment: 67feb2ce-cff5-4a79-bbd0-6b9460edd438
 Traffic: 100%
-ACCESS_MODE=enforce
+```
+
+Production deployment governance remains **manual exact-main only**. Do not enable automatic Production deployment or bypass branch protection / required CI.
+
+## Operational UAT / Failure Recovery
+
+Strict closure count:
+
+```text
+Previously accepted LIVE cases: 21
+Service Binding LIVE cases: 9
+Real rollback / restore LIVE case: 1
+Total: 31/31 LIVE PASS
+blockers=[]
+```
+
+The real rollback / restore path was:
+
+```text
+44716995-a894-47ee-a9ed-5d371a771e83
+→ rollback runtime 9007b345-6474-4b6b-8e88-cc79c3bf48fb
+→ restore runtime 44716995-a894-47ee-a9ed-5d371a771e83
+```
+
+```text
+Rollback deployment: b48f4ad6-66c6-4286-a591-485cbc3a1983
+Restore deployment: 67feb2ce-cff5-4a79-bbd0-6b9460edd438
+```
+
+Canonical rollback verification recorded:
+
+```text
+verified=true
+preRollbackRuntimeObserved=true
+rollbackRuntimeObserved=true
+restoreRuntimeObserved=true
+restoredInFinally=true
+deploymentForceApplied=true
+deploymentReceiptVerifiedByReadback=true
+amazonExecutionAttempted=false
+businessFactPersistenceAttempted=false
+```
+
+Do not rerun the accepted 31-case matrix or rollback drill unless later code changes directly affect those contracts.
+
+## Service Binding closure
+
+The Cloudflare Service Binding execution path completed the required CSV, permission, failure-recovery, and rollback runtime-observation cases. Final authorization mode was:
+
+```text
+cloudflare_service_binding
+```
+
+The permission case used Production `CONTROL_DB` read-only policy simulation. No Production user, temporary membership, permission mutation, or business-fact write was created.
+
+Do not reopen Access Service Token investigation absent a new concrete requirement.
+
+## Cleanup state
+
+Temporary UAT / rollback execution resources have been deleted and verified absent, including temporary controller/build-runner Workers, Queue resources, KV, and temporary rollback build triggers.
+
+The temporary execution branch `ops/operational-uat-service-binding-rollback-20260820` was restored to `main` with:
+
+```text
+ahead=0
+behind=0
+status=identical
+```
+
+Do not revive temporary closure infrastructure.
+
+## Amazon state — HARD-OFF
+
+The CSV-first operating directive remains active. Runtime kill switches remain:
+
+```text
 SYNC_TRIGGER_ENABLED=false
-Control D1: bound
-Store 01 D1: bound
-R2: ads-ops-data-dev
-Workflow: ads-amazon-sync-dev → ads-operations-sync-dev
-```
-
-The immutable receipt is:
-
-```text
-docs/architecture/PHASE3_GATE35_DEPLOYMENT_RECEIPT.json
-```
-
-## Current Sync Dev runtime
-
-Current Cloudflare account inventory contains `ads-operations-sync-dev`; no Production sync Worker is treated as deployed runtime truth for this phase.
-
-The Dev Sync Worker currently has:
-
-```text
-APP_ENV=development
-AMAZON_ADS_ENABLED=false
-CONTROL_DB=bound
-STORE_01_DB=bound
-DATA_BUCKET=ads-ops-data-dev
-AMAZON_SYNC_WORKFLOW=ads-amazon-sync-dev
-```
-
-This is sufficient topology for **Store 01 controlled read-only activation preflight**. It is not sufficient evidence for multi-store production isolation.
-
-## Amazon state
-
-Amazon integration is no longer classified as “future implementation.” The repository already contains:
-
-- credential provider and LWA token refresh smoke;
-- canonical profile bootstrap;
-- campaign/ad group/keyword/target/product-ad entity mirror;
-- Create Report / Poll Report / Download Report transport;
-- report-cycle orchestration and durable sync receipts;
-- R2 raw object materialization;
-- Store D1 ingestion and Search Term fact publication.
-
-Live execution is still fail-closed:
-
-```text
-SYNC_TRIGGER_ENABLED=false
 AMAZON_ADS_ENABLED=false
 ```
 
-The credential smoke endpoint is specifically designed to run with `AMAZON_ADS_ENABLED=false` and to perform no Create/Poll/Download Report, Store D1 write, or R2 write. That is the first live credential preflight for Phase 5.
+No Amazon Ads API live reads/writes, SP-API, Amazon report acquisition, campaign/bid/keyword/negative/budget mutation, Amazon workflow execution, credential provisioning, or Amazon secret mutation is authorized.
 
-## Action control state
+Dormant Amazon integration code remains preserved for a future explicit restart. Code readiness does not lift the freeze.
 
-Store D1 already owns:
+## Action-control state
+
+Store D1 already owns the canonical lifecycle:
 
 ```text
 optimization_actions
@@ -131,47 +140,45 @@ with statuses:
 proposed / approved / rejected / applying / applied / failed / reverted
 ```
 
-Phase 4 does not replace this schema. Phase 6 creates recommendations; Phase 8 exposes governed action APIs and approval UX; Phase 11 adds the Amazon mutation adapter.
-
-## Multi-store isolation gap
-
-`cloudflare/runtime/wrangler.sync.jsonc` still contains a transitional `production` template where one `ads-operations-sync-prod` would bind STORE_01_DB–STORE_04_DB and one shared Production R2 bucket. This is **not** the approved future execution topology.
-
-Before Store 02 receives Amazon credentials, the architecture must converge to:
+Do not create a second action database. During CSV-first productization, advisory output remains non-executable:
 
 ```text
-Central Web / Control D1
-→ per-store Store D1
-→ per-store Sync Worker
-→ per-store Workflow
-→ per-store credential set
-→ per-store R2 boundary
+executionAuthorized=false
+amazonMutationAuthorized=false
 ```
 
-Store 01 read-only work may proceed before Phase 9 because the current Dev Sync Worker is already Store-01-only at the D1 binding layer.
+## Current productization direction
 
-## Production state
-
-Production remains **NOT READY**. The final Cloudflare Native Production deployment contract is **not established yet**.
-
-Production placeholders remain in Native configuration, and the current multi-store Sync production template is explicitly non-authoritative. No Phase 4 or Phase 5 task authorizes Production DNS, Access, Worker, D1, R2, Workflow, or Amazon mutation changes.
-
-Retired Warehouse/browser loaders remain archive-only under `docs/archive/legacy-browser-loaders/`; active Native UI continues to use `assets/cloudflare-native-data-panel-v1.js`. Cloud Raw import remains fail-closed as `cloudflare_native_raw_import_not_migrated` until a dedicated product requirement justifies migration.
-
-## Active direction
-
-Current execution order is:
+Active sequence:
 
 ```text
-Phase 4 truth reset
-→ Phase 5 Store 01 real Amazon read-only
-→ Phase 6 Search Term / recommendation intelligence
-→ Phase 7 Native UI modernization
-→ Phase 8 approval/action control plane
-→ Phase 9 multi-store execution isolation
-→ Phase 10 production read-only
-→ Phase 11 controlled Amazon writes
-→ Phase 12 closed-loop learning
+CSV
+→ Historical Data
+→ Search Term Intelligence
+→ Profit / Waste / Root Analysis
+→ Evidence-backed Recommendation
+→ Human Review
+→ Keyword / Negative Library
+→ Historical learning
 ```
 
-The first business milestone is not Production. It is a trustworthy Store 01 dataset that can support Search Term Intelligence and explainable recommendations.
+The immediate implementation focus is:
+
+1. consolidate Search Term Intelligence into operator-facing business classifications and evidence-backed candidate types;
+2. consolidate historical/monthly and period-over-period analytics with lifecycle/trend semantics;
+3. connect recommendations into the existing local review / keyword / negative governance flow;
+4. modernize high-value product surfaces incrementally with the TypeScript + React + Vite strangler.
+
+UI cosmetics, more Gate numbering, more Operational UAT cases, Access-token research, rollback infrastructure, and already-accepted provenance/dedup/D1 governance are lower priority unless a real blocker/regression appears.
+
+## Production closure authority
+
+The immutable closure summary is:
+
+```text
+docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md
+```
+
+Issue #191 is the mutable release trace and should be closed as completed once this final truth reset is merged.
+
+Repository merge still does not itself authorize a Cloudflare deployment or any Amazon activation.
