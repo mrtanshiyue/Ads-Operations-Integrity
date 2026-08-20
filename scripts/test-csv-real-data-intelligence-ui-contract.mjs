@@ -7,12 +7,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist-cloudflare-native');
 const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const asset = await readFile(path.join(dist, 'assets', 'cloudflare-native-csv-intelligence-v1.js'), 'utf8');
-const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.6"></script>';
+const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.7"></script>';
 
 assert.equal(index.split(tag).length - 1, 1, 'CSV Intelligence extension must be injected exactly once with cache-busting version');
 assert.doesNotMatch(index, /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js"><\/script>/, 'Unversioned CSV Intelligence script tag must not survive the canonical build');
 assert.match(asset, /CloudflareCsvIntelligence/, 'CSV Intelligence public marker missing');
-assert.match(asset, /VERSION\s*=\s*'1\.0\.6'/, 'CSV Intelligence runtime version must advance for Root Intelligence productization');
+assert.match(asset, /VERSION\s*=\s*'1\.0\.7'/, 'CSV Intelligence runtime version must advance for Lifecycle workspace productization');
 assert.match(asset, /csvIntelligenceVersion = VERSION/, 'Runtime version must be exposed on the decision panel for authenticated acceptance diagnostics');
 assert.match(asset, /name="dataSource"/, 'Decision Intelligence data-source switch missing');
 assert.match(asset, /Imported CSV/, 'Imported CSV source option missing');
@@ -65,6 +65,25 @@ assert.match(asset, /function candidatesForRootMembers\(root, candidates\)/, 'Ro
 assert.match(asset, /Root review boundary/, 'Root Intelligence must preserve the human-review-only boundary');
 assert.match(asset, /cannot execute a phrase negative, change a bid, or write to Amazon/, 'Root Intelligence must explicitly deny mutation authority');
 
+assert.match(asset, /data-csv-lifecycle-workspace/, 'Dedicated Lifecycle workspace missing');
+assert.match(asset, /data-csv-lifecycle-summary/, 'Lifecycle state summary missing');
+for (const label of ['New', 'Emerging Winner', 'Stable Winner', 'Declining', 'Emerging Waste', 'Persistent Waste', 'Recovered']) {
+  assert.ok(asset.includes(label), `Lifecycle workspace must expose ${label}`);
+}
+assert.match(asset, /Previous performance/, 'Lifecycle workspace must expose previous-period performance');
+assert.match(asset, /Current performance/, 'Lifecycle workspace must expose current-period performance');
+assert.match(asset, /data-csv-lifecycle-term/, 'Lifecycle evidence drilldown missing');
+assert.match(asset, /function renderLifecycleEvidence\(searchTerm, payload\)/, 'Lifecycle evidence drawer missing');
+assert.match(asset, /lifecycle\.currentMetrics/, 'Lifecycle evidence must use backend currentMetrics');
+assert.match(asset, /lifecycle\.previousMetrics/, 'Lifecycle evidence must use backend previousMetrics');
+assert.match(asset, /lifecycle\.change/, 'Lifecycle evidence must use backend period-over-period change');
+assert.match(asset, /lifecycle\.currentWindow/, 'Lifecycle evidence must expose current window');
+assert.match(asset, /lifecycle\.previousWindow/, 'Lifecycle evidence must expose previous window');
+assert.match(asset, /Financial metrics suppressed/, 'Lifecycle financial metrics must fail closed when financial comparability is false');
+assert.match(asset, /A lifecycle state is a diagnostic signal, not an execution authorization/, 'Lifecycle state must not be treated as action authorization');
+assert.match(asset, /Only candidates already emitted through the governed business-intelligence gate are shown for review/, 'Lifecycle candidate visibility must reuse the governed business candidate plane');
+assert.match(asset, /function signedRatioPp\(value\)/, 'Lifecycle ratio deltas must convert ACoS/CVR ratios to percentage points explicitly');
+
 assert.match(asset, /REQUEST_TIMEOUT_MS\s*=\s*30000/, 'CSV intelligence must bound pending requests');
 assert.match(asset, /TIMEOUT_ERROR_CODE\s*=\s*'CSV_INTELLIGENCE_TIMEOUT'/, 'CSV intelligence must classify watchdog timeouts deterministically');
 assert.match(asset, /new AbortController\(\)/, 'CSV intelligence must support request cancellation');
@@ -88,8 +107,8 @@ assert.doesNotMatch(asset, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-pe
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-real-data-intelligence-ui-v6-root-workspace',
-  runtimeVersion: '1.0.6',
+  contract: 'csv-real-data-intelligence-ui-v7-lifecycle-workspace',
+  runtimeVersion: '1.0.7',
   requestTimeoutMs: 30000,
   independentWatchdog: true,
   cacheBustedAsset: true,
@@ -99,6 +118,9 @@ console.log(JSON.stringify({
   rootMembershipVisible: true,
   rootWorkspace: true,
   rootTrendNotInferred: true,
+  lifecycleWorkspace: true,
+  lifecycleUsesBackendPeriodComparison: true,
+  lifecycleDoesNotAuthorizeExecution: true,
   phraseReviewMappedThroughRoots: true,
   humanReviewOnly: true,
   duplicateRunsBlocked: true,
