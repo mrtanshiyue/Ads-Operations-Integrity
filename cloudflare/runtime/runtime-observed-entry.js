@@ -1,8 +1,8 @@
 import application from './web-entry.js';
 import {
-  handleOperationalUatLiveProbeRoute,
-  OPERATIONAL_UAT_ROUTE,
-} from './operational-uat-live-probe.js';
+  handleOperationalUatEphemeralServiceRoute,
+} from './operational-uat-ephemeral-service-route.js';
+import { OPERATIONAL_UAT_ROUTE } from './operational-uat-live-probe.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -10,7 +10,7 @@ export default {
     const url = new URL(request.url);
     const workerVersion = runtimeWorkerVersion(env);
     const uatResponse = url.pathname === OPERATIONAL_UAT_ROUTE
-      ? await handleOperationalUatLiveProbeRoute({ request, env, url })
+      ? await handleOperationalUatEphemeralServiceRoute({ request, env, url })
       : null;
     const response = uatResponse || await application.fetch(request, env, ctx);
     const record = runtimeEvidenceRecord({
