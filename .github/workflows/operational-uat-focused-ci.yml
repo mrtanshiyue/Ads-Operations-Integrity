@@ -8,24 +8,28 @@ on:
       - 'scripts/test-operational-uat-failure-recovery.mjs'
       - 'cloudflare/runtime/operational-uat-live-probe.js'
       - 'cloudflare/runtime/operational-uat-ephemeral-service-route.js'
+      - 'cloudflare/runtime/operational-uat-store-policy-simulation.js'
       - 'cloudflare/runtime/runtime-observed-entry.js'
       - 'cloudflare/runtime/wrangler.native.jsonc'
       - 'src/access.js'
       - 'scripts/test-operational-uat-live-probe.mjs'
       - 'scripts/test-operational-uat-secondary-access-aud.mjs'
+      - 'scripts/test-operational-uat-service-binding-policy-fallback.mjs'
       - '.github/workflows/operational-uat-focused-ci.yml'
   push:
-    branches: ['test/**', 'feature/**']
+    branches: ['test/**', 'feature/**', 'fix/**']
     paths:
       - 'scripts/operational-uat-failure-recovery.mjs'
       - 'scripts/test-operational-uat-failure-recovery.mjs'
       - 'cloudflare/runtime/operational-uat-live-probe.js'
       - 'cloudflare/runtime/operational-uat-ephemeral-service-route.js'
+      - 'cloudflare/runtime/operational-uat-store-policy-simulation.js'
       - 'cloudflare/runtime/runtime-observed-entry.js'
       - 'cloudflare/runtime/wrangler.native.jsonc'
       - 'src/access.js'
       - 'scripts/test-operational-uat-live-probe.mjs'
       - 'scripts/test-operational-uat-secondary-access-aud.mjs'
+      - 'scripts/test-operational-uat-service-binding-policy-fallback.mjs'
       - '.github/workflows/operational-uat-focused-ci.yml'
 
 permissions:
@@ -45,10 +49,13 @@ jobs:
       - run: node --check scripts/test-operational-uat-failure-recovery.mjs
       - run: node --check cloudflare/runtime/operational-uat-live-probe.js
       - run: node --check cloudflare/runtime/operational-uat-ephemeral-service-route.js
+      - run: node --check cloudflare/runtime/operational-uat-store-policy-simulation.js
       - run: node --check cloudflare/runtime/runtime-observed-entry.js
       - run: node --check src/access.js
       - run: node --check scripts/test-operational-uat-live-probe.mjs
       - run: node --check scripts/test-operational-uat-secondary-access-aud.mjs
+      - run: node --check scripts/test-operational-uat-service-binding-policy-fallback.mjs
       - run: node scripts/test-operational-uat-failure-recovery.mjs
       - run: node scripts/test-operational-uat-live-probe.mjs
       - run: node scripts/test-operational-uat-secondary-access-aud.mjs
+      - run: node scripts/test-operational-uat-service-binding-policy-fallback.mjs
