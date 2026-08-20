@@ -142,6 +142,24 @@ async function call(path) {
 }
 
 {
+  const { response, payload } = await call('/api/v1/stores/store-dev-01/csv-analytics/daily?startDate=2026-06-01&endDate=2026-06-30&page=1&limit=366&sort=reportDate&direction=asc');
+  assert.equal(response.status, 200, 'Daily analytics must accept the dashboard annual-window limit');
+  assert.equal(payload.pagination.limit, 366);
+}
+
+{
+  const { response, payload } = await call('/api/v1/stores/store-dev-01/csv-analytics/daily?startDate=2026-06-01&endDate=2026-06-30&page=1&limit=367&sort=reportDate&direction=asc');
+  assert.equal(response.status, 400);
+  assert.equal(payload.error, 'invalid_limit');
+}
+
+{
+  const { response, payload } = await call('/api/v1/stores/store-dev-01/csv-analytics/campaign?startDate=2026-06-01&endDate=2026-06-30&page=1&limit=201');
+  assert.equal(response.status, 400);
+  assert.equal(payload.error, 'invalid_limit');
+}
+
+{
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/csv-analytics/overview?startDate=2025-01-01&endDate=2026-12-31');
   const response = await handleCsvAnalyticsApiRoute({ request, env, actor, url: new URL(request.url) });
   assert.equal(response.status, 400);
@@ -169,6 +187,7 @@ assert.match(source, /COUNT\(\*\) OVER\(\) AS total_count/, 'Grouped dimension q
 assert.match(source, /amazonExecutionAuthorized:\s*false/);
 assert.match(source, /GOVERNED_PROVENANCE/);
 assert.match(source, /legacy_batch_only|provenanceClasses/);
+assert.match(source, /MAX_DAILY_LIMIT = MAX_RANGE_DAYS/, 'Daily limit must stay bounded by the 366-day range contract');
 if (entry) {
   assert.match(entry, /handleCsvAnalyticsApiRoute/, 'CSV analytics handler must be wired into web-entry');
   assert.match(entry, /CSV_ANALYTICS_ROUTE_PATTERN/, 'CSV analytics route must remain inside the modular and Dev read-only boundaries');
