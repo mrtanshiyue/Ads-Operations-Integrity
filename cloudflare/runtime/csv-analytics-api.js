@@ -2,6 +2,7 @@ const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'ST
 const MAX_RANGE_DAYS = 366;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+const MAX_DAILY_LIMIT = MAX_RANGE_DAYS;
 const GOVERNED_PROVENANCE = new Set(['exact_source_object', 'reconciled_exact_source']);
 
 const DIMENSION_ALIASES = Object.freeze({
@@ -216,7 +217,7 @@ export async function handleCsvAnalyticsApiRoute({ request, env, actor, url }) {
 
   const spec = DIMENSIONS[dimension];
   if (!spec) return json(request, { error: 'dimension_not_supported' }, 400);
-  const paging = parsePaging(url);
+  const paging = parsePaging(url, dimension);
   if (paging.error) return json(request, { error: paging.error }, 400);
   const sorting = parseSorting(url, spec);
   if (sorting.error) return json(request, { error: sorting.error }, 400);
@@ -411,11 +412,12 @@ function buildWhere(range, filters) {
   return { sql: clauses.join('\n      AND '), params };
 }
 
-function parsePaging(url) {
+function parsePaging(url, dimension) {
   const page = Number(url.searchParams.get('page') || 1);
   const limit = Number(url.searchParams.get('limit') || DEFAULT_LIMIT);
+  const maxLimit = dimension === 'daily' ? MAX_DAILY_LIMIT : MAX_LIMIT;
   if (!Number.isInteger(page) || page < 1 || page > 100000) return { error: 'invalid_page' };
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) return { error: 'invalid_limit' };
+  if (!Number.isInteger(limit) || limit < 1 || limit > maxLimit) return { error: 'invalid_limit' };
   return { value: { page, limit } };
 }
 
