@@ -7,12 +7,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist-cloudflare-native');
 const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const asset = await readFile(path.join(dist, 'assets', 'cloudflare-native-csv-intelligence-v1.js'), 'utf8');
-const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.5"></script>';
+const tag = '<script src="assets/cloudflare-native-csv-intelligence-v1.js?v=1.0.6"></script>';
 
 assert.equal(index.split(tag).length - 1, 1, 'CSV Intelligence extension must be injected exactly once with cache-busting version');
 assert.doesNotMatch(index, /<script src="assets\/cloudflare-native-csv-intelligence-v1\.js"><\/script>/, 'Unversioned CSV Intelligence script tag must not survive the canonical build');
 assert.match(asset, /CloudflareCsvIntelligence/, 'CSV Intelligence public marker missing');
-assert.match(asset, /VERSION\s*=\s*'1\.0\.5'/, 'CSV Intelligence runtime version must advance for Operator Workspace productization');
+assert.match(asset, /VERSION\s*=\s*'1\.0\.6'/, 'CSV Intelligence runtime version must advance for Root Intelligence productization');
 assert.match(asset, /csvIntelligenceVersion = VERSION/, 'Runtime version must be exposed on the decision panel for authenticated acceptance diagnostics');
 assert.match(asset, /name="dataSource"/, 'Decision Intelligence data-source switch missing');
 assert.match(asset, /Imported CSV/, 'Imported CSV source option missing');
@@ -52,6 +52,19 @@ assert.match(asset, /Human review boundary/, 'Operator Workspace must preserve t
 assert.match(asset, /Amazon mutation disabled/, 'Product evidence must retain Amazon mutation disabled copy');
 assert.match(asset, /data-csv-productization-fallback/, 'Older payloads must fall back to the compatibility view instead of being treated as complete product intelligence');
 
+assert.match(asset, /data-csv-root-intelligence/, 'Dedicated Root Intelligence workspace missing');
+for (const label of ['Root Intelligence', 'Winner Terms', 'Waste Terms', 'Search Terms']) {
+  assert.ok(asset.includes(label), `Root Intelligence workspace must expose ${label}`);
+}
+assert.match(asset, /data-csv-root=/, 'Root-to-search-term drilldown control missing');
+assert.match(asset, /function renderRootEvidence\(rootName, payload\)/, 'Root evidence drawer missing');
+assert.match(asset, /not in current root payload/, 'Root trend must explicitly disclose that the current payload does not provide it');
+assert.match(asset, /does not infer one from term-level lifecycle states/, 'Root trend must not be fabricated from term-level lifecycle');
+assert.match(asset, /function candidatesForRoot\(root, candidates\)/, 'Direct root candidate visibility helper missing');
+assert.match(asset, /function candidatesForRootMembers\(root, candidates\)/, 'Root member candidate visibility helper missing');
+assert.match(asset, /Root review boundary/, 'Root Intelligence must preserve the human-review-only boundary');
+assert.match(asset, /cannot execute a phrase negative, change a bid, or write to Amazon/, 'Root Intelligence must explicitly deny mutation authority');
+
 assert.match(asset, /REQUEST_TIMEOUT_MS\s*=\s*30000/, 'CSV intelligence must bound pending requests');
 assert.match(asset, /TIMEOUT_ERROR_CODE\s*=\s*'CSV_INTELLIGENCE_TIMEOUT'/, 'CSV intelligence must classify watchdog timeouts deterministically');
 assert.match(asset, /new AbortController\(\)/, 'CSV intelligence must support request cancellation');
@@ -75,8 +88,8 @@ assert.doesNotMatch(asset, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|execution-pe
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-real-data-intelligence-ui-v5-operator-workspace',
-  runtimeVersion: '1.0.5',
+  contract: 'csv-real-data-intelligence-ui-v6-root-workspace',
+  runtimeVersion: '1.0.6',
   requestTimeoutMs: 30000,
   independentWatchdog: true,
   cacheBustedAsset: true,
@@ -84,6 +97,8 @@ console.log(JSON.stringify({
   completeUniverseScopeVisible: true,
   financialComparabilityFailClosed: true,
   rootMembershipVisible: true,
+  rootWorkspace: true,
+  rootTrendNotInferred: true,
   phraseReviewMappedThroughRoots: true,
   humanReviewOnly: true,
   duplicateRunsBlocked: true,
