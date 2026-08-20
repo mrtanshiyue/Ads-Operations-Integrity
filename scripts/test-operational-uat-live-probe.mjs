@@ -5,6 +5,40 @@ import {
   executeOperationalUatCase,
 } from '../cloudflare/runtime/operational-uat-live-probe.js';
 
+class FakeControlDb {
+  prepare(sql) {
+    return new FakeStatement(String(sql));
+  }
+}
+
+class FakeStatement {
+  constructor(sql, params = []) {
+    this.sql = sql;
+    this.params = params;
+  }
+
+  bind(...params) {
+    return new FakeStatement(this.sql, params);
+  }
+
+  async first() {
+    if (this.sql.includes('__operational_uat_intentionally_missing_table_v1')) {
+      throw new Error('no such table: intentional operational UAT probe');
+    }
+    if (this.sql.includes('SELECT u.user_id, sm.store_id AS allowed_store_id')) {
+      return { user_id: 'uat-limited-user', allowed_store_id: 'store-01' };
+    }
+    if (this.sql.includes('SELECT s.store_id')) {
+      return { store_id: 'store-02' };
+    }
+    if (this.sql.includes('FROM user_global_roles ugr')) return null;
+    if (this.sql.includes('FROM store_members sm')) {
+      return this.params[1] === 'store-01' ? { ok: 1 } : null;
+    }
+    return null;
+  }
+}
+
 const request = new Request('https://example.invalid/api/v1/operational-uat/live-probe', { method: 'POST' });
 const expected = new Map([
   ['csv.duplicate-import', 200],
@@ -72,37 +106,3 @@ console.log(JSON.stringify({
   noAmazonExecution: true,
   noBusinessFactPersistence: true,
 }));
-
-class FakeControlDb {
-  prepare(sql) {
-    return new FakeStatement(String(sql));
-  }
-}
-
-class FakeStatement {
-  constructor(sql, params = []) {
-    this.sql = sql;
-    this.params = params;
-  }
-
-  bind(...params) {
-    return new FakeStatement(this.sql, params);
-  }
-
-  async first() {
-    if (this.sql.includes('__operational_uat_intentionally_missing_table_v1')) {
-      throw new Error('no such table: intentional operational UAT probe');
-    }
-    if (this.sql.includes('SELECT u.user_id, sm.store_id AS allowed_store_id')) {
-      return { user_id: 'uat-limited-user', allowed_store_id: 'store-01' };
-    }
-    if (this.sql.includes('SELECT s.store_id')) {
-      return { store_id: 'store-02' };
-    }
-    if (this.sql.includes('FROM user_global_roles ugr')) return null;
-    if (this.sql.includes('FROM store_members sm')) {
-      return this.params[1] === 'store-01' ? { ok: 1 } : null;
-    }
-    return null;
-  }
-}
