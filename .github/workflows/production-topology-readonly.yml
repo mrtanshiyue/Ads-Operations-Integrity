@@ -1,0 +1,98 @@
+name: Production Topology Readonly
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-topology-readonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  topology:
+    name: Read production Cloudflare topology
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read sanitized production deployment and runtime truth
+        run: |
+          node --input-type=module <<'NODE'
+          import {
+            assertLiveRuntimeVersion,
+            discoverWorkerDeploymentTopology,
+          } from './scripts/cloudflare-deployment-discovery-client.mjs';
+
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          if (!accountId || !token) throw new Error('readonly_topology_cloudflare_credentials_missing');
+
+          const worker = 'ads-operations-web-prod';
+          const topology = await discoverWorkerDeploymentTopology({ accountId, scriptName: worker, token });
+          const healthResponse = await fetch(`https://${worker}.tanshiyuesir.workers.dev/api/health?readonlyTopology=${Date.now()}`, {
+            headers: { 'cache-control': 'no-cache' },
+            cache: 'no-store',
+          });
+          if (!healthResponse.ok) throw new Error(`readonly_topology_health_http_${healthResponse.status}`);
+          const health = await healthResponse.json();
+          const live = assertLiveRuntimeVersion({ versionId: topology.activeVersion.versionId, health });
+
+          const deploymentResponse = await fetch(
+            `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/workers/scripts/${worker}/deployments`,
+            { headers: { accept: 'application/json', authorization: `Bearer ${token}` } },
+          );
+          if (!deploymentResponse.ok) throw new Error(`readonly_topology_deployments_http_${deploymentResponse.status}`);
+          const deploymentPayload = await deploymentResponse.json();
+          if (deploymentPayload?.success !== true) throw new Error('readonly_topology_deployments_api_failed');
+          const deployments = Array.isArray(deploymentPayload?.result?.deployments)
+            ? deploymentPayload.result.deployments
+            : [];
+
+          const recentDeployments = deployments.slice(0, 8).map((deployment) => ({
+            deploymentId: deployment?.id || null,
+            createdOn: deployment?.created_on || null,
+            source: deployment?.source || null,
+            strategy: deployment?.strategy || null,
+            annotations: deployment?.annotations || null,
+            versions: Array.isArray(deployment?.versions)
+              ? deployment.versions.map((version) => ({
+                  versionId: version?.version_id || null,
+                  percentage: Number(version?.percentage ?? 0),
+                }))
+              : [],
+          }));
+          const rollbackDeployments = recentDeployments.filter((deployment) =>
+            deployment?.annotations?.['workers/triggered_by'] === 'operational-uat-release-rollback'
+            || String(deployment?.annotations?.['workers/message'] || '').includes('Operational UAT'),
+          );
+
+          console.log(JSON.stringify({
+            schema: 'production-topology-readonly-v1',
+            worker,
+            active: {
+              deploymentId: topology.activeDeployment.deploymentId,
+              versionId: topology.activeVersion.versionId,
+              trafficPercentage: topology.activeDeployment.percentage,
+              buildUuid: topology.activeBuild.buildUuid,
+              buildOutcome: topology.activeBuild.outcome,
+              commitSha: topology.activeBuild.commitSha,
+              branch: topology.activeBuild.branch,
+              runtimeVersionId: live.versionId,
+              healthOk: health?.ok === true,
+              environment: health?.environment || null,
+            },
+            rollbackDeploymentCountInRecent8: rollbackDeployments.length,
+            rollbackDeployments,
+            recentDeployments,
+            amazonExecutionAttempted: false,
+            businessFactMutationAttempted: false,
+          }, null, 2));
+          NODE
