@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Read sanitized Access application and service-token posture
+      - name: Read sanitized Access and workers.dev protection fingerprint
         run: |
           node --input-type=module <<'NODE'
           const API = 'https://api.cloudflare.com/client/v4';
@@ -36,26 +36,58 @@ jobs:
             const text = await response.text();
             let body = null;
             try { body = JSON.parse(text); } catch {}
-            return { ok: response.ok && body?.success === true, status: response.status, result: body?.result ?? null, apiErrorCode: body?.errors?.[0]?.code ?? null };
+            return {
+              ok: response.ok && body?.success === true,
+              status: response.status,
+              result: body?.result ?? null,
+              apiErrorCode: body?.errors?.[0]?.code ?? null,
+              apiErrorMessage: body?.errors?.[0]?.message ?? null,
+            };
           };
           const ruleType = (rule) => {
             if (!rule || typeof rule !== 'object') return 'unknown';
             return ['service_token','any_valid_service_token','email','email_domain','group','everyone','ip','access_group']
               .find((key) => Object.prototype.hasOwnProperty.call(rule, key)) || Object.keys(rule)[0] || 'unknown';
           };
+          const sanitizeLocation = (value) => {
+            if (!value) return null;
+            try {
+              const url = new URL(value);
+              return { protocol: url.protocol, host: url.host, pathname: url.pathname, queryKeys: [...url.searchParams.keys()].sort() };
+            } catch {
+              return { unparsable: true };
+            }
+          };
+          const cookieNames = (value) => String(value || '')
+            .split(/,(?=[^;,]+=)/)
+            .map((entry) => entry.split('=', 1)[0].trim())
+            .filter(Boolean)
+            .sort();
 
-          const appsResponse = await read('/access/apps?per_page=1000');
-          const tokenResponse = await read('/access/service_tokens?per_page=1000');
+          const [appsResponse, tokenResponse, orgResponse, subdomainResponse] = await Promise.all([
+            read('/access/apps?per_page=50&page=1'),
+            read('/access/service_tokens?per_page=50&page=1'),
+            read('/access/organizations'),
+            read('/workers/scripts/ads-operations-web-prod/subdomain'),
+          ]);
+
           const apps = Array.isArray(appsResponse.result) ? appsResponse.result : [];
           const appSummaries = [];
           for (const app of apps) {
-            const policiesResponse = await read(`/access/apps/${encodeURIComponent(app.id)}/policies?per_page=1000`);
+            const policiesResponse = await read(`/access/apps/${encodeURIComponent(app.id)}/policies?per_page=50&page=1`);
             const policies = Array.isArray(policiesResponse.result) ? policiesResponse.result : [];
             appSummaries.push({
               id: app.id || null,
               name: app.name || null,
               domain: app.domain || null,
               type: app.type || null,
+              destinations: Array.isArray(app.destinations)
+                ? app.destinations.map((destination) => ({
+                    type: destination?.type || null,
+                    workerId: destination?.worker_id || null,
+                    uri: destination?.uri || null,
+                  }))
+                : [],
               audPresent: Boolean(app.aud),
               policiesReadStatus: policiesResponse.status,
               policies: policies.map((policy) => ({
@@ -69,15 +101,60 @@ jobs:
               })),
             });
           }
+
           const serviceTokens = Array.isArray(tokenResponse.result) ? tokenResponse.result : [];
+          const healthUrl = `https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health?accessFingerprint=${Date.now()}`;
+          const healthResponse = await fetch(healthUrl, {
+            method: 'GET',
+            redirect: 'manual',
+            cache: 'no-store',
+            headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+          });
+          const healthText = await healthResponse.text();
+          const titleMatch = healthText.match(/<title[^>]*>([^<]{0,160})<\/title>/i);
+          const bodySignals = {
+            htmlDoctype: /<!doctype html/i.test(healthText),
+            cloudflareAccessText: /cloudflare access/i.test(healthText),
+            accessLoginPathText: /cdn-cgi\/access\/login/i.test(healthText),
+            hasJwtAssertionText: /cf-access-jwt-assertion/i.test(healthText),
+          };
+
+          const organization = orgResponse.result && typeof orgResponse.result === 'object'
+            ? {
+                name: orgResponse.result.name || null,
+                authDomain: orgResponse.result.auth_domain || null,
+                isUiReadOnly: Boolean(orgResponse.result.is_ui_read_only),
+              }
+            : null;
+
           console.log(JSON.stringify({
-            schema: 'production-access-readonly-v2',
-            appsRead: { ok: appsResponse.ok, status: appsResponse.status, apiErrorCode: appsResponse.apiErrorCode, apps: appSummaries },
-            serviceTokensRead: {
-              ok: tokenResponse.ok,
-              status: tokenResponse.status,
-              apiErrorCode: tokenResponse.apiErrorCode,
-              tokens: serviceTokens.map((row) => ({ id: row.id || null, name: row.name || null, duration: row.duration || null, expiresAt: row.expires_at || null })),
+            schema: 'production-access-readonly-v3',
+            accessApi: {
+              apps: { ok: appsResponse.ok, status: appsResponse.status, apiErrorCode: appsResponse.apiErrorCode, rows: appSummaries },
+              serviceTokens: {
+                ok: tokenResponse.ok,
+                status: tokenResponse.status,
+                apiErrorCode: tokenResponse.apiErrorCode,
+                rows: serviceTokens.map((row) => ({ id: row.id || null, name: row.name || null, duration: row.duration || null, expiresAt: row.expires_at || null })),
+              },
+              organization: { ok: orgResponse.ok, status: orgResponse.status, apiErrorCode: orgResponse.apiErrorCode, value: organization },
+            },
+            workerSubdomain: {
+              ok: subdomainResponse.ok,
+              status: subdomainResponse.status,
+              enabled: subdomainResponse.result?.enabled ?? null,
+              previewsEnabled: subdomainResponse.result?.previews_enabled ?? null,
+            },
+            healthFingerprint: {
+              status: healthResponse.status,
+              contentType: healthResponse.headers.get('content-type'),
+              server: healthResponse.headers.get('server'),
+              cfRayPresent: Boolean(healthResponse.headers.get('cf-ray')),
+              location: sanitizeLocation(healthResponse.headers.get('location')),
+              setCookieNames: cookieNames(healthResponse.headers.get('set-cookie')),
+              title: titleMatch?.[1]?.trim() || null,
+              bodySignals,
+              bodyByteLength: new TextEncoder().encode(healthText).byteLength,
             },
             cloudflareMutationAttempted: false,
             amazonExecutionAttempted: false,
