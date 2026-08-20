@@ -1,0 +1,94 @@
+name: Production Builds Readonly
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-builds-readonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  builds:
+    name: Read production Cloudflare builds
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read sanitized trigger and build history
+        run: |
+          node --input-type=module <<'NODE'
+          const API = 'https://api.cloudflare.com/client/v4';
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          if (!accountId || !token) throw new Error('cloudflare_credentials_missing');
+          const headers = { accept: 'application/json', authorization: `Bearer ${token}` };
+          const get = async (path) => {
+            const response = await fetch(`${API}/accounts/${encodeURIComponent(accountId)}${path}`, { headers });
+            const text = await response.text();
+            if (!response.ok) throw new Error(`GET ${path} HTTP ${response.status}: ${text.slice(0, 300)}`);
+            const body = JSON.parse(text);
+            if (body?.success !== true) throw new Error(`GET ${path} API failed`);
+            return body.result;
+          };
+
+          const workers = await get('/workers/scripts');
+          const worker = Array.isArray(workers) ? workers.find((row) => row?.id === 'ads-operations-web-prod') : null;
+          if (!worker?.tag) throw new Error('production_worker_tag_missing');
+          const tag = worker.tag;
+          const triggers = await get(`/builds/workers/${encodeURIComponent(tag)}/triggers`);
+          const builds = await get(`/builds/workers/${encodeURIComponent(tag)}/builds`);
+          const targetCommits = new Set([
+            'f38e80319b4a7ea3ed14a1a335e89269505447f6',
+            'a3fb96e0ef059a719cb480c754f815715fe9e445',
+            'bc1d5a8733a5a2fc428125cb37a3fcdde8d73d0b',
+          ]);
+          const sanitizeTrigger = (row) => ({
+            triggerUuid: row?.trigger_uuid || null,
+            triggerName: row?.trigger_name || null,
+            branchIncludes: row?.branch_includes || [],
+            branchExcludes: row?.branch_excludes || [],
+            pathIncludes: row?.path_includes || [],
+            pathExcludes: row?.path_excludes || [],
+            buildCommand: row?.build_command || null,
+            deployCommand: row?.deploy_command || null,
+            rootDirectory: row?.root_directory || null,
+            repoName: row?.repo_connection?.repo_name || null,
+            providerType: row?.repo_connection?.provider_type || null,
+          });
+          const sanitizeBuild = (row) => ({
+            buildUuid: row?.build_uuid || null,
+            status: row?.status || null,
+            outcome: row?.build_outcome || null,
+            createdOn: row?.created_on || null,
+            startedOn: row?.started_on || null,
+            stoppedOn: row?.stopped_on || null,
+            branch: row?.build_trigger_metadata?.branch || null,
+            commitSha: row?.build_trigger_metadata?.commit_hash || null,
+            triggerSource: row?.build_trigger_metadata?.build_trigger_source || null,
+            triggerUuid: row?.trigger?.trigger_uuid || row?.build_trigger_metadata?.trigger_uuid || null,
+            triggerName: row?.trigger?.trigger_name || row?.build_trigger_metadata?.trigger_name || null,
+            versionId: row?.version_id || null,
+          });
+          const rows = Array.isArray(builds) ? builds : [];
+          const recent = rows.slice(0, 20).map(sanitizeBuild);
+          const targets = rows.filter((row) => targetCommits.has(String(row?.build_trigger_metadata?.commit_hash || '').toLowerCase())).map(sanitizeBuild);
+          console.log(JSON.stringify({
+            schema: 'production-builds-readonly-v1',
+            worker: 'ads-operations-web-prod',
+            workerTag: tag,
+            triggers: Array.isArray(triggers) ? triggers.map(sanitizeTrigger) : [],
+            targetBuilds: targets,
+            recentBuilds: recent,
+            amazonExecutionAttempted: false,
+            cloudflareMutationAttempted: false,
+          }, null, 2));
+          NODE
