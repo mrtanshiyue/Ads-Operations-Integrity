@@ -3,6 +3,7 @@ import {
   accessRuntimeConfig,
   evaluateAccessIdentity,
   operationalUatAccessScope,
+  verifyAccessIdentity,
 } from '../src/access.js';
 
 const PRIMARY_AUD = '4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8';
@@ -51,8 +52,17 @@ try {
   assert.equal(accessRuntimeConfig(env).audience, PRIMARY_AUD);
   assert.equal(accessRuntimeConfig(env, { audience: UAT_AUD }).audience, UAT_AUD);
 
+  const secondaryServiceJwt = await signJwt({ aud: [UAT_AUD], common_name: 'uat-service-client.access', sub: '' });
+  const verifiedService = await verifyAccessIdentity(
+    requestWithJwt(UAT_URL, secondaryServiceJwt),
+    env,
+    { audience: UAT_AUD },
+  );
+  assert.equal(verifiedService.principalType, 'service_token');
+  assert.equal(verifiedService.sub, 'uat-service-client.access');
+
   const serviceSecondary = await evaluateAccessIdentity(
-    requestWithJwt(UAT_URL, await signJwt({ aud: [UAT_AUD], common_name: 'uat-service-client.access', sub: '' })),
+    requestWithJwt(UAT_URL, secondaryServiceJwt),
     env,
   );
   assert.equal(serviceSecondary.authenticated, true);
