@@ -14,6 +14,7 @@ const payload = {
   },
   range: { startDate: '2026-06-01', endDate: '2026-06-30', days: 30 },
   comparisonRange: { startDate: '2026-05-02', endDate: '2026-05-31', days: 30 },
+  filters: { limit: 50 },
   summary: {
     governancePersistenceAllowed: false,
     amazonMutationAuthorized: false,
@@ -68,6 +69,8 @@ assert.equal(surface.authority.authoritative, false);
 assert.equal(surface.authority.governancePersistenceAllowed, false);
 assert.equal(surface.authority.executionAuthorized, false);
 assert.equal(surface.authority.amazonMutationAuthorized, false);
+assert.equal(surface.analysisScope.complete, true);
+assert.equal(surface.analysisScope.candidateEmissionAuthorized, true);
 
 const business = surface.businessIntelligence;
 assert.equal(business.summary.analyzedTermCount, 5);
@@ -84,6 +87,9 @@ assert.equal(business.identityConfidence.canonicalAmazonIdentityResolved, false)
 assert.equal(business.summary.candidatePotentialCount, 6);
 assert.equal(business.summary.governedCandidateCount, 3);
 assert.equal(business.summary.suppressedByGovernanceCandidateCount, 3);
+assert.equal(business.summary.emittedCandidateCount, 3);
+assert.equal(business.summary.suppressedByScopeCandidateCount, 0);
+assert.equal(business.summary.candidateEmissionAuthorized, true);
 assert.equal(business.summary.exactNegativeCandidateCount, 0);
 assert.equal(business.summary.phraseNegativeReviewCandidateCount, 0);
 assert.equal(business.summary.harvestCandidateCount, 2);
@@ -116,13 +122,38 @@ assert.equal(lifecycle.get('free glasses sample'), 'persistentWaste');
 assert.equal(lifecycle.get('reading readers generic'), 'new');
 assert.equal(historical.authority.executionAuthorized, false);
 assert.equal(historical.authority.amazonMutationAuthorized, false);
+assert.equal(historical.summary.completeScope, true);
+
+// When the response universe hits the requested limit, completeness is not proven. Keep analytics
+// visible but fail closed on all productization candidates so partial term/root evidence cannot
+// masquerade as an exhaustive decision set.
+const truncatedSurface = buildCsvIntelligenceProductSurface({
+  ...payload,
+  filters: { ...payload.filters, limit: payload.items.length },
+});
+assert.equal(truncatedSurface.analysisScope.complete, false);
+assert.equal(truncatedSurface.analysisScope.candidateEmissionAuthorized, false);
+assert.equal(truncatedSurface.businessIntelligence.summary.candidateEmissionAuthorized, false);
+assert.equal(truncatedSurface.businessIntelligence.candidates.length, 0);
+assert.equal(
+  truncatedSurface.businessIntelligence.summary.suppressedByScopeCandidateCount,
+  business.candidates.length,
+);
+assert.equal(truncatedSurface.businessIntelligence.summary.exactNegativeCandidateCount, 0);
+assert.equal(truncatedSurface.businessIntelligence.summary.phraseNegativeReviewCandidateCount, 0);
+assert.equal(truncatedSurface.businessIntelligence.summary.harvestCandidateCount, 0);
+assert.equal(truncatedSurface.businessIntelligence.summary.scaleCandidateCount, 0);
+assert.equal(truncatedSurface.historicalIntelligence.summary.completeScope, false);
+assert.equal(truncatedSurface.historicalIntelligence.lifecycle.items.length, historical.lifecycle.items.length);
 
 const emptySurface = buildCsvIntelligenceProductSurface({
   profile: { profileId: null, countryCode: null, currencyCode: null },
   range: { startDate: '2026-06-01', endDate: '2026-06-30' },
   comparisonRange: { startDate: '2026-05-02', endDate: '2026-05-31' },
+  filters: { limit: 50 },
   items: [],
 });
+assert.equal(emptySurface.analysisScope.complete, true);
 assert.equal(emptySurface.businessIntelligence.summary.analyzedTermCount, 0);
 assert.equal(emptySurface.historicalIntelligence.lifecycle.summary.analyzedTermCount, 0);
 
@@ -131,6 +162,7 @@ console.log(JSON.stringify({
   contract: CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION,
   businessSummary: business.summary,
   lifecycleCounts: historical.lifecycle.summary.lifecycleCounts,
+  truncatedScopeCandidateCount: truncatedSurface.businessIntelligence.candidates.length,
   amazonMutationAuthorized: surface.authority.amazonMutationAuthorized,
 }, null, 2));
 
