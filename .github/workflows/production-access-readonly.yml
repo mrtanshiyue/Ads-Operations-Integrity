@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Read sanitized Access and workers.dev protection fingerprint
+      - name: Read sanitized Access reusable-policy posture
         run: |
           node --input-type=module <<'NODE'
           const API = 'https://api.cloudflare.com/client/v4';
@@ -40,13 +40,14 @@ jobs:
               ok: response.ok && body?.success === true,
               status: response.status,
               result: body?.result ?? null,
+              resultInfo: body?.result_info ?? null,
               apiErrorCode: body?.errors?.[0]?.code ?? null,
               apiErrorMessage: body?.errors?.[0]?.message ?? null,
             };
           };
           const ruleType = (rule) => {
             if (!rule || typeof rule !== 'object') return 'unknown';
-            return ['service_token','any_valid_service_token','email','email_domain','group','everyone','ip','access_group']
+            return ['service_token','any_valid_service_token','email','email_domain','group','everyone','ip','access_group','cloudflare_account_member']
               .find((key) => Object.prototype.hasOwnProperty.call(rule, key)) || Object.keys(rule)[0] || 'unknown';
           };
           const sanitizeLocation = (value) => {
@@ -54,107 +55,75 @@ jobs:
             try {
               const url = new URL(value);
               return { protocol: url.protocol, host: url.host, pathname: url.pathname, queryKeys: [...url.searchParams.keys()].sort() };
-            } catch {
-              return { unparsable: true };
-            }
+            } catch { return { unparsable: true }; }
           };
-          const cookieNames = (value) => String(value || '')
-            .split(/,(?=[^;,]+=)/)
-            .map((entry) => entry.split('=', 1)[0].trim())
-            .filter(Boolean)
-            .sort();
 
-          const [appsResponse, tokenResponse, orgResponse, subdomainResponse] = await Promise.all([
+          const [appsResponse, tokenResponse, policiesResponse, subdomainResponse] = await Promise.all([
             read('/access/apps?per_page=50&page=1'),
             read('/access/service_tokens?per_page=50&page=1'),
-            read('/access/organizations'),
+            read('/access/policies?per_page=50&page=1'),
             read('/workers/scripts/ads-operations-web-prod/subdomain'),
           ]);
 
           const apps = Array.isArray(appsResponse.result) ? appsResponse.result : [];
-          const appSummaries = [];
-          for (const app of apps) {
-            const policiesResponse = await read(`/access/apps/${encodeURIComponent(app.id)}/policies?per_page=50&page=1`);
-            const policies = Array.isArray(policiesResponse.result) ? policiesResponse.result : [];
-            appSummaries.push({
-              id: app.id || null,
-              name: app.name || null,
-              domain: app.domain || null,
-              type: app.type || null,
-              destinations: Array.isArray(app.destinations)
-                ? app.destinations.map((destination) => ({
-                    type: destination?.type || null,
-                    workerId: destination?.worker_id || null,
-                    uri: destination?.uri || null,
-                  }))
-                : [],
-              audPresent: Boolean(app.aud),
-              policiesReadStatus: policiesResponse.status,
-              policies: policies.map((policy) => ({
-                id: policy.id || null,
-                name: policy.name || null,
-                decision: policy.decision || null,
-                precedence: policy.precedence ?? null,
-                includeRuleTypes: Array.isArray(policy.include) ? policy.include.map(ruleType) : [],
-                requireRuleTypes: Array.isArray(policy.require) ? policy.require.map(ruleType) : [],
-                excludeRuleTypes: Array.isArray(policy.exclude) ? policy.exclude.map(ruleType) : [],
-              })),
-            });
-          }
-
           const serviceTokens = Array.isArray(tokenResponse.result) ? tokenResponse.result : [];
-          const healthUrl = `https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health?accessFingerprint=${Date.now()}`;
-          const healthResponse = await fetch(healthUrl, {
-            method: 'GET',
-            redirect: 'manual',
-            cache: 'no-store',
-            headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+          const policies = Array.isArray(policiesResponse.result) ? policiesResponse.result : [];
+          const healthResponse = await fetch(`https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health?accessFingerprint=${Date.now()}`, {
+            method: 'GET', redirect: 'manual', cache: 'no-store', headers: { accept: 'application/json', 'cache-control': 'no-cache' },
           });
-          const healthText = await healthResponse.text();
-          const titleMatch = healthText.match(/<title[^>]*>([^<]{0,160})<\/title>/i);
-          const bodySignals = {
-            htmlDoctype: /<!doctype html/i.test(healthText),
-            cloudflareAccessText: /cloudflare access/i.test(healthText),
-            accessLoginPathText: /cdn-cgi\/access\/login/i.test(healthText),
-            hasJwtAssertionText: /cf-access-jwt-assertion/i.test(healthText),
-          };
-
-          const organization = orgResponse.result && typeof orgResponse.result === 'object'
-            ? {
-                name: orgResponse.result.name || null,
-                authDomain: orgResponse.result.auth_domain || null,
-                isUiReadOnly: Boolean(orgResponse.result.is_ui_read_only),
-              }
-            : null;
+          await healthResponse.arrayBuffer();
 
           console.log(JSON.stringify({
-            schema: 'production-access-readonly-v3',
+            schema: 'production-access-readonly-v4',
             accessApi: {
-              apps: { ok: appsResponse.ok, status: appsResponse.status, apiErrorCode: appsResponse.apiErrorCode, rows: appSummaries },
+              apps: {
+                ok: appsResponse.ok,
+                status: appsResponse.status,
+                count: apps.length,
+                totalCount: appsResponse.resultInfo?.total_count ?? null,
+                rows: apps.map((app) => ({
+                  id: app.id || null,
+                  name: app.name || null,
+                  domain: app.domain || null,
+                  type: app.type || null,
+                  destinations: Array.isArray(app.destinations) ? app.destinations.map((destination) => ({ type: destination?.type || null, workerId: destination?.worker_id || null, uri: destination?.uri || null })) : [],
+                  audPresent: Boolean(app.aud),
+                })),
+              },
+              reusablePolicies: {
+                ok: policiesResponse.ok,
+                status: policiesResponse.status,
+                apiErrorCode: policiesResponse.apiErrorCode,
+                count: policies.length,
+                totalCount: policiesResponse.resultInfo?.total_count ?? null,
+                rows: policies.map((policy) => ({
+                  id: policy.id || null,
+                  name: policy.name || null,
+                  decision: policy.decision || null,
+                  reusable: policy.reusable === true,
+                  appCount: policy.app_count ?? null,
+                  includeRuleTypes: Array.isArray(policy.include) ? policy.include.map(ruleType) : [],
+                  requireRuleTypes: Array.isArray(policy.require) ? policy.require.map(ruleType) : [],
+                  excludeRuleTypes: Array.isArray(policy.exclude) ? policy.exclude.map(ruleType) : [],
+                })),
+              },
               serviceTokens: {
                 ok: tokenResponse.ok,
                 status: tokenResponse.status,
-                apiErrorCode: tokenResponse.apiErrorCode,
+                count: serviceTokens.length,
                 rows: serviceTokens.map((row) => ({ id: row.id || null, name: row.name || null, duration: row.duration || null, expiresAt: row.expires_at || null })),
               },
-              organization: { ok: orgResponse.ok, status: orgResponse.status, apiErrorCode: orgResponse.apiErrorCode, value: organization },
             },
             workerSubdomain: {
               ok: subdomainResponse.ok,
-              status: subdomainResponse.status,
               enabled: subdomainResponse.result?.enabled ?? null,
               previewsEnabled: subdomainResponse.result?.previews_enabled ?? null,
             },
             healthFingerprint: {
               status: healthResponse.status,
               contentType: healthResponse.headers.get('content-type'),
-              server: healthResponse.headers.get('server'),
-              cfRayPresent: Boolean(healthResponse.headers.get('cf-ray')),
               location: sanitizeLocation(healthResponse.headers.get('location')),
-              setCookieNames: cookieNames(healthResponse.headers.get('set-cookie')),
-              title: titleMatch?.[1]?.trim() || null,
-              bodySignals,
-              bodyByteLength: new TextEncoder().encode(healthText).byteLength,
+              cfAppSessionCookiePresent: /(?:^|[,;]\s*)CF_AppSession=/.test(String(healthResponse.headers.get('set-cookie') || '')),
             },
             cloudflareMutationAttempted: false,
             amazonExecutionAttempted: false,
