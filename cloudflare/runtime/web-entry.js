@@ -63,6 +63,10 @@ const OPTIMIZATION_ACTIONS_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/optimizat
 const GOVERNANCE_HEALTH_ROUTE_PATTERN = /^\/api\/v1\/stores\/[^/]+\/governance-health$/;
 const DEV_READ_ONLY_BYPASS_ACTOR_ID = 'user-dev-owner';
 const DEV_READ_ONLY_BYPASS_METHODS = new Set(['GET', 'HEAD']);
+const DEV_READ_ONLY_BOOTSTRAP_ROUTES = new Set([
+  '/api/v1/stores',
+  '/api/v1/capabilities',
+]);
 
 export default {
   async fetch(request, env, ctx) {
@@ -262,7 +266,8 @@ export function isDevReadOnlyAccessBypassEnabled(env = {}) {
 }
 
 export function isDevReadOnlyAccessBypassRoute(pathname) {
-  return isControlRoute(pathname)
+  return DEV_READ_ONLY_BOOTSTRAP_ROUTES.has(pathname)
+    || isControlRoute(pathname)
     || STORE_PRODUCTS_ROUTE_PATTERN.test(pathname)
     || PRODUCT_KEYWORDS_ROUTE_PATTERN.test(pathname)
     || isNegativeKeywordScopeRoute(pathname)
