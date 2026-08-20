@@ -72,8 +72,13 @@ function factFromItem(item, metricsKey, reportDate, payload, currentPeriod) {
 }
 
 function deriveIdentityConfidence(payload) {
-  const resolved = nonNegative(payload?.summary?.csvResolvedTargetingItemCount);
-  const unresolved = nonNegative(payload?.summary?.csvUnresolvedTargetingItemCount);
+  const itemStates = (Array.isArray(payload?.items) ? payload.items : [])
+    .map((item) => text(item?.entity?.targetingIdentityState || item?.evidence?.targetingIdentityState))
+    .filter(Boolean);
+  const resolvedFromItems = itemStates.filter((state) => state === 'resolved_id').length;
+  const unresolvedFromItems = itemStates.filter((state) => state !== 'resolved_id').length;
+  const resolved = itemStates.length > 0 ? resolvedFromItems : nonNegative(payload?.summary?.csvResolvedTargetingItemCount);
+  const unresolved = itemStates.length > 0 ? unresolvedFromItems : nonNegative(payload?.summary?.csvUnresolvedTargetingItemCount);
   const observed = resolved + unresolved;
   if (observed === 0) {
     return Object.freeze({
