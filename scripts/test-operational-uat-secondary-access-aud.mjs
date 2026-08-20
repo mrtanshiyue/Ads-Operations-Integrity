@@ -131,7 +131,7 @@ async function signJwt(extraPayload) {
   });
   const data = new TextEncoder().encode(`${header}.${payload}`);
   const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyPair.privateKey, data));
-  return `${header}.${bytesToBase64url(signature)}`;
+  return `${header}.${payload}.${bytesToBase64url(signature)}`;
 }
 
 function base64urlJson(value) {
