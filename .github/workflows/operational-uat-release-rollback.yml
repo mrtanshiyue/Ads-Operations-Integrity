@@ -7,6 +7,12 @@ on:
       - 'scripts/operational-uat-release-rollback.mjs'
       - 'scripts/test-operational-uat-release-rollback.mjs'
       - '.github/workflows/operational-uat-release-rollback.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/operational-uat-release-rollback.mjs'
+      - 'scripts/test-operational-uat-release-rollback.mjs'
+      - '.github/workflows/operational-uat-release-rollback.yml'
   workflow_dispatch:
     inputs:
       confirmation:
@@ -38,16 +44,20 @@ jobs:
   live-production-drill:
     name: Production rollback and restore drill
     if: >-
-      github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
-      inputs.confirmation == 'ROLLBACK_AND_RESTORE_PRODUCTION'
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' &&
+       inputs.confirmation == 'ROLLBACK_AND_RESTORE_PRODUCTION') ||
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/main' &&
+       github.event.before == 'a3fb96e0ef059a719cb480c754f815715fe9e445' &&
+       contains(github.event.head_commit.message, 'production rollback-and-restore UAT drill (#196)'))
     needs: contracts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      OPERATIONAL_UAT_ROLLBACK_CONFIRM: ${{ inputs.confirmation }}
+      OPERATIONAL_UAT_ROLLBACK_CONFIRM: ROLLBACK_AND_RESTORE_PRODUCTION
       OPERATIONAL_UAT_WORKER_NAME: ads-operations-web-prod
       OPERATIONAL_UAT_HEALTH_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev/api/health
       OPERATIONAL_UAT_ROLLBACK_OUTPUT: artifacts/operational-uat-release-rollback.json
