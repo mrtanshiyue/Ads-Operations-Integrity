@@ -44,12 +44,14 @@ jobs:
       - name: Syntax check analytics scale runtime
         run: |
           node --check cloudflare/runtime/csv-analytics-diagnostics-api.js
+          node --check cloudflare/runtime/csv-analytics-recommendation-inbox.js
           node --check assets/cloudflare-native-csv-local-diagnostics-v1.js
           node --check assets/cloudflare-native-api-v1.js
           node --check cloudflare/runtime/web-entry.js
           node --check scripts/csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-request-dedupe.mjs
+          node --check scripts/test-csv-recommendation-inbox-contract.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
@@ -58,3 +60,5 @@ jobs:
         run: node scripts/test-csv-analytics-scale-harness.mjs
       - name: Validate in-flight analytics request dedupe contract
         run: node scripts/test-csv-analytics-request-dedupe.mjs
+      - name: Validate governed recommendation inbox contract
+        run: node scripts/test-csv-recommendation-inbox-contract.mjs
