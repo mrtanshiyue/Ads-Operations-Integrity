@@ -1,7 +1,7 @@
 (function initCsvRootLifecycleUsability(global) {
   'use strict';
 
-  const VERSION = '1.0.1';
+  const VERSION = '1.0.2';
   const LIFECYCLE_STATES = Object.freeze([
     'new',
     'emergingWinner',
@@ -12,6 +12,18 @@
     'recovered',
     'watchlist',
   ]);
+  const HOST_SCOPE_CONTROL_NAMES = new Set([
+    'dataSource',
+    'startDate',
+    'endDate',
+    'profileId',
+    'limit',
+    'sort',
+    'q',
+    'campaignName',
+    'adGroupName',
+  ]);
+  const HOST_SCOPE_TEXT_CONTROL_NAMES = new Set(['q', 'campaignName', 'adGroupName']);
   const state = {
     mounted: false,
     panel: null,
@@ -58,6 +70,7 @@
     state.observer = new MutationObserver(scheduleSync);
     observePanel();
     panel.addEventListener('change', handleControlChange);
+    panel.addEventListener('input', handleHostScopeInput);
     global.addEventListener?.('cloudflare-operator-store-change', resetScope);
     scheduleSync();
   }
@@ -76,13 +89,22 @@
   }
 
   async function sync() {
-    if (currentSource() !== 'csv') return;
+    if (currentSource() !== 'csv') {
+      clearPresentation({ resetFilters: true });
+      return;
+    }
     const rootSection = state.panel?.querySelector('[data-csv-root-intelligence]');
     const lifecycleSection = state.panel?.querySelector('[data-csv-lifecycle-workspace]');
-    if (!rootSection || !lifecycleSection) return;
+    if (!rootSection || !lifecycleSection) {
+      clearPresentation();
+      return;
+    }
     await ensureContext();
     const productization = state.payload?.productization;
-    if (!productization) return;
+    if (!productization) {
+      clearPresentation();
+      return;
+    }
 
     // Rendering mutates the observed operator surface. Disconnect while applying the
     // presentation overlay so our own DOM writes cannot recursively schedule sync().
@@ -95,21 +117,62 @@
     }
   }
 
-  function resetScope() {
+  function invalidateContext() {
     state.scopeKey = '';
     state.payload = null;
     state.controller?.abort();
     state.controller = null;
-    state.lifecycleFilter = '';
-    state.rootFilter = '';
-    state.lifecycleSort = 'attention';
+  }
+
+  function resetScope() {
+    invalidateContext();
+    clearPresentation({ resetFilters: true });
     scheduleSync();
+  }
+
+  function clearPresentation({ resetFilters = false } = {}) {
+    invalidateContext();
+    state.observer?.disconnect();
+    try {
+      state.panel?.querySelectorAll('[data-crlu-root-productization],[data-crlu-lifecycle-controls],[data-crlu-lifecycle-empty],[data-crlu-root-context],[data-crlu-lifecycle-linkage]')
+        .forEach((node) => node.remove());
+      restoreLifecycleRows(state.panel);
+      if (resetFilters) {
+        state.lifecycleFilter = '';
+        state.rootFilter = '';
+        state.lifecycleSort = 'attention';
+      }
+    } finally {
+      observePanel();
+    }
+  }
+
+  function restoreLifecycleRows(root) {
+    root?.querySelectorAll('[data-crlu-prior-hidden]').forEach((row) => {
+      row.hidden = row.dataset.crluPriorHidden === 'true';
+      delete row.dataset.crluPriorHidden;
+    });
+  }
+
+  function resetLifecyclePresentation(section) {
+    restoreLifecycleRows(section);
+    section?.querySelectorAll('[data-crlu-lifecycle-linkage]').forEach((node) => node.remove());
   }
 
   async function ensureContext() {
     const scope = currentScope();
     if (!scope.storeId || !scope.startDate || !scope.endDate) return;
-    const key = [scope.storeId, scope.startDate, scope.endDate, scope.profileId, scope.limit, scope.sort].join('|');
+    const key = [
+      scope.storeId,
+      scope.startDate,
+      scope.endDate,
+      scope.profileId,
+      scope.limit,
+      scope.sort,
+      scope.q,
+      scope.campaignName,
+      scope.adGroupName,
+    ].join('|');
     if (state.scopeKey === key && state.payload) return;
 
     state.controller?.abort();
@@ -125,7 +188,9 @@
       limit: scope.limit,
       sort: scope.sort,
     });
-    if (scope.profileId) params.set('profileId', scope.profileId);
+    for (const name of ['profileId', 'q', 'campaignName', 'adGroupName']) {
+      if (scope[name]) params.set(name, scope[name]);
+    }
 
     try {
       const response = await fetch(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/search-term-intelligence?${params}`, {
@@ -204,6 +269,7 @@
       <div class="crlu-subhead"><strong>Root Priority Focus</strong><span>Backend priority score first; presentation only</span></div>
       <div class="cfdi-table-wrap"><table class="cfdi-table crlu-table"><thead><tr><th>Root</th><th>Priority</th><th>Spend share</th><th>Sales share</th><th>Lifecycle mix</th><th>Recommendation linkage</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
+    section.querySelectorAll('[data-crlu-root-context]').forEach((node) => node.remove());
     annotateRootRows(section, roots, lifecycleMap, totalSpend, totalSales, comparable);
   }
 
@@ -215,6 +281,8 @@
     const lifecycleItems = Array.isArray(historical.lifecycle?.items) ? historical.lifecycle.items : [];
     const candidates = Array.isArray(business.candidates) ? business.candidates : [];
     const rootMap = buildRootMap(roots);
+
+    resetLifecyclePresentation(section);
 
     let controls = section.querySelector('[data-crlu-lifecycle-controls]');
     if (!controls) {
@@ -251,6 +319,7 @@
       const linkedRoots = rootMap.get(normalize(term)) || [];
       const stateMatch = !state.lifecycleFilter || item?.state === state.lifecycleFilter;
       const rootMatch = !state.rootFilter || linkedRoots.some((root) => String(root?.root || '') === state.rootFilter);
+      if (!row.hasAttribute('data-crlu-prior-hidden')) row.dataset.crluPriorHidden = row.hidden ? 'true' : 'false';
       row.hidden = !(stateMatch && rootMatch);
       if (!row.hidden) visible.push({ row, item });
       annotateLifecycleRow(row, item, linkedRoots, candidates, scope);
@@ -275,13 +344,28 @@
 
   function handleControlChange(event) {
     const control = event.target.closest?.('[data-crlu-control]');
-    if (!control) return;
-    const key = control.dataset.crluControl;
-    if (key === 'state') state.lifecycleFilter = LIFECYCLE_STATES.includes(control.value) ? control.value : '';
-    if (key === 'root') state.rootFilter = String(control.value || '');
-    if (key === 'sort') state.lifecycleSort = ['attention', 'spend', 'sales', 'orders', 'term'].includes(control.value)
-      ? control.value
-      : 'attention';
+    if (control) {
+      const key = control.dataset.crluControl;
+      if (key === 'state') state.lifecycleFilter = LIFECYCLE_STATES.includes(control.value) ? control.value : '';
+      if (key === 'root') state.rootFilter = String(control.value || '');
+      if (key === 'sort') state.lifecycleSort = ['attention', 'spend', 'sales', 'orders', 'term'].includes(control.value)
+        ? control.value
+        : 'attention';
+      scheduleSync();
+      return;
+    }
+
+    const name = String(event.target?.name || '');
+    if (!HOST_SCOPE_CONTROL_NAMES.has(name)) return;
+    invalidateContext();
+    if (name === 'dataSource' && currentSource() !== 'csv') clearPresentation({ resetFilters: true });
+    scheduleSync();
+  }
+
+  function handleHostScopeInput(event) {
+    const name = String(event.target?.name || '');
+    if (!HOST_SCOPE_TEXT_CONTROL_NAMES.has(name)) return;
+    invalidateContext();
     scheduleSync();
   }
 
@@ -385,6 +469,9 @@
       profileId: value('profileId'),
       limit: value('limit') || '50',
       sort: value('sort') || 'cost',
+      q: value('q'),
+      campaignName: value('campaignName'),
+      adGroupName: value('adGroupName'),
     };
   }
 
