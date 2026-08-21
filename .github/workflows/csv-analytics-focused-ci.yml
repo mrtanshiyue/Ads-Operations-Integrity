@@ -49,6 +49,7 @@ jobs:
           node --check cloudflare/runtime/csv-analytics-recommendation-inbox.js
           node --check assets/cloudflare-native-csv-local-diagnostics-v1.js
           node --check assets/cloudflare-native-csv-recommendation-inbox-v1.js
+          node --check assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js
           node --check assets/cloudflare-native-api-v1.js
           node --check assets/generated/inline-script-10.js
           node --check cloudflare/runtime/web-entry.js
