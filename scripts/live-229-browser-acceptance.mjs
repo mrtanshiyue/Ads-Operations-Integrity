@@ -43,9 +43,11 @@ try {
   assert.equal(response.status(), 200, `Dev root expected 200, got ${response.status()}`);
   receipt.checks.devRoot200 = true;
 
-  await page.waitForSelector('#cfDecisionPanel', { timeout: 60_000 });
+  await page.waitForSelector('#cfDecisionPanel', { state: 'attached', timeout: 60_000 });
   await page.waitForFunction(() => Boolean(globalThis.CloudflareCsvRecommendationInboxUsability), null, { timeout: 60_000 });
   receipt.checks.decisionPanelRendered = true;
+  await openDecisionPanel(page);
+  receipt.checks.decisionPanelOpenedByClick = true;
 
   const runtimeEvidence = await page.evaluate(async () => {
     const res = await fetch('/__deployment-health', { cache: 'no-store' }).catch(() => null);
@@ -108,8 +110,9 @@ try {
   receipt.checks.storeWorkspaceNamespaceIsolation = true;
 
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.waitForSelector('#cfDecisionPanel', { timeout: 60_000 });
+  await page.waitForSelector('#cfDecisionPanel', { state: 'attached', timeout: 60_000 });
   await page.waitForFunction(() => Boolean(globalThis.CloudflareCsvRecommendationInboxUsability), null, { timeout: 60_000 });
+  await openDecisionPanel(page);
   await setScope(page, candidateScope);
   const sectionReloaded = page.locator('[data-csv-recommendation-inbox-workspace]');
   await sectionReloaded.waitFor({ state: 'visible', timeout: 60_000 });
@@ -184,6 +187,15 @@ try {
   await writeFile(`${OUT}/receipt.json`, JSON.stringify(receipt, null, 2));
   console.log(JSON.stringify(receipt, null, 2));
   await browser.close();
+}
+
+async function openDecisionPanel(page) {
+  const panel = page.locator('#cfDecisionPanel');
+  if (await panel.isVisible()) return;
+  const button = page.getByRole('button', { name: 'Decision Intelligence', exact: true });
+  assert.equal(await button.count(), 1, 'Decision Intelligence launcher button missing or ambiguous');
+  await button.click();
+  await panel.waitFor({ state: 'visible', timeout: 15_000 });
 }
 
 async function findCandidateScope(page, storeId) {
