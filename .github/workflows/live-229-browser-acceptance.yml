@@ -6,12 +6,14 @@ on:
       - feature/229-live-browser-acceptance
     paths:
       - 'scripts/live-229-browser-acceptance.mjs'
+      - 'scripts/debug-229-reload.mjs'
       - '.github/workflows/live-229-browser-acceptance.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'scripts/live-229-browser-acceptance.mjs'
+      - 'scripts/debug-229-reload.mjs'
       - '.github/workflows/live-229-browser-acceptance.yml'
   workflow_dispatch:
 
@@ -34,6 +36,8 @@ jobs:
         run: |
           npm install --no-save --ignore-scripts playwright@1.55.0
           npx playwright install --with-deps chromium
+      - name: Diagnose live reload request path
+        run: node scripts/debug-229-reload.mjs
       - name: Execute live #229 browser acceptance
         run: node scripts/live-229-browser-acceptance.mjs
       - name: Upload live acceptance evidence
