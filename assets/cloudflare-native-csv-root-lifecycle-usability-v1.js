@@ -1,7 +1,7 @@
 (function initCsvRootLifecycleUsability(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const LIFECYCLE_STATES = Object.freeze([
     'new',
     'emergingWinner',
@@ -56,10 +56,15 @@
     state.mounted = true;
     state.panel = panel;
     state.observer = new MutationObserver(scheduleSync);
-    state.observer.observe(panel, { childList: true, subtree: true });
+    observePanel();
     panel.addEventListener('change', handleControlChange);
     global.addEventListener?.('cloudflare-operator-store-change', resetScope);
     scheduleSync();
+  }
+
+  function observePanel() {
+    if (!state.observer || !state.panel) return;
+    state.observer.observe(state.panel, { childList: true, subtree: true });
   }
 
   function scheduleSync() {
@@ -78,8 +83,16 @@
     await ensureContext();
     const productization = state.payload?.productization;
     if (!productization) return;
-    renderRootProductization(rootSection, productization);
-    renderLifecycleProductization(lifecycleSection, productization);
+
+    // Rendering mutates the observed operator surface. Disconnect while applying the
+    // presentation overlay so our own DOM writes cannot recursively schedule sync().
+    state.observer?.disconnect();
+    try {
+      renderRootProductization(rootSection, productization);
+      renderLifecycleProductization(lifecycleSection, productization);
+    } finally {
+      observePanel();
+    }
   }
 
   function resetScope() {
@@ -98,11 +111,13 @@
     if (!scope.storeId || !scope.startDate || !scope.endDate) return;
     const key = [scope.storeId, scope.startDate, scope.endDate, scope.profileId, scope.limit, scope.sort].join('|');
     if (state.scopeKey === key && state.payload) return;
+
     state.controller?.abort();
     const controller = new AbortController();
     state.controller = controller;
     state.scopeKey = key;
     state.payload = null;
+
     const params = new URLSearchParams({
       source: 'csv',
       startDate: scope.startDate,
@@ -111,6 +126,7 @@
       sort: scope.sort,
     });
     if (scope.profileId) params.set('profileId', scope.profileId);
+
     try {
       const response = await fetch(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/search-term-intelligence?${params}`, {
         credentials: 'same-origin',
@@ -136,7 +152,6 @@
     const lifecycleItems = Array.isArray(historical.lifecycle?.items) ? historical.lifecycle.items : [];
     const candidates = Array.isArray(business.candidates) ? business.candidates : [];
     const lifecycleMap = new Map(lifecycleItems.map((item) => [normalize(item?.searchTerm), item]));
-    const currency = financialCurrency(scope, state.payload?.profile);
     const comparable = scope.financiallyComparable === true;
     const totalSpend = sum(roots, (root) => root?.metrics?.spendMicros);
     const totalSales = sum(roots, (root) => root?.metrics?.salesMicros);
@@ -155,14 +170,14 @@
       else section.prepend(block);
     }
 
-    const financialSuppressed = '<span class="crlu-muted">Suppressed by financial comparability gate</span>';
     const cards = comparable
       ? `${metric('Top-3 spend concentration', ratio(sum(topSpend, (root) => root?.metrics?.spendMicros), totalSpend))}
          ${metric('Top-3 sales concentration', ratio(sum(topSales, (root) => root?.metrics?.salesMicros), totalSales))}
          ${metric('Winner-linked sales share', ratio(sum(winnerRoots, (root) => root?.metrics?.salesMicros), totalSales))}
          ${metric('Waste-exposed spend share', ratio(sum(wasteRoots, (root) => root?.metrics?.spendMicros), totalSpend))}
          ${metric('Profit-protected roots', `${protectedRoots.length}/${roots.length}`)}`
-      : `${metric('Financial concentration', financialSuppressed, true)}${metric('Profit-protected roots', `${protectedRoots.length}/${roots.length}`)}`;
+      : `${metric('Financial concentration', '<span class="crlu-muted">Suppressed by financial comparability gate</span>', true)}
+         ${metric('Profit-protected roots', `${protectedRoots.length}/${roots.length}`)}`;
 
     const prioritized = [...roots]
       .sort((a, b) => numeric(b?.priorityScore) - numeric(a?.priorityScore)
@@ -190,7 +205,6 @@
       <div class="cfdi-table-wrap"><table class="cfdi-table crlu-table"><thead><tr><th>Root</th><th>Priority</th><th>Spend share</th><th>Sales share</th><th>Lifecycle mix</th><th>Recommendation linkage</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
     annotateRootRows(section, roots, lifecycleMap, totalSpend, totalSales, comparable);
-    void currency;
   }
 
   function renderLifecycleProductization(section, productization) {
@@ -201,6 +215,7 @@
     const lifecycleItems = Array.isArray(historical.lifecycle?.items) ? historical.lifecycle.items : [];
     const candidates = Array.isArray(business.candidates) ? business.candidates : [];
     const rootMap = buildRootMap(roots);
+
     let controls = section.querySelector('[data-crlu-lifecycle-controls]');
     if (!controls) {
       controls = document.createElement('div');
@@ -210,7 +225,9 @@
       if (summary) summary.insertAdjacentElement('afterend', controls);
       else section.prepend(controls);
     }
-    const rootOptions = [...new Set(roots.map((root) => String(root?.root || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+    const rootOptions = [...new Set(roots.map((root) => String(root?.root || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
     controls.innerHTML = `<label>Lifecycle state<select data-crlu-control="state"><option value="">All states</option>${LIFECYCLE_STATES.map((value) => `<option value="${value}"${state.lifecycleFilter === value ? ' selected' : ''}>${escapeHtml(lifecycleLabel(value))}</option>`).join('')}</select></label>
       <label>Linked root<select data-crlu-control="root"><option value="">All roots</option>${rootOptions.map((value) => `<option value="${escapeHtml(value)}"${state.rootFilter === value ? ' selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
       <label>Sort<select data-crlu-control="sort">
@@ -225,7 +242,8 @@
     const byTerm = new Map(lifecycleItems.map((item) => [normalize(item?.searchTerm), item]));
     const tbody = section.querySelector('tbody');
     const rows = tbody ? [...tbody.querySelectorAll('tr')].filter((row) => !row.querySelector('td[colspan]')) : [];
-    const filtered = [];
+    const visible = [];
+
     for (const row of rows) {
       const term = String(row.querySelector('td:first-child strong')?.textContent || '').trim();
       const item = byTerm.get(normalize(term));
@@ -234,11 +252,12 @@
       const stateMatch = !state.lifecycleFilter || item?.state === state.lifecycleFilter;
       const rootMatch = !state.rootFilter || linkedRoots.some((root) => String(root?.root || '') === state.rootFilter);
       row.hidden = !(stateMatch && rootMatch);
-      if (!row.hidden) filtered.push({ row, item, linkedRoots });
+      if (!row.hidden) visible.push({ row, item });
       annotateLifecycleRow(row, item, linkedRoots, candidates, scope);
     }
-    filtered.sort((a, b) => lifecycleComparator(a.item, b.item));
-    for (const entry of filtered) tbody?.appendChild(entry.row);
+
+    visible.sort((a, b) => lifecycleComparator(a.item, b.item));
+    for (const entry of visible) tbody?.appendChild(entry.row);
 
     let empty = section.querySelector('[data-crlu-lifecycle-empty]');
     if (!empty) {
@@ -248,8 +267,10 @@
       empty.hidden = true;
       controls.insertAdjacentElement('afterend', empty);
     }
-    empty.hidden = filtered.length > 0 || rows.length === 0;
-    if (!empty.hidden) empty.innerHTML = '<strong>No lifecycle rows match current presentation filters.</strong> Clear state or root filters; no governed data was changed.';
+    empty.hidden = visible.length > 0 || rows.length === 0;
+    if (!empty.hidden) {
+      empty.innerHTML = '<strong>No lifecycle rows match current presentation filters.</strong> Clear state or root filters; no governed data was changed.';
+    }
   }
 
   function handleControlChange(event) {
@@ -258,7 +279,9 @@
     const key = control.dataset.crluControl;
     if (key === 'state') state.lifecycleFilter = LIFECYCLE_STATES.includes(control.value) ? control.value : '';
     if (key === 'root') state.rootFilter = String(control.value || '');
-    if (key === 'sort') state.lifecycleSort = ['attention', 'spend', 'sales', 'orders', 'term'].includes(control.value) ? control.value : 'attention';
+    if (key === 'sort') state.lifecycleSort = ['attention', 'spend', 'sales', 'orders', 'term'].includes(control.value)
+      ? control.value
+      : 'attention';
     scheduleSync();
   }
 
@@ -267,7 +290,8 @@
     if (state.lifecycleSort === 'spend') return absNumeric(b?.change?.spendPct) - absNumeric(a?.change?.spendPct) || lifecyclePriority(a?.state) - lifecyclePriority(b?.state);
     if (state.lifecycleSort === 'sales') return absNumeric(b?.change?.salesPct) - absNumeric(a?.change?.salesPct) || lifecyclePriority(a?.state) - lifecyclePriority(b?.state);
     if (state.lifecycleSort === 'orders') return absNumeric(b?.change?.ordersPct) - absNumeric(a?.change?.ordersPct) || lifecyclePriority(a?.state) - lifecyclePriority(b?.state);
-    return lifecyclePriority(a?.state) - lifecyclePriority(b?.state) || String(a?.searchTerm || '').localeCompare(String(b?.searchTerm || ''));
+    return lifecyclePriority(a?.state) - lifecyclePriority(b?.state)
+      || String(a?.searchTerm || '').localeCompare(String(b?.searchTerm || ''));
   }
 
   function lifecyclePriority(value) {
@@ -281,8 +305,11 @@
       if (!lifecycle?.state) continue;
       counts.set(lifecycle.state, (counts.get(lifecycle.state) || 0) + 1);
     }
-    const parts = [...counts.entries()].sort((a, b) => lifecyclePriority(a[0]) - lifecyclePriority(b[0]) || b[1] - a[1]);
-    return parts.length ? parts.map(([key, value]) => `${lifecycleLabel(key)} ${value}`).join(' · ') : 'No linked lifecycle evidence';
+    const parts = [...counts.entries()]
+      .sort((a, b) => lifecyclePriority(a[0]) - lifecyclePriority(b[0]) || b[1] - a[1]);
+    return parts.length
+      ? parts.map(([key, value]) => `${lifecycleLabel(key)} ${value}`).join(' · ')
+      : 'No linked lifecycle evidence';
   }
 
   function candidateLinkage(root, candidates, scope) {
@@ -332,7 +359,8 @@
     }
     const term = normalize(item?.searchTerm);
     const linked = candidates.filter((candidate) => normalize(candidate?.value) === term
-      || (candidate?.matchScope === 'phrase_review' && linkedRoots.some((root) => normalize(root?.root) === normalize(candidate?.value))));
+      || (candidate?.matchScope === 'phrase_review'
+        && linkedRoots.some((root) => normalize(root?.root) === normalize(candidate?.value))));
     note.textContent = `linked roots: ${roots} · ${linked.length} governed candidate${linked.length === 1 ? '' : 's'}`;
   }
 
@@ -366,11 +394,6 @@
 
   function value(name) {
     return String(state.panel?.querySelector(`[name="${name}"]`)?.value || '').trim();
-  }
-
-  function financialCurrency(scope, profile) {
-    if (scope?.financiallyComparable !== true) return null;
-    return Array.isArray(scope?.currencyCodes) && scope.currencyCodes.length === 1 ? scope.currencyCodes[0] : profile?.currencyCode || null;
   }
 
   function sum(items, getter) {
