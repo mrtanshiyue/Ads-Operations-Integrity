@@ -18,6 +18,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-local-diagnostics-v1.js',
   'cloudflare-native-csv-intelligence-v1.js',
   'cloudflare-native-csv-recommendation-inbox-v1.js',
+  'cloudflare-native-csv-recommendation-inbox-usability-v1.js',
   'cloudflare-native-csv-joint-analysis-v1.js',
   'cloudflare-native-csv-data-quality-command-center-v1.js',
   'cloudflare-native-csv-hierarchy-quality-v1.js',
