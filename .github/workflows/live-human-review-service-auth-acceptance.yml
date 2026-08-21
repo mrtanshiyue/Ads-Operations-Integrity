@@ -25,6 +25,15 @@ jobs:
     env:
       CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PROBE_ACCESS_API_TOKEN: ${{ secrets.CLOUDFLARE_ACCESS_API_TOKEN }}
+      PROBE_D1_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_API_TOKEN }}
+      PROBE_PROD_API_TOKEN: ${{ secrets.CLOUDFLARE_PROD_API_TOKEN }}
+      PROBE_PRODUCTION_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_API_TOKEN }}
+      PROBE_ZERO_TRUST_API_TOKEN: ${{ secrets.CLOUDFLARE_ZERO_TRUST_API_TOKEN }}
+      PROBE_WORKERS_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_API_TOKEN }}
+      PROBE_CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      PROBE_ACCESS_ALT_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_ACCESS }}
+      PROBE_D1_ALT_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_D1 }}
       EXPECTED_MAIN_SHA: 535552f760dd9f94befc019a61f90b5f5ca145cb
       PROD_TRIGGER_UUID: fa90d482-de7b-466b-9ada-04404569ede9
       PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
@@ -38,6 +47,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Report credential aliases without values
+        run: |
+          node - <<'NODE'
+          const names = [
+            'CLOUDFLARE_API_TOKEN',
+            'PROBE_ACCESS_API_TOKEN',
+            'PROBE_D1_API_TOKEN',
+            'PROBE_PROD_API_TOKEN',
+            'PROBE_PRODUCTION_API_TOKEN',
+            'PROBE_ZERO_TRUST_API_TOKEN',
+            'PROBE_WORKERS_API_TOKEN',
+            'PROBE_CF_API_TOKEN',
+            'PROBE_ACCESS_ALT_API_TOKEN',
+            'PROBE_D1_ALT_API_TOKEN',
+          ];
+          console.log(JSON.stringify(Object.fromEntries(names.map((name) => [name, Boolean(String(process.env[name] || '').trim())])), null, 2));
+          NODE
 
       - name: Run ephemeral service-auth acceptance
         run: node scripts/live-human-review-service-auth-acceptance.mjs
