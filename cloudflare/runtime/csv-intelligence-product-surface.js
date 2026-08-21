@@ -1,7 +1,8 @@
 import { buildCsvSearchTermBusinessIntelligence } from './csv-search-term-business-intelligence.js';
 import { buildCsvSearchTermLifecycle } from './csv-search-term-lifecycle.js';
+import { buildCsvRecommendationInbox } from './csv-analytics-recommendation-inbox.js';
 
-export const CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION = 'csv-intelligence-product-surface-v2';
+export const CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION = 'csv-intelligence-product-surface-v3';
 
 const PRODUCT_SURFACE_AUTHORITY = Object.freeze({
   sourceKind: 'csv_import',
@@ -33,29 +34,36 @@ export function buildCsvIntelligenceProductSurface(payload) {
     previousWindow,
   });
   const lifecycle = Object.freeze({ ...rawLifecycle, analysisScope });
+  const historicalIntelligence = Object.freeze({
+    schemaVersion: 'csv-historical-search-term-intelligence-v2',
+    authority: PRODUCT_SURFACE_AUTHORITY,
+    analysisScope,
+    currentWindow,
+    previousWindow,
+    periodCapabilities: lifecycle.periodCapabilities,
+    lifecycle,
+    summary: Object.freeze({
+      lifecycleTermCount: lifecycle.summary.analyzedTermCount,
+      completeScope: analysisScope.complete,
+      financiallyComparable: analysisScope.financiallyComparable,
+      candidateEmissionAuthorized: analysisScope.candidateEmissionAuthorized,
+      executionAuthorized: false,
+      amazonMutationAuthorized: false,
+    }),
+  });
+  const recommendationInbox = buildCsvRecommendationInbox({
+    businessIntelligence,
+    historicalIntelligence,
+    analysisScope,
+  });
 
   return Object.freeze({
     schemaVersion: CSV_INTELLIGENCE_PRODUCT_SURFACE_SCHEMA_VERSION,
     authority: PRODUCT_SURFACE_AUTHORITY,
     analysisScope,
     businessIntelligence,
-    historicalIntelligence: Object.freeze({
-      schemaVersion: 'csv-historical-search-term-intelligence-v2',
-      authority: PRODUCT_SURFACE_AUTHORITY,
-      analysisScope,
-      currentWindow,
-      previousWindow,
-      periodCapabilities: lifecycle.periodCapabilities,
-      lifecycle,
-      summary: Object.freeze({
-        lifecycleTermCount: lifecycle.summary.analyzedTermCount,
-        completeScope: analysisScope.complete,
-        financiallyComparable: analysisScope.financiallyComparable,
-        candidateEmissionAuthorized: analysisScope.candidateEmissionAuthorized,
-        executionAuthorized: false,
-        amazonMutationAuthorized: false,
-      }),
-    }),
+    historicalIntelligence,
+    recommendationInbox,
   });
 }
 
