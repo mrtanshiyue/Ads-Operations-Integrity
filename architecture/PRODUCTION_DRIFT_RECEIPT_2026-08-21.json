@@ -1,0 +1,174 @@
+{
+  "schemaVersion": "production-drift-receipt-v1",
+  "capturedAt": "2026-08-21T11:08:00Z",
+  "status": "PASS_WITH_AUTHENTICATED_UI_PENDING",
+  "canonicalMain": {
+    "sha": "c8b3c7e83ab3862267e3618d610c9ec776f16a70",
+    "protected": true,
+    "requiredStatusContexts": [
+      "Static site and security invariants"
+    ]
+  },
+  "webDev": {
+    "worker": "ads-operations-web-dev",
+    "build": "e631f6a8-6b6e-4b29-acc1-4fdbd05799bb",
+    "deployment": "9432660a-1d23-4b7f-bb5e-f31cbfbf3b43",
+    "version": "daded806-57d2-4924-bb8f-4e8d46052d5e",
+    "versionNumber": 96,
+    "exactMainSha": "c8b3c7e83ab3862267e3618d610c9ec776f16a70",
+    "flags": {
+      "APP_ENV": "development",
+      "ACCESS_MODE": "off",
+      "SYNC_TRIGGER_ENABLED": "false"
+    },
+    "browserAcceptance": {
+      "appLoads": true,
+      "storeSelectorResolved": true,
+      "resolvedStore": "Development Store",
+      "readOnlyBadgeVisible": true,
+      "amazonExecutionDisabledVisible": true,
+      "recommendationInboxAssetServed": true,
+      "recommendationInboxSchemaObserved": "csv-recommendation-inbox-v1"
+    },
+    "recommendationInboxAcceptance": {
+      "sourceStoreId": "store-dev-01",
+      "range": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "candidatePotentialCount": 36,
+      "reviewCandidateCount": 0,
+      "blockedByGovernanceCount": 0,
+      "blockedByScopeCount": 36,
+      "candidateEmissionAuthorized": false,
+      "financiallyComparable": true,
+      "scopeReasons": [
+        "search_term_universe_hard_cap_exceeded"
+      ],
+      "governancePersistenceAllowed": false,
+      "executionAuthorized": false,
+      "amazonMutationAuthorized": false,
+      "result": "FAIL_CLOSED_AS_DESIGNED"
+    }
+  },
+  "webProduction": {
+    "worker": "ads-operations-web-prod",
+    "build": "45e236bd-25bf-4bd8-80f8-7d1ce2b70916",
+    "deployment": "e76c5a6d-e299-4bb3-acbe-04f018739b6a",
+    "version": "f9c30fd0-18a6-4b21-90ef-81460f68de37",
+    "versionNumber": 28,
+    "exactMainSha": "c8b3c7e83ab3862267e3618d610c9ec776f16a70",
+    "flags": {
+      "APP_ENV": "production",
+      "ACCESS_MODE": "enforce",
+      "SYNC_TRIGGER_ENABLED": "false"
+    },
+    "anonymousBrowserAcceptance": {
+      "cloudflareAccessLoginObserved": true,
+      "applicationContentExposedAnonymously": false,
+      "result": "PASS"
+    },
+    "authenticatedBrowserAcceptance": {
+      "status": "BLOCKED_BY_EXTERNAL_IDENTITY",
+      "reason": "Production application access requires the configured human Cloudflare Access identity; no bypass, service token, or fake identity was created for acceptance."
+    }
+  },
+  "productionSync": {
+    "worker": "ads-operations-sync-prod",
+    "version": "295df84e-2103-4858-9895-49f67d4b10b4",
+    "versionNumber": 2,
+    "APP_ENV": "production",
+    "AMAZON_ADS_ENABLED": "false",
+    "schedules": [],
+    "status": "DORMANT"
+  },
+  "productionAccess": {
+    "appId": "499b5470-a257-4aec-9ede-7c3a460a42a4",
+    "domain": "ads-operations-web-prod.tanshiyuesir.workers.dev",
+    "aud": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8",
+    "policy": {
+      "name": "Allow account owner for production access",
+      "decision": "allow",
+      "precedence": 1
+    },
+    "bypassCreated": false,
+    "serviceTokenCreated": false
+  },
+  "productionR2": {
+    "requiredBucketsPresent": [
+      "ads-ops-data-prod"
+    ],
+    "devBucketPresent": true
+  },
+  "productionStores": {
+    "commonBusinessBaseline": {
+      "factCount": 8753,
+      "startDate": "2026-06-01",
+      "endDate": "2026-06-30",
+      "marketplace": "US",
+      "currency": "USD",
+      "sourceImports": 1,
+      "businessSourceSha256": "a5e0d3a5ca62e4d60d09be04d7693ec81aaef13052d32560100405be2ec35435",
+      "migrationCount": 24,
+      "latestMigration": "0024_store_settlement_csv_foundation.sql",
+      "foreignKeyViolations": 0
+    },
+    "Store01": {
+      "factCount": 8753,
+      "businessAuthority": "business + exact_source_object",
+      "foreignKeyViolations": 0,
+      "migrationCount": 24
+    },
+    "Store02": {
+      "factCount": 8753,
+      "businessAuthority": "business + exact_source_object",
+      "foreignKeyViolations": 0,
+      "migrationCount": 24
+    },
+    "Store03": {
+      "factCount": 8753,
+      "businessAuthority": "business + exact_source_object",
+      "foreignKeyViolations": 0,
+      "migrationCount": 24
+    },
+    "Store04": {
+      "factCount": 8753,
+      "businessAuthority": "business + exact_source_object",
+      "foreignKeyViolations": 0,
+      "migrationCount": 24
+    },
+    "isolationEvidence": {
+      "sameCanonicalSourceBytes": true,
+      "storeScopedD1Bindings": true,
+      "storeScopedImportIds": true,
+      "storeScopedR2ObjectKeys": true,
+      "crossStoreLeakObserved": false
+    }
+  },
+  "devStoreDataQuality": {
+    "businessFacts": 8753,
+    "businessProvenance": "reconciled_exact_source",
+    "businessAuthorityVersion": 2,
+    "acceptanceFacts": 1,
+    "acceptanceDataClassExcludedFromBusinessAnalytics": true,
+    "migrationCount": 24,
+    "latestMigration": "0024_store_settlement_csv_foundation.sql",
+    "foreignKeyViolations": 0
+  },
+  "amazonHardOff": {
+    "required": true,
+    "AMAZON_ADS_ENABLED": "false",
+    "SYNC_TRIGGER_ENABLED": "false",
+    "amazonTransportProbed": false,
+    "amazonMutationAttempted": false,
+    "status": "PASS"
+  },
+  "blockers": [
+    {
+      "code": "BLOCKED_BY_EXTERNAL_IDENTITY",
+      "scope": "production_authenticated_browser_acceptance",
+      "blockingDeployment": false,
+      "blockingReadOnlyInfrastructureAcceptance": false
+    }
+  ]
+}
