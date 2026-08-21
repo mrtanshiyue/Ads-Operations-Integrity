@@ -1,9 +1,9 @@
 name: Live Human Review Service Auth Acceptance
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/access-service-token-acceptance
+      - main
     paths:
       - 'scripts/live-human-review-service-auth-acceptance.mjs'
       - '.github/workflows/live-human-review-service-auth-acceptance.yml'
@@ -19,6 +19,7 @@ concurrency:
 jobs:
   production-human-review:
     name: Production Human Review service-auth acceptance
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/access-service-token-acceptance'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
