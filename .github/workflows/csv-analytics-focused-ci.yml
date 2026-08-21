@@ -8,6 +8,7 @@ on:
       - 'cloudflare/runtime/csv-analytics-*.js'
       - 'assets/cloudflare-native-csv-*.js'
       - 'assets/cloudflare-native-api-v1.js'
+      - 'assets/generated/inline-script-10.js'
       - 'scripts/csv-analytics-scale-harness.mjs'
       - 'scripts/test-csv-*.mjs'
       - '.github/workflows/csv-analytics-focused-ci.yml'
@@ -20,6 +21,7 @@ on:
       - 'cloudflare/runtime/csv-analytics-*.js'
       - 'assets/cloudflare-native-csv-*.js'
       - 'assets/cloudflare-native-api-v1.js'
+      - 'assets/generated/inline-script-10.js'
       - 'scripts/csv-analytics-scale-harness.mjs'
       - 'scripts/test-csv-*.mjs'
       - '.github/workflows/csv-analytics-focused-ci.yml'
@@ -46,12 +48,15 @@ jobs:
           node --check cloudflare/runtime/csv-analytics-diagnostics-api.js
           node --check cloudflare/runtime/csv-analytics-recommendation-inbox.js
           node --check assets/cloudflare-native-csv-local-diagnostics-v1.js
+          node --check assets/cloudflare-native-csv-recommendation-inbox-v1.js
           node --check assets/cloudflare-native-api-v1.js
+          node --check assets/generated/inline-script-10.js
           node --check cloudflare/runtime/web-entry.js
           node --check scripts/csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-request-dedupe.mjs
           node --check scripts/test-csv-recommendation-inbox-contract.mjs
+          node --check scripts/test-csv-recommendation-inbox-ui.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
@@ -62,3 +67,5 @@ jobs:
         run: node scripts/test-csv-analytics-request-dedupe.mjs
       - name: Validate governed recommendation inbox contract
         run: node scripts/test-csv-recommendation-inbox-contract.mjs
+      - name: Validate Recommendation Inbox operator UI contract
+        run: node scripts/test-csv-recommendation-inbox-ui.mjs
