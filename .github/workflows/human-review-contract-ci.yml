@@ -1,0 +1,40 @@
+name: Human Review Contract CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/csv-recommendation-human-review-contract.js'
+      - 'scripts/test-recommendation-human-review-contract.mjs'
+      - '.github/workflows/human-review-contract-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: human-review-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Human Review Contract Focused CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate contract syntax
+        run: |
+          node --check cloudflare/runtime/csv-recommendation-human-review-contract.js
+          node --check scripts/test-recommendation-human-review-contract.mjs
+
+      - name: Validate human review invariants
+        run: node scripts/test-recommendation-human-review-contract.mjs
