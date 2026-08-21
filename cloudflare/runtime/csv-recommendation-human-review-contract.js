@@ -113,11 +113,15 @@ export async function buildRecommendationReviewBinding(inboxItem = {}) {
     sourceImportIds,
   });
   const evidenceSnapshot = buildEvidenceSnapshot(inboxItem, evidenceScopeDescriptor);
-  const [contextFingerprint, recommendationFingerprint, sourceEvidenceSha256] = await Promise.all([
+  const sourceEvidenceJson = canonicalJson(evidenceSnapshot);
+  const [contextFingerprint, sourceEvidenceSha256] = await Promise.all([
     sha256Hex(canonicalJson(contextDescriptor)),
-    sha256Hex(canonicalJson(evidenceScopeDescriptor)),
-    sha256Hex(canonicalJson(evidenceSnapshot)),
+    sha256Hex(sourceEvidenceJson),
   ]);
+  const recommendationFingerprint = await sha256Hex(canonicalJson({
+    ...evidenceScopeDescriptor,
+    sourceEvidenceSha256,
+  }));
 
   return Object.freeze({
     sourceKind: RECOMMENDATION_REVIEW_SOURCE_KIND,
@@ -129,7 +133,7 @@ export async function buildRecommendationReviewBinding(inboxItem = {}) {
     recommendationActionType: actionType,
     analysisWindow,
     sourceImportIds: Object.freeze(sourceImportIds),
-    sourceEvidenceJson: canonicalJson(evidenceSnapshot),
+    sourceEvidenceJson,
     sourceEvidenceSha256,
   });
 }
@@ -137,8 +141,10 @@ export async function buildRecommendationReviewBinding(inboxItem = {}) {
 export function compareRecommendationReviewBindings(previous, current) {
   if (!previous || !current) return Object.freeze({ sameContext: false, stale: false });
   const sameContext = clean(previous.contextFingerprint) === clean(current.contextFingerprint);
-  const stale = sameContext
-    && clean(previous.recommendationFingerprint) !== clean(current.recommendationFingerprint);
+  const stale = sameContext && (
+    clean(previous.recommendationFingerprint) !== clean(current.recommendationFingerprint)
+    || clean(previous.sourceEvidenceSha256) !== clean(current.sourceEvidenceSha256)
+  );
   return Object.freeze({ sameContext, stale });
 }
 

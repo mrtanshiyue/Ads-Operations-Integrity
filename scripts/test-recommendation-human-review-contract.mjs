@@ -148,6 +148,19 @@ const stale = compareRecommendationReviewBindings(bindingA, laterEvidence);
 assert.equal(stale.sameContext, true);
 assert.equal(stale.stale, true);
 
+const sameScopeChangedMetrics = await buildRecommendationReviewBinding(inboxItem({
+  evidenceSummary: {
+    ...item.evidenceSummary,
+    clicks: item.evidenceSummary.clicks + 1,
+  },
+}));
+assert.equal(bindingA.contextFingerprint, sameScopeChangedMetrics.contextFingerprint);
+assert.notEqual(bindingA.sourceEvidenceSha256, sameScopeChangedMetrics.sourceEvidenceSha256);
+assert.notEqual(bindingA.recommendationFingerprint, sameScopeChangedMetrics.recommendationFingerprint);
+const sameScopeStale = compareRecommendationReviewBindings(bindingA, sameScopeChangedMetrics);
+assert.equal(sameScopeStale.sameContext, true);
+assert.equal(sameScopeStale.stale, true);
+
 const differentCandidate = await buildRecommendationReviewBinding(inboxItem({
   inboxItemId: 'csv-inbox:negative_keyword:exact:other term',
   value: 'other term',
@@ -164,6 +177,7 @@ console.log(JSON.stringify({
   approvedRejectedFailClosedWithoutSchemaMapping: true,
   rootCandidatePersistenceFailsClosed: true,
   staleEvidenceDetectedByStableContext: true,
+  sameScopeEvidenceMutationChangesRecommendationFingerprint: true,
   optimizationActionApprovalSeparated: true,
   amazonMutationAuthorized: false,
 }));
