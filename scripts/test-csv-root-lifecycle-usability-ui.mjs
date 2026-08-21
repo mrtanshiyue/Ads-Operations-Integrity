@@ -17,6 +17,7 @@ const taxonomy = [
 ];
 
 assert.match(asset, /CloudflareCsvRootLifecycleUsability/);
+assert.match(asset, /VERSION = '1\.0\.1'/);
 assert.match(asset, /data-csv-root-intelligence/);
 assert.match(asset, /data-csv-lifecycle-workspace/);
 assert.match(asset, /Top-3 spend concentration/);
@@ -39,6 +40,9 @@ assert.match(asset, /Sales movement/);
 assert.match(asset, /Order movement/);
 assert.match(asset, /Linked root/);
 assert.match(asset, /search-term-intelligence/);
+assert.match(asset, /state\.observer\?\.disconnect\(\)/);
+assert.match(asset, /function observePanel\(\)/);
+assert.match(asset, /finally \{\s*observePanel\(\);\s*\}/);
 assert.doesNotMatch(asset, /localStorage|sessionStorage/);
 assert.doesNotMatch(asset, /advisory-reviews|optimization-actions|execution-permits|execution-receipts/);
 assert.doesNotMatch(asset, /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i);
@@ -48,14 +52,16 @@ for (const value of taxonomy) {
   assert.match(asset, new RegExp(`['"]${value}['"]`));
 }
 assert.equal((asset.match(/const LIFECYCLE_STATES = Object\.freeze\(\[/g) || []).length, 1);
-assert.match(loader, /cloudflare-native-csv-root-lifecycle-usability-v1\.js\?v=1\.0\.0/);
+assert.match(loader, /cloudflare-native-csv-root-lifecycle-usability-v1\.js\?v=1\.0\.1/);
 assert.match(loader, /usability\.addEventListener\('load',loadRootLifecycle/);
 assert.match(allowlist, /cloudflare-native-csv-root-lifecycle-usability-v1\.js/);
 
 console.log(JSON.stringify({
   ok: true,
   contract: 'csv-root-lifecycle-usability-v1',
+  version: '1.0.1',
   taxonomy,
+  observerIsolation: 'disconnect-render-reobserve',
   persistence: 'none',
   mutation: 'none',
   amazonTransport: 'absent',
