@@ -6,12 +6,16 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 await import('../cloudflare/runtime/csv-productization-api.js');
 const api = await readFile(path.join(root, 'cloudflare/runtime/csv-search-term-intelligence-api.js'), 'utf8');
-const productization = await readFile(path.join(root, 'cloudflare/runtime/csv-productization-api.js'), 'utf8');
+const productizationWrapper = await readFile(path.join(root, 'cloudflare/runtime/csv-productization-api.js'), 'utf8');
+const productizationCore = await readFile(path.join(root, 'cloudflare/runtime/csv-productization-api-core.js'), 'utf8');
+const productization = `${productizationWrapper}\n${productizationCore}`;
 const productUniverse = await readFile(path.join(root, 'cloudflare/runtime/csv-search-term-product-universe.js'), 'utf8');
 const advisoryMigration = await readFile(path.join(root, 'cloudflare/foundation/migrations/store/0019_store_advisory_review_workflow.sql'), 'utf8');
 const authorityMigration = await readFile(path.join(root, 'cloudflare/foundation/migrations/store/0022_store_csv_import_authority.sql'), 'utf8');
 const entry = await readFile(path.join(root, 'cloudflare/runtime/web-entry.js'), 'utf8');
 
+assert.match(productizationWrapper, /handleCsvProductizationApiRoute as handleCoreCsvProductizationApiRoute/, 'Productization wrapper must import the unchanged core implementation');
+assert.match(productizationWrapper, /return handleCoreCsvProductizationApiRoute\(args\)/, 'Productization wrapper must delegate unmatched requests to the core implementation');
 assert.match(entry, /handleCsvSearchTermIntelligenceApiRoute/, 'CSV intelligence handler is not wired');
 assert.match(entry, /const csvResponse = await handleCsvSearchTermIntelligenceApiRoute/, 'CSV source must branch before the Amazon intelligence handler');
 assert.match(entry, /handleCsvProductizationApiRoute/, 'CSV productization layer is not wired');
@@ -101,4 +105,4 @@ await import('./test-csv-search-term-lifecycle.mjs');
 await import('./test-csv-intelligence-product-surface.mjs');
 await import('./test-csv-search-term-product-universe.mjs');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v10-with-complete-product-universe' }));
+console.log(JSON.stringify({ ok: true, contract: 'csv-real-data-intelligence-v10-with-complete-product-universe-and-split-productization-source' }));
