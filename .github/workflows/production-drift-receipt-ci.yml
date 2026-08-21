@@ -1,0 +1,39 @@
+name: Production Drift Receipt Focused CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/production-drift-receipt.mjs'
+      - 'scripts/test-production-drift-receipt.mjs'
+      - '.github/workflows/production-drift-receipt-ci.yml'
+  push:
+    branches:
+      - 'feat/production-drift-receipt'
+    paths:
+      - 'scripts/production-drift-receipt.mjs'
+      - 'scripts/test-production-drift-receipt.mjs'
+      - '.github/workflows/production-drift-receipt-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-drift-receipt-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Production drift receipt contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate receipt syntax
+        run: node --check scripts/production-drift-receipt.mjs
+      - name: Validate receipt contract
+        run: node scripts/test-production-drift-receipt.mjs
