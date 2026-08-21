@@ -98,6 +98,14 @@ jobs:
           node scripts/test-csv-real-data-intelligence-contract.mjs
           python3 scripts/test-csv-import-foundation.py
 
+      - name: Validate Recommendation Inbox usability contract
+        run: |
+          node --check assets/cloudflare-native-csv-recommendation-inbox-v1.js
+          node --check assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js
+          node --check assets/generated/inline-script-10.js
+          node --check scripts/test-csv-recommendation-inbox-ui.mjs
+          node scripts/test-csv-recommendation-inbox-ui.mjs
+
       - name: Validate Phase E producer and ingestion regressions
         run: |
           node --check cloudflare/runtime/canonical-json.js
