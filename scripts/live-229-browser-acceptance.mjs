@@ -254,5 +254,9 @@ async function setScope(page, scope) {
     const options = await sort.locator('option').evaluateAll((nodes) => nodes.map((n) => n.value));
     if (options.includes('cost')) await sort.selectOption('cost');
   }
+  const runPreview = panel.getByRole('button', { name: 'Run preview', exact: true });
+  assert.equal(await runPreview.count(), 1, 'Run preview button missing or ambiguous');
+  await runPreview.click();
+  await page.waitForFunction(() => Boolean(document.querySelector('#cfDecisionPanel [data-csv-operator-workspace]')), null, { timeout: 30_000 });
   await page.evaluate(() => globalThis.CloudflareCsvRecommendationInboxUi?.refresh?.());
 }
