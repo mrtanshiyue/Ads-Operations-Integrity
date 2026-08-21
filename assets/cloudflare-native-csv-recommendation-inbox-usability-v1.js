@@ -88,7 +88,7 @@
       ensurePagination(section);
     }
     ensurePagination(section);
-    await ensureContext(section);
+    await ensureContext();
     renderScopeContext(section);
     applyPagination(section);
     renderEmptyState(section);
@@ -235,7 +235,7 @@
     return [...section.querySelectorAll('[data-cfri-rows] tr[data-cfri-item]')];
   }
 
-  async function ensureContext(section) {
+  async function ensureContext() {
     const scope = currentScope();
     if (!scope.storeId || !scope.startDate || !scope.endDate) {
       state.contextScopeKey = '';
@@ -243,10 +243,12 @@
       return;
     }
     const scopeKey = [scope.storeId, scope.startDate, scope.endDate, scope.profileId, scope.limit, scope.sort].join('|');
-    if (state.contextScopeKey === scopeKey && state.contextPayload) return;
+    if (state.contextScopeKey === scopeKey) return;
     state.contextController?.abort();
     const controller = new AbortController();
     state.contextController = controller;
+    state.contextScopeKey = scopeKey;
+    state.contextPayload = null;
     const params = new URLSearchParams({
       source: 'csv',
       startDate: scope.startDate,
@@ -265,17 +267,12 @@
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
       if (controller.signal.aborted) return;
-      state.contextScopeKey = scopeKey;
       state.contextPayload = payload;
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        state.contextScopeKey = scopeKey;
-        state.contextPayload = null;
-      }
+    } catch {
+      if (!controller.signal.aborted) state.contextPayload = null;
     } finally {
       if (state.contextController === controller) state.contextController = null;
     }
-    if (section.isConnected) scheduleSync();
   }
 
   function renderScopeContext(section) {
