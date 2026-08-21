@@ -3,6 +3,7 @@ import {
   handleOperationalUatEphemeralServiceRoute,
 } from './operational-uat-ephemeral-service-route.js';
 import { OPERATIONAL_UAT_ROUTE } from './operational-uat-live-probe.js';
+import { handleDevReadOnlyBootstrapRoute } from './dev-read-only-bootstrap-api.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -12,7 +13,10 @@ export default {
     const uatResponse = url.pathname === OPERATIONAL_UAT_ROUTE
       ? await handleOperationalUatEphemeralServiceRoute({ request, env, url })
       : null;
-    const response = uatResponse || await application.fetch(request, env, ctx);
+    const devBootstrapResponse = uatResponse
+      ? null
+      : await handleDevReadOnlyBootstrapRoute({ request, env, url });
+    const response = uatResponse || devBootstrapResponse || await application.fetch(request, env, ctx);
     const record = runtimeEvidenceRecord({
       request,
       env,
