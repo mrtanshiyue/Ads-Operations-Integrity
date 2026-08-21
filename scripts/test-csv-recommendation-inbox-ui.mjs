@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 const ui = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-inbox-v1.js', import.meta.url), 'utf8');
 const loader = readFileSync(new URL('../assets/generated/inline-script-10.js', import.meta.url), 'utf8');
+const allowlist = readFileSync(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
 const required = [
   "csv-recommendation-inbox-v1",
@@ -54,11 +55,15 @@ for (const pattern of prohibitedWrites) {
   if (pattern.test(ui)) throw new Error(`Recommendation Inbox UI violates read-only/session-only contract: ${pattern}`);
 }
 
-if (!loader.includes('assets/cloudflare-native-csv-recommendation-inbox-v1.js?v=1.0.0')) {
+const assetPath = 'cloudflare-native-csv-recommendation-inbox-v1.js';
+if (!loader.includes(`assets/${assetPath}?v=1.0.0`)) {
   throw new Error('Recommendation Inbox UI loader is not wired into the deployed native shell');
 }
 if (/https?:\/\//u.test(loader.split('csvRecommendationInboxUiV1')[1] || '')) {
   throw new Error('Recommendation Inbox UI loader must remain same-origin');
+}
+if (!allowlist.includes(`'${assetPath}'`)) {
+  throw new Error('Recommendation Inbox UI asset is missing from the explicit Cloudflare Native deployment allowlist');
 }
 
 console.log('csv recommendation inbox operator UI contract: ok');
