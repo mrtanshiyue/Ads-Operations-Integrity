@@ -7,6 +7,12 @@ on:
     paths:
       - 'scripts/live-229-browser-acceptance.mjs'
       - '.github/workflows/live-229-browser-acceptance.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/live-229-browser-acceptance.mjs'
+      - '.github/workflows/live-229-browser-acceptance.yml'
   workflow_dispatch:
 
 permissions:
