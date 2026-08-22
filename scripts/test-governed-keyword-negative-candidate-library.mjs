@@ -4,12 +4,42 @@ import {
   buildGovernedKeywordNegativeCandidateLibrary,
 } from '../cloudflare/runtime/governed-keyword-negative-candidate-library.js';
 
-const baseBinding = Object.freeze({
-  recommendationFingerprint: 'fp-current',
-  analysisWindow: Object.freeze({ startDate: '2026-06-01', endDate: '2026-06-30' }),
-  sourceImportIds: Object.freeze(['import-b', 'import-a']),
-  sourceEvidenceSha256: 'sha-current',
-});
+function packet({ inboxItemId, actionType, candidateType, matchScope, value, priority, priorityScore, fingerprint, reviewState = 'unreviewed', stale = [], financiallyComparable = true }) {
+  return {
+    schemaVersion: 'recommendation-decision-packet-v1',
+    authority: {
+      readOnly: true,
+      executionAuthorized: false,
+      amazonMutationAuthorized: false,
+    },
+    recommendation: { inboxItemId, actionType, candidateType, matchScope, value },
+    priorityEvidence: { priority, priorityScore },
+    financialComparability: { financiallyComparable },
+    reviewEvidence: {
+      currentFingerprint: fingerprint,
+      priorReviewState: reviewState,
+      staleEvidenceCount: stale.length,
+      staleEvidence: stale.map((entry) => ({ ...entry, stale: true, inheritedAsCurrent: false })),
+    },
+    sourceEvidence: {
+      analysisWindow: { startDate: '2026-06-01', endDate: '2026-06-30' },
+      sourceImportIds: ['import-b', 'import-a'],
+      sourceEvidenceSha256: `sha-${fingerprint}`,
+    },
+  };
+}
+
+function responseItem(input) {
+  return {
+    inboxItemId: input.inboxItemId,
+    recommendationFingerprint: input.fingerprint,
+    review: {
+      state: input.reviewState || 'unreviewed',
+      persisted: input.persisted === true,
+    },
+    decisionPacket: packet(input),
+  };
+}
 
 const library = buildGovernedKeywordNegativeCandidateLibrary({
   storeId: 'STORE01',
@@ -20,65 +50,46 @@ const library = buildGovernedKeywordNegativeCandidateLibrary({
     overflowObserved: false,
     reasons: [],
   },
-  entries: [
-    {
-      item: {
-        itemClass: 'recommendation_candidate',
-        inboxItemId: 'csv-inbox:keyword.review_scale:operator_review:scale term',
-        candidateType: 'Scale Candidate',
-        actionType: 'keyword.review_scale',
-        matchScope: 'operator_review',
-        value: 'scale term',
-        priority: 'high',
-        priorityScore: 82,
-      },
-      binding: { ...baseBinding, recommendationFingerprint: 'fp-scale' },
-      currentReview: null,
-      staleReviews: [],
-      financiallyComparable: true,
-      decisionPacket: { schemaVersion: 'recommendation-decision-packet-v1' },
-    },
-    {
-      item: {
-        itemClass: 'recommendation_candidate',
-        inboxItemId: 'csv-inbox:negative_keyword.review_exact:exact:waste term',
-        candidateType: 'Exact Negative Candidate',
-        actionType: 'negative_keyword.review_exact',
-        matchScope: 'exact',
-        value: 'waste term',
-        priority: 'critical',
-        priorityScore: 95,
-      },
-      binding: baseBinding,
-      currentReview: {
-        recommendationFingerprint: 'fp-current',
-        state: 'needs_review',
-        persisted: true,
-      },
-      staleReviews: [
+  items: [
+    responseItem({
+      inboxItemId: 'csv-inbox:keyword.review_scale:operator_review:scale term',
+      actionType: 'keyword.review_scale',
+      candidateType: 'Scale Candidate',
+      matchScope: 'operator_review',
+      value: 'scale term',
+      priority: 'high',
+      priorityScore: 82,
+      fingerprint: 'fp-scale',
+    }),
+    responseItem({
+      inboxItemId: 'csv-inbox:negative_keyword.review_exact:exact:waste term',
+      actionType: 'negative_keyword.review_exact',
+      candidateType: 'Exact Negative Candidate',
+      matchScope: 'exact',
+      value: 'waste term',
+      priority: 'critical',
+      priorityScore: 95,
+      fingerprint: 'fp-current',
+      reviewState: 'needs_review',
+      persisted: true,
+      stale: [
         { recommendationFingerprint: 'fp-old-1', state: 'acknowledged' },
         { recommendationFingerprint: 'fp-old-2', state: 'needs_review' },
       ],
-      financiallyComparable: true,
-      decisionPacket: { schemaVersion: 'recommendation-decision-packet-v1' },
-    },
-    {
-      item: {
-        itemClass: 'recommendation_candidate',
-        inboxItemId: 'csv-inbox:keyword.review_harvest:exact_review:good term',
-        candidateType: 'Harvest Candidate',
-        actionType: 'keyword.review_harvest',
-        matchScope: 'exact_review',
-        value: 'good term',
-        priority: 'medium',
-        priorityScore: 60,
-      },
-      binding: { ...baseBinding, recommendationFingerprint: 'fp-harvest' },
-      currentReview: { recommendationFingerprint: 'fp-harvest', state: 'acknowledged', persisted: true },
-      staleReviews: [],
+    }),
+    responseItem({
+      inboxItemId: 'csv-inbox:keyword.review_harvest:exact_review:good term',
+      actionType: 'keyword.review_harvest',
+      candidateType: 'Harvest Candidate',
+      matchScope: 'exact_review',
+      value: 'good term',
+      priority: 'medium',
+      priorityScore: 60,
+      fingerprint: 'fp-harvest',
+      reviewState: 'acknowledged',
+      persisted: true,
       financiallyComparable: false,
-      decisionPacket: { schemaVersion: 'recommendation-decision-packet-v1' },
-    },
+    }),
   ],
 });
 
@@ -115,45 +126,43 @@ const blocked = buildGovernedKeywordNegativeCandidateLibrary({
     candidateEmissionAuthorized: false,
     reasons: ['scope_blocked'],
   },
-  entries: [],
+  items: [],
 });
 assert.equal(blocked.status.available, false);
 assert.equal(blocked.status.reasonCode, 'candidate_emission_not_authorized');
 assert.equal(blocked.summary.candidateCount, null);
 assert.deepEqual(blocked.items, []);
 
+const unsupported = responseItem({
+  inboxItemId: 'bad',
+  actionType: 'keyword.review_unknown',
+  candidateType: 'Unknown',
+  matchScope: 'exact',
+  value: 'bad',
+  priority: 'low',
+  priorityScore: 1,
+  fingerprint: 'fp-bad',
+});
 assert.throws(() => buildGovernedKeywordNegativeCandidateLibrary({
   analysisScope: { candidateEmissionAuthorized: true },
-  entries: [{
-    item: {
-      itemClass: 'recommendation_candidate',
-      inboxItemId: 'bad',
-      actionType: 'keyword.review_unknown',
-      candidateType: 'Unknown',
-      matchScope: 'exact',
-      value: 'bad',
-      priority: 'low',
-    },
-    binding: baseBinding,
-  }],
+  items: [unsupported],
 }), /CANDIDATE_LIBRARY_ACTION_TYPE_UNSUPPORTED/);
 
+const badStale = responseItem({
+  inboxItemId: 'bad-stale',
+  actionType: 'negative_keyword.review_exact',
+  candidateType: 'Exact Negative Candidate',
+  matchScope: 'exact',
+  value: 'bad stale',
+  priority: 'low',
+  priorityScore: 1,
+  fingerprint: 'fp-current-stale',
+  stale: [{ recommendationFingerprint: 'fp-current-stale', state: 'needs_review' }],
+});
 assert.throws(() => buildGovernedKeywordNegativeCandidateLibrary({
   analysisScope: { candidateEmissionAuthorized: true },
-  entries: [{
-    item: {
-      itemClass: 'recommendation_candidate',
-      inboxItemId: 'bad-stale',
-      actionType: 'negative_keyword.review_exact',
-      candidateType: 'Exact Negative Candidate',
-      matchScope: 'exact',
-      value: 'bad stale',
-      priority: 'low',
-    },
-    binding: baseBinding,
-    staleReviews: [{ recommendationFingerprint: 'fp-current' }],
-  }],
-}), /CANDIDATE_LIBRARY_STALE_FINGERPRINT_MATCHES_CURRENT/);
+  items: [badStale],
+}), /CANDIDATE_LIBRARY_STALE_INHERITANCE_INVALID/);
 
 console.log(JSON.stringify({
   ok: true,
