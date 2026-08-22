@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { collectFinalClosureEvidence } from './final-closure-control-plane-v2.mjs';
+import { collectFinalClosureEvidence } from './final-closure-control-plane-v3.mjs';
 
 async function main() {
   const outputDir = process.env.FINAL_CLOSURE_OUTPUT_DIR || 'artifacts/final-closure-evidence';
