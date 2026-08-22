@@ -46,15 +46,21 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
-      - name: Checkout canonical main
+      - name: Checkout observability dispatch ref
         uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 1
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Resolve canonical main SHA without changing collector checkout
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          EXPECTED_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+          test "${#EXPECTED_MAIN_SHA}" -eq 40 || { echo 'canonical main SHA resolution failed'; exit 1; }
+          echo "EXPECTED_MAIN_SHA=$EXPECTED_MAIN_SHA" >> "$GITHUB_ENV"
 
       - name: Require read-only Cloudflare evidence credential
         run: |
@@ -64,7 +70,6 @@ jobs:
       - name: Collect live closure observability
         run: |
           mkdir -p artifacts
-          export EXPECTED_MAIN_SHA="$(git rev-parse HEAD)"
           node scripts/production-closure-observability.mjs \
             --output artifacts/production-closure-observability.json \
             --summary artifacts/production-closure-observability.md
