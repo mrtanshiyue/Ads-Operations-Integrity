@@ -1,0 +1,46 @@
+name: Governed Keyword Negative Candidate Library Focused CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/governed-keyword-negative-candidate-library.js'
+      - 'cloudflare/runtime/csv-recommendation-human-review-api.js'
+      - 'scripts/test-governed-keyword-negative-candidate-library.mjs'
+      - 'scripts/test-governed-keyword-negative-candidate-library-integration.mjs'
+      - '.github/workflows/governed-keyword-negative-candidate-library-focused-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: governed-keyword-negative-library-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Governed Keyword Negative Candidate Library v1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax-check server projection
+        run: |
+          node --check cloudflare/runtime/governed-keyword-negative-candidate-library.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check scripts/test-governed-keyword-negative-candidate-library.mjs
+          node --check scripts/test-governed-keyword-negative-candidate-library-integration.mjs
+
+      - name: Validate library authority and integration
+        run: |
+          node scripts/test-governed-keyword-negative-candidate-library.mjs
+          node scripts/test-governed-keyword-negative-candidate-library-integration.mjs
