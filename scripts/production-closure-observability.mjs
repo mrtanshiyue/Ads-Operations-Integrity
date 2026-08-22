@@ -237,8 +237,8 @@ function normalizeRuntime(value, label) {
 function normalizeHardOff(value = {}) {
   const syncTriggerEnabled = normalizeBooleanText(value.syncTriggerEnabled, 'SYNC_TRIGGER_ENABLED');
   const amazonAdsEnabled = normalizeBooleanText(value.amazonAdsEnabled, 'AMAZON_ADS_ENABLED');
-  const phase5SingleRunPermitId = String(value.phase5SingleRunPermitId ?? '');
-  const phase5SingleRunReportDate = String(value.phase5SingleRunReportDate ?? '');
+  const phase5SingleRunPermitId = requiredBindingText(value.phase5SingleRunPermitId, 'PHASE5_SINGLE_RUN_PERMIT_ID');
+  const phase5SingleRunReportDate = requiredBindingText(value.phase5SingleRunReportDate, 'PHASE5_SINGLE_RUN_REPORT_DATE');
   if (!Array.isArray(value.schedules)) throw new Error('CLOSURE_OBSERVABILITY_SCHEDULES_INVALID');
   const schedules = [...value.schedules];
   const status = syncTriggerEnabled === false
@@ -262,6 +262,11 @@ function normalizeBooleanText(value, key) {
   if (value === false || value === 'false') return false;
   if (value === true || value === 'true') return true;
   throw new Error(`CLOSURE_OBSERVABILITY_${key}_INVALID`);
+}
+
+function requiredBindingText(value, key) {
+  if (typeof value !== 'string') throw new Error(`CLOSURE_OBSERVABILITY_${key}_MISSING`);
+  return value;
 }
 
 function normalizeBindings(version) {
