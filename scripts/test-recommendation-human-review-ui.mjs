@@ -42,6 +42,13 @@ assert.match(ui, /label\.hidden = true/, 'Legacy review filter must be hidden ra
 assert.match(ui, /Viewed is session-only; approved\/rejected remain fail-closed\./,
   'Operator copy must preserve session-vs-durable and unsupported-state boundaries');
 
+assert.match(ui, /=== 'Inbox item ID'/,
+  'Evidence drawer durable state must bind through the unique Inbox item ID rather than candidate title text');
+assert.match(ui, /state\.reviews\.get\(inboxItemId\)/,
+  'Evidence drawer must resolve the server review snapshot by Inbox item ID');
+assert.doesNotMatch(ui, /rows\.find\([\s\S]*cfriDrawerTitle/,
+  'Evidence drawer must not infer durable identity from a potentially duplicated candidate title');
+
 assert.doesNotMatch(ui, /localStorage|sessionStorage/, 'Durable review truth must not be stored in browser persistence');
 assert.doesNotMatch(ui, /optimization-actions|optimization_action_events|execution-permits|amazon-ads-api|sp-api/i,
   'Human Review UI must not expose Optimization Action, execution permit, or Amazon transport endpoints');
@@ -58,6 +65,12 @@ assert.match(loader, /CloudflareCsvRecommendationInboxUsability/, 'Human Review 
 assert.match(loader, /cloudflare-native-csv-recommendation-human-review-v1\.js\?v=1\.0\.0/,
   'Human Review operator asset loader is missing');
 assert.match(loader, /attempts>=200/, 'Independent Human Review loader must be bounded rather than polling forever');
+assert.match(loader, /event\.target\?\.name\|\|''\)!=='profileId'/,
+  'Profile changes must invalidate the legacy Inbox cache path used by Human Review presentation');
+assert.match(loader, /CloudflareCsvRecommendationInboxUi\?\.refresh\?\.\(\)/,
+  'Profile changes must force a fresh Recommendation Inbox read');
+assert.match(loader, /CloudflareCsvRecommendationHumanReviewUi\?\.refresh\?\.\(\)/,
+  'Profile changes must force a fresh durable Human Review snapshot');
 assert.match(allowlist, /'cloudflare-native-csv-recommendation-human-review-v1\.js'/,
   'Human Review operator asset must be explicitly deployment-allowlisted');
 
