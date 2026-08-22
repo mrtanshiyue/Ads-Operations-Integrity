@@ -5,6 +5,7 @@ import {
   evaluateRecommendationReviewRequest,
 } from './csv-recommendation-human-review-contract.js';
 import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
+import { buildRecommendationDecisionPacket } from './recommendation-decision-packet.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_BODY_BYTES = 64 * 1024;
@@ -145,12 +146,14 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
       const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
       const staleRows = (staleByContext.get(contextKey) || [])
         .filter((candidate) => candidate.recommendation_fingerprint !== binding.recommendationFingerprint);
+      const currentReview = row ? publicReview(row) : null;
+      const staleEvidence = staleRows.map(publicDecisionReviewEvidence);
       return {
         inboxItemId: item.inboxItemId,
         persistenceAuthorized: item?.review?.persistenceAuthorized === true,
         recommendationFingerprint: binding.recommendationFingerprint,
         sourceEvidenceSha256: binding.sourceEvidenceSha256,
-        review: row ? publicReview(row) : {
+        review: currentReview || {
           state: 'unreviewed',
           persisted: false,
           reviewerUserId: null,
@@ -158,6 +161,13 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
           updatedAt: null,
         },
         staleReviewIds: staleRows.map((candidate) => candidate.review_id),
+        decisionPacket: buildRecommendationDecisionPacket({
+          item,
+          binding,
+          currentReview,
+          staleReviews: staleEvidence,
+          analysisScope: snapshot.analysisScope,
+        }),
       };
     }),
   }, 200);
@@ -360,6 +370,14 @@ function publicReview(row) {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function publicDecisionReviewEvidence(row) {
+  return {
+    ...publicReview(row),
+    sourceEvidenceJson: row.source_evidence_json || null,
+    sourceEvidence: parseJson(row.source_evidence_json),
   };
 }
 
