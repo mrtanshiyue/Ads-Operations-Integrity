@@ -57,6 +57,7 @@ jobs:
           node --check scripts/csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-scale-harness.mjs
           node --check scripts/test-csv-analytics-request-dedupe.mjs
+          node --check scripts/test-csv-diagnostics-financial-usability.mjs
           node --check scripts/test-csv-recommendation-inbox-contract.mjs
           node --check scripts/test-csv-recommendation-inbox-ui.mjs
           node --check scripts/test-csv-root-lifecycle-usability-ui.mjs
@@ -65,6 +66,8 @@ jobs:
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
         run: node scripts/test-csv-server-side-diagnostics.mjs
+      - name: Validate financial diagnostics operator usability
+        run: node scripts/test-csv-diagnostics-financial-usability.mjs
       - name: Validate deterministic scale harness contract
         run: node scripts/test-csv-analytics-scale-harness.mjs
       - name: Validate in-flight analytics request dedupe contract
