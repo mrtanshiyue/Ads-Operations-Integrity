@@ -12,8 +12,8 @@ assert.equal((api.match(/buildGovernedKeywordNegativeCandidateLibrary\(/g) || []
   'Human Review route must build the Candidate Library exactly once');
 assert.equal((api.match(/buildRecommendationReviewBinding\(/g) || []).length, 1,
   'Library integration must reuse the existing GET enrichment binding pass and add no second binding calculation');
-assert.equal((api.match(/readStoredRecommendationReviews\(db\)/g) || []).length, 2,
-  'Library integration must not add another stored-review query beyond existing GET + persistence paths');
+assert.equal((api.match(/await readStoredRecommendationReviews\(db\)/g) || []).length, 2,
+  'Library integration must not add another executed stored-review query beyond existing GET + persistence paths');
 
 assert.doesNotMatch(library, /fetch\(|prepare\(|\.run\(|INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM/i,
   'Candidate Library builder must remain a pure projection without network or database writes');
@@ -31,6 +31,7 @@ console.log(JSON.stringify({
   contract: 'governed-keyword-negative-candidate-library-integration-v1',
   serverProjectionOnly: true,
   bindingPassCount: 1,
+  executedStoredReviewQueryCount: 2,
   extraReviewQueryAdded: false,
   extraBindingPassAdded: false,
   executionAuthorized: false,
