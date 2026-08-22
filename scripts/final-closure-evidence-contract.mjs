@@ -5,7 +5,7 @@ const SHA40 = /^[0-9a-f]{40}$/i;
 export const FINAL_CLOSURE_EXPECTED = Object.freeze({
   requiredContext: 'Static site and security invariants',
   acceptanceBranch: 'feature/access-service-token-acceptance',
-  acceptanceHeadSha: '24b4e3a4c1e610ace5e25848648d787d073b1a03',
+  acceptanceHeadSha: '727e205097afbbf0a6bd9f6a2f499a4dbf8f1751',
   accessAppId: '499b5470-a257-4aec-9ede-7c3a460a42a4',
   r2Bucket: 'ads-ops-data-prod',
   sourceSha256: 'a5e0d3a5ca62e4d60d09be04d7693ec81aaef13052d32560100405be2ec35435',
