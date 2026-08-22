@@ -1,0 +1,76 @@
+name: Operator Work Queue Production Runtime Acceptance
+
+on:
+  push:
+    branches:
+      - acceptance/247-daily-operator-work-queue-runtime
+    paths:
+      - 'scripts/live-operator-work-queue-prod-acceptance.mjs'
+      - 'scripts/live-operator-work-queue-prod-cleanup.mjs'
+      - '.github/workflows/operator-work-queue-production-runtime-acceptance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-work-queue-production-runtime-acceptance
+  cancel-in-progress: false
+
+jobs:
+  production-runtime-acceptance:
+    name: Production Work Queue runtime acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      ACCEPTANCE_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN != '' }}
+      EXPECTED_MAIN_SHA: 46a86f79fe42f120096e26331dc80344d643466c
+      EXPECTED_PROD_VERSION_ID: 55c490c6-0346-4cbc-ac4f-c1ca83117b90
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_ACCESS_AUD: 4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8
+      PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+      PROD_STORE01_DB_ID: 2e53bbad-5680-431c-bcf7-68e89b231ea1
+      PROD_STORE02_DB_ID: a5d8e5b0-8d29-48a7-b200-6aa14a2fb997
+      PROD_STORE03_DB_ID: d47867d7-f5ca-4ddc-a4af-87bf14325e22
+      PROD_STORE04_DB_ID: c38ac43e-e62d-4387-b84d-2d080ce9a00b
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+    steps:
+      - name: Checkout acceptance-only branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require dedicated least-privilege Cloudflare credential
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT != 'true'
+        run: |
+          echo 'BLOCKED_BY_CLOUDFLARE_ADMIN_CREDENTIAL: CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN is not configured.'
+          exit 1
+
+      - name: Syntax-check acceptance harness
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: |
+          node --check scripts/live-operator-work-queue-prod-acceptance.mjs
+          node --check scripts/live-operator-work-queue-prod-cleanup.mjs
+          node --check cloudflare/runtime/operator-work-queue.js
+
+      - name: Run Production runtime acceptance
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/live-operator-work-queue-prod-acceptance.mjs
+
+      - name: Cleanup and verify ephemeral acceptance resources
+        if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/live-operator-work-queue-prod-cleanup.mjs
+
+      - name: Upload immutable acceptance evidence
+        if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-work-queue-production-runtime-acceptance-${{ github.run_id }}
+          path: artifacts/operator-work-queue-production-runtime-acceptance/
+          if-no-files-found: error
+          retention-days: 90
