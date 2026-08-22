@@ -1,4 +1,7 @@
-import { buildFinalClosureEvidence } from './final-closure-evidence-contract.mjs';
+import {
+  buildFinalClosureEvidence,
+  FINAL_CLOSURE_EXPECTED as EXPECTED,
+} from './final-closure-evidence-contract.mjs';
 import { collectFinalClosureEvidence as collectV2 } from './final-closure-control-plane-v2.mjs';
 
 const RELEASE_TRACE_WORKFLOW = 'Cloudflare Release Trace';
@@ -11,6 +14,11 @@ export async function collectFinalClosureEvidence(options = {}) {
   const snapshot = await collectV2(options);
   const repo = requiredText(options.repo || process.env.GITHUB_REPOSITORY, 'FINAL_CLOSURE_GITHUB_REPOSITORY_REQUIRED');
   const githubToken = requiredText(options.githubToken || process.env.GITHUB_TOKEN, 'FINAL_CLOSURE_GITHUB_TOKEN_REQUIRED');
+  const accountId = requiredText(options.accountId || process.env.CLOUDFLARE_ACCOUNT_ID, 'FINAL_CLOSURE_CLOUDFLARE_ACCOUNT_ID_REQUIRED');
+  const privilegedToken = requiredText(
+    options.privilegedToken || process.env.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN,
+    'FINAL_CLOSURE_PRIVILEGED_TOKEN_REQUIRED',
+  );
   const fetchImpl = options.fetchImpl || fetch;
   const [owner, name] = repo.split('/');
   if (!owner || !name) throw new Error('FINAL_CLOSURE_GITHUB_REPOSITORY_INVALID');
@@ -24,10 +32,21 @@ export async function collectFinalClosureEvidence(options = {}) {
     production: await verifyEnvironmentReleaseTrace({ gh, owner, name, mainSha, environment: 'production' }),
   };
 
+  let r2 = snapshot?.r2 || {};
+  if (!r2EvidenceReadable(r2)) {
+    r2 = await collectR2Evidence({
+      fetchImpl,
+      accountId,
+      token: privilegedToken,
+      stores: Array.isArray(snapshot?.stores) ? snapshot.stores : [],
+    });
+  }
+
   return buildFinalClosureEvidence({
     ...snapshot,
     generatedAt: new Date().toISOString(),
     releaseTrace,
+    r2,
   });
 }
 
@@ -83,6 +102,55 @@ export async function verifyEnvironmentReleaseTrace({ gh, owner, name, mainSha, 
   };
 }
 
+export async function collectR2Evidence({ fetchImpl, accountId, token, stores }) {
+  const bucket = await cloudflareSoft({
+    fetchImpl,
+    accountId,
+    token,
+    path: `/r2/buckets/${EXPECTED.r2Bucket}`,
+  });
+
+  let verifiedObjectCount = 0;
+  const objectProbeStatuses = [];
+  for (const store of stores) {
+    if (!store?.objectKey) continue;
+    const listed = await cloudflareSoft({
+      fetchImpl,
+      accountId,
+      token,
+      path: `/r2/buckets/${EXPECTED.r2Bucket}/objects?prefix=${encodeURIComponent(store.objectKey)}&per_page=10`,
+    });
+    objectProbeStatuses.push({ storeId: store.storeId, status: listed?._httpStatus });
+    if (!listed?._success) continue;
+    const objects = Array.isArray(listed?.result) ? listed.result : [];
+    const exact = objects.find((object) => object?.key === store.objectKey);
+    const expectedEtag = String(store.r2Etag || '').replaceAll('"', '');
+    if (exact && Number(exact.size) === Number(store.contentBytes) && String(exact.etag || '') === expectedEtag) {
+      verifiedObjectCount += 1;
+    }
+  }
+
+  return {
+    credentialRoute: 'privileged-read-fallback',
+    bucketStatus: bucket?._httpStatus,
+    bucketName: bucket?._success ? bucket?.result?.name : null,
+    location: bucket?._success ? bucket?.result?.location : null,
+    objectProbeStatuses,
+    verifiedObjectCount,
+  };
+}
+
+function r2EvidenceReadable(r2) {
+  const bucketReadable = r2?.bucketStatus === undefined
+    ? Boolean(r2?.bucketName)
+    : Number(r2?.bucketStatus) === 200;
+  const probes = Array.isArray(r2?.objectProbeStatuses) ? r2.objectProbeStatuses : [];
+  const objectsReadable = probes.length
+    ? probes.length === 4 && probes.every((probe) => Number(probe?.status) === 200)
+    : Number(r2?.verifiedObjectCount) === 4;
+  return bucketReadable && objectsReadable;
+}
+
 async function findArtifacts({ gh, owner, name, artifactName, maxPages }) {
   const found = [];
   for (let page = 1; page <= maxPages; page += 1) {
@@ -104,6 +172,27 @@ async function githubGet({ fetchImpl, githubToken, path }) {
   });
   if (!response.ok) throw new Error(`FINAL_CLOSURE_GITHUB_GET_FAILED:${response.status}:${path}`);
   return response.json();
+}
+
+async function cloudflareSoft({ fetchImpl, accountId, token, path }) {
+  const response = await fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}${path}`, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    return { _httpStatus: response.status, _success: false, result: null };
+  }
+  return {
+    ...payload,
+    _httpStatus: response.status,
+    _success: response.ok && payload?.success === true,
+  };
 }
 
 function requiredText(value, code) {
