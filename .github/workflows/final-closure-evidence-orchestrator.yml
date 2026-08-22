@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/final-closure-evidence-contract.mjs'
       - 'scripts/final-closure-control-plane.mjs'
+      - 'scripts/final-closure-control-plane-v2.mjs'
       - 'scripts/final-closure-evidence-orchestrator.mjs'
       - 'scripts/test-final-closure-evidence-orchestrator.mjs'
       - '.github/workflows/final-closure-evidence-orchestrator.yml'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'scripts/final-closure-evidence-contract.mjs'
       - 'scripts/final-closure-control-plane.mjs'
+      - 'scripts/final-closure-control-plane-v2.mjs'
       - 'scripts/final-closure-evidence-orchestrator.mjs'
       - 'scripts/test-final-closure-evidence-orchestrator.mjs'
       - '.github/workflows/final-closure-evidence-orchestrator.yml'
@@ -55,6 +57,7 @@ jobs:
         run: |
           node --check scripts/final-closure-evidence-contract.mjs
           node --check scripts/final-closure-control-plane.mjs
+          node --check scripts/final-closure-control-plane-v2.mjs
           node --check scripts/final-closure-evidence-orchestrator.mjs
           node --check scripts/test-final-closure-evidence-orchestrator.mjs
       - name: Validate fail-close composition contract
@@ -69,6 +72,7 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
       FINAL_CLOSURE_OUTPUT_DIR: artifacts/final-closure-evidence
       FINAL_CLOSURE_STRICT: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode == 'formal') || startsWith(github.ref, 'refs/heads/test/final-closure-evidence/formal-') }}
     steps:
