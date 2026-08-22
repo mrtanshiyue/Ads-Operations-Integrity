@@ -7,8 +7,11 @@ on:
     paths:
       - 'cloudflare/runtime/historical-review-learning.js'
       - 'cloudflare/runtime/csv-recommendation-human-review-api.js'
+      - 'assets/cloudflare-native-csv-recommendation-human-review-v1.js'
       - 'scripts/test-historical-review-learning.mjs'
       - 'scripts/test-historical-review-learning-integration.mjs'
+      - 'scripts/test-historical-review-learning-ui.mjs'
+      - 'scripts/test-recommendation-human-review-ui.mjs'
       - '.github/workflows/historical-review-learning-focused-ci.yml'
   workflow_dispatch:
 
@@ -33,14 +36,19 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Syntax-check historical learning projection
+      - name: Syntax-check historical learning server and UI projection
         run: |
           node --check cloudflare/runtime/historical-review-learning.js
           node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
           node --check scripts/test-historical-review-learning.mjs
           node --check scripts/test-historical-review-learning-integration.mjs
+          node --check scripts/test-historical-review-learning-ui.mjs
+          node --check scripts/test-recommendation-human-review-ui.mjs
 
-      - name: Validate historical learning semantics and integration
+      - name: Validate historical learning semantics, integration, and UI
         run: |
           node scripts/test-historical-review-learning.mjs
           node scripts/test-historical-review-learning-integration.mjs
+          node scripts/test-historical-review-learning-ui.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
