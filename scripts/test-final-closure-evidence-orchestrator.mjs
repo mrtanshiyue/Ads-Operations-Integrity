@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { buildFinalClosureEvidence } from './final-closure-evidence-contract.mjs';
+import { verifyEnvironmentReleaseTrace } from './final-closure-control-plane-v3.mjs';
 
 const mainSha = '535552f760dd9f94befc019a61f90b5f5ca145cb';
 const migrations24 = Array.from({ length: 24 }, (_, index) => `${String(index + 1).padStart(4, '0')}_store.sql`);
@@ -133,6 +134,57 @@ const wrongAcceptedHead = buildFinalClosureEvidence({
 assert.equal(wrongAcceptedHead.status, 'blocked');
 assert(wrongAcceptedHead.blockers.includes('human_review_acceptance_head_mismatch'));
 assert(!wrongAcceptedHead.blockers.includes('human_review_live_acceptance_missing'));
+
+const devArtifactName = `cloudflare-release-trace-development-${mainSha}`;
+const fakeGh = async (path) => {
+  if (path.includes('/actions/artifacts?')) {
+    return {
+      artifacts: [{
+        id: 71,
+        name: devArtifactName,
+        created_at: '2026-08-22T05:00:00Z',
+        workflow_run: { id: 91 },
+      }],
+    };
+  }
+  if (path.endsWith('/actions/runs/91')) {
+    return {
+      name: 'Cloudflare Release Trace',
+      event: 'workflow_run',
+      conclusion: 'failure',
+    };
+  }
+  if (path.endsWith('/actions/runs/91/jobs?per_page=100')) {
+    return {
+      jobs: [
+        { id: 101, name: 'Trace development release', conclusion: 'success' },
+        { id: 102, name: 'Trace production release', conclusion: 'failure' },
+      ],
+    };
+  }
+  throw new Error(`unexpected fake GitHub path:${path}`);
+};
+
+const devTraceFromMixedMatrix = await verifyEnvironmentReleaseTrace({
+  gh: fakeGh,
+  owner: 'mrtanshiyue',
+  name: 'Ads-Operations-Integrity',
+  mainSha,
+  environment: 'development',
+});
+assert.equal(devTraceFromMixedMatrix.verified, true);
+assert.equal(devTraceFromMixedMatrix.runConclusion, 'failure');
+assert.equal(devTraceFromMixedMatrix.jobConclusion, 'success');
+assert.equal(devTraceFromMixedMatrix.artifact, devArtifactName);
+
+const prodTraceMissingFromMixedMatrix = await verifyEnvironmentReleaseTrace({
+  gh: fakeGh,
+  owner: 'mrtanshiyue',
+  name: 'Ads-Operations-Integrity',
+  mainSha,
+  environment: 'production',
+});
+assert.equal(prodTraceMissingFromMixedMatrix.verified, false);
 
 const unsafe = buildFinalClosureEvidence({
   ...base,
