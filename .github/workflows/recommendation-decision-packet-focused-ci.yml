@@ -1,0 +1,51 @@
+name: Recommendation Decision Packet Focused CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/recommendation-decision-packet.js'
+      - 'cloudflare/runtime/csv-recommendation-human-review-api.js'
+      - 'assets/cloudflare-native-csv-recommendation-human-review-v1.js'
+      - 'scripts/test-recommendation-human-review-ui.mjs'
+      - 'scripts/test-recommendation-decision-packet.mjs'
+      - 'scripts/test-recommendation-decision-packet-integration.mjs'
+      - '.github/workflows/recommendation-decision-packet-focused-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-decision-packet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Recommendation Decision Packet v1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax-check packet projection
+        run: |
+          node --check cloudflare/runtime/recommendation-decision-packet.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node --check scripts/test-recommendation-human-review-ui.mjs
+          node --check scripts/test-recommendation-decision-packet.mjs
+          node --check scripts/test-recommendation-decision-packet-integration.mjs
+
+      - name: Validate packet authority and integration
+        run: |
+          node scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-recommendation-decision-packet.mjs
+          node scripts/test-recommendation-decision-packet-integration.mjs
