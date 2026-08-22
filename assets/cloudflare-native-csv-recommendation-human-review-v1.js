@@ -57,8 +57,21 @@
     panel.addEventListener('click', handleClick);
     global.addEventListener?.('cloudflare-operator-store-change', resetScope);
     state.observer = new MutationObserver(scheduleSync);
-    state.observer.observe(panel, { childList: true, subtree: true });
+    observePanel();
     scheduleSync();
+  }
+
+  function observePanel() {
+    state.observer?.observe(state.panel, { childList: true, subtree: true });
+  }
+
+  function mutatePresentation(callback) {
+    state.observer?.disconnect();
+    try {
+      return callback();
+    } finally {
+      observePanel();
+    }
   }
 
   function scheduleSync() {
@@ -72,16 +85,17 @@
   async function sync() {
     if (currentSource() !== 'csv') {
       clearState();
+      clearPresentation();
       return;
     }
     const section = recommendationSection();
     if (!section) return;
     if (!suppressLegacyReviewFilter(section)) return;
     const scope = currentScope();
-    renderGlobalStatus(section, scopeComplete(scope) ? 'loading' : 'scope_required', null);
     if (!scopeComplete(scope)) {
       state.scopeKey = '';
       state.reviews.clear();
+      renderGlobalStatus(section, 'scope_required', null);
       applySnapshot(section);
       return;
     }
@@ -136,6 +150,7 @@
     if (!DURABLE_STATES.has(requestedState)) return;
     const scope = currentScope();
     if (!scopeComplete(scope) || currentSource() !== 'csv') return;
+    const writeScopeKey = scopeKey(scope);
     const current = state.reviews.get(inboxItemId);
     if (current?.persistenceAuthorized !== true) {
       state.errors.set(inboxItemId, 'review_persistence_not_authorized');
@@ -146,12 +161,16 @@
     state.busy.add(inboxItemId);
     state.errors.delete(inboxItemId);
     applySnapshot(recommendationSection());
+    const controller = new AbortController();
+    const timeoutId = global.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const payload = await requestReview(scope, {
         method: 'POST',
         body: { inboxItemId, state: requestedState },
+        signal: controller.signal,
       });
       validateWriteResponse(payload, scope.storeId);
+      if (scopeKey(currentScope()) !== writeScopeKey) throw new Error('human_review_scope_changed_during_write');
       // UI never trusts an optimistic POST response as durable presentation truth.
       // Re-read the current server-generated recommendation snapshot and persisted review.
       await loadSnapshot(scope, { force: true });
@@ -163,6 +182,7 @@
       state.errors.set(inboxItemId, errorCode(error));
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
     } finally {
+      global.clearTimeout(timeoutId);
       state.busy.delete(inboxItemId);
       applySnapshot(recommendationSection());
     }
@@ -235,51 +255,58 @@
   function suppressLegacyReviewFilter(section) {
     const control = section?.querySelector('[data-cfri-filter="reviewState"]');
     if (!control) return true;
-    const label = control.closest('label');
-    if (control.value) {
-      control.value = '';
-      control.dispatchEvent(new Event('change', { bubbles: true }));
-      return false;
-    }
-    if (label) {
-      label.hidden = true;
-      label.dataset.cfhrLegacyReviewFilterSuppressed = 'true';
-    }
-    const meta = section.querySelector('.cfri-table-meta span:last-child');
-    if (meta) meta.textContent = 'Durable review state comes from the server; viewed remains session-only. Legacy session review filtering is disabled in Human Review v1.';
-    return true;
+    let proceed = true;
+    mutatePresentation(() => {
+      const label = control.closest('label');
+      if (control.value) {
+        control.value = '';
+        control.dispatchEvent(new Event('change', { bubbles: true }));
+        proceed = false;
+        return;
+      }
+      if (label) {
+        label.hidden = true;
+        label.dataset.cfhrLegacyReviewFilterSuppressed = 'true';
+      }
+      const meta = section.querySelector('.cfri-table-meta span:last-child');
+      if (meta) meta.textContent = 'Durable review state comes from the server; viewed remains session-only. Legacy session review filtering is disabled in Human Review v1.';
+    });
+    return proceed;
   }
 
   function applySnapshot(section) {
     if (!section) return;
-    for (const row of section.querySelectorAll('tr[data-cfri-item]')) {
-      const inboxItemId = String(row.dataset.cfriItem || '');
-      const cell = row.children?.[6];
-      if (!inboxItemId || !cell) continue;
-      const baseStateNode = cell.querySelector('.cfri-review');
-      const baseState = String(baseStateNode?.textContent || '').trim();
-      const viewedThisSession = baseState === 'viewed';
-      if (baseStateNode) baseStateNode.hidden = true;
-      const baseSmall = baseStateNode?.nextElementSibling;
-      if (baseSmall?.tagName === 'SMALL') baseSmall.hidden = true;
-      const item = state.reviews.get(inboxItemId) || null;
-      let host = cell.querySelector('[data-cfhr-review]');
-      if (!host) {
-        host = document.createElement('div');
-        host.dataset.cfhrReview = '';
-        cell.appendChild(host);
+    mutatePresentation(() => {
+      for (const row of section.querySelectorAll('tr[data-cfri-item]')) {
+        const inboxItemId = String(row.dataset.cfriItem || '');
+        const cell = row.children?.[6];
+        if (!inboxItemId || !cell) continue;
+        const baseStateNode = cell.querySelector('.cfri-review');
+        const baseState = String(baseStateNode?.textContent || '').trim();
+        const viewedThisSession = baseState === 'viewed';
+        if (baseStateNode) baseStateNode.hidden = true;
+        const baseSmall = baseStateNode?.nextElementSibling;
+        if (baseSmall?.tagName === 'SMALL') baseSmall.hidden = true;
+        const item = state.reviews.get(inboxItemId) || null;
+        let host = cell.querySelector('[data-cfhr-review]');
+        if (!host) {
+          host = document.createElement('div');
+          host.dataset.cfhrReview = '';
+          cell.appendChild(host);
+        }
+        const html = reviewCellHtml(inboxItemId, item, viewedThisSession);
+        if (host.innerHTML !== html) host.innerHTML = html;
+        cell.dataset.cfhrDurableState = String(item?.review?.state || 'unavailable');
       }
-      host.innerHTML = reviewCellHtml(inboxItemId, item, viewedThisSession);
-      cell.dataset.cfhrDurableState = String(item?.review?.state || 'unavailable');
-    }
-    renderDrawerPersistence(section);
+      renderDrawerPersistence(section);
+    });
   }
 
   function reviewCellHtml(inboxItemId, item, viewedThisSession) {
     const busy = state.busy.has(inboxItemId);
     const error = state.errors.get(inboxItemId) || '';
     if (!item) {
-      return `<span class="cfhr-state unavailable">unavailable</span><small>Persistence snapshot unavailable${viewedThisSession ? ' · viewed this session' : ''}</small>${error ? `<em>${esc(error)}</em>` : ''}`;
+      return `<span class="cfhr-state unavailable">unavailable</span><small>Persistence snapshot unavailable${viewedThisSession ? ' · viewed this session' : ''}</small>${error ? `<em class="cfhr-error" role="alert">${esc(error)}</em>` : ''}`;
     }
     const review = item.review || {};
     const reviewState = String(review.state || 'unreviewed');
@@ -301,8 +328,6 @@
     const scroll = drawer?.querySelector('.cfri-drawer-scroll');
     const title = drawer?.querySelector('#cfriDrawerTitle');
     if (!scroll || !title || drawer.hidden) return;
-    const rowButton = section.querySelector('[data-cfri-drawer]:not([hidden])');
-    void rowButton;
     const item = currentDrawerReview(section);
     let block = scroll.querySelector('[data-cfhr-drawer]');
     if (!block) {
@@ -311,16 +336,15 @@
       block.dataset.cfhrDrawer = '';
       scroll.appendChild(block);
     }
-    if (!item) {
-      block.innerHTML = '<h4>Durable Human Review</h4><div class="cfri-callout warn"><strong>Persistence snapshot unavailable.</strong> No durable state is inferred from the presentation-only drawer.</div>';
-      return;
-    }
-    block.innerHTML = `<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
-      <div><span>State</span><strong>${esc(item.review?.state || 'unreviewed')}</strong></div>
-      <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
-      <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
-      <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
-    </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`;
+    const html = item
+      ? `<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
+          <div><span>State</span><strong>${esc(item.review?.state || 'unreviewed')}</strong></div>
+          <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
+          <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
+          <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
+        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`
+      : '<h4>Durable Human Review</h4><div class="cfri-callout warn"><strong>Persistence snapshot unavailable.</strong> No durable state is inferred from the presentation-only drawer.</div>';
+    if (block.innerHTML !== html) block.innerHTML = html;
   }
 
   function currentDrawerReview(section) {
@@ -335,27 +359,28 @@
 
   function renderGlobalStatus(section, mode, detail) {
     if (!section) return;
-    let host = section.querySelector('[data-cfhr-status]');
-    if (!host) {
-      host = document.createElement('div');
-      host.className = 'cfhr-status';
-      host.dataset.cfhrStatus = '';
-      host.setAttribute('role', 'status');
-      host.setAttribute('aria-live', 'polite');
-      const safety = section.querySelector('.cfri-safety-grid');
-      if (safety) safety.insertAdjacentElement('afterend', host);
-      else section.prepend(host);
-    }
-    host.dataset.mode = mode;
-    if (mode === 'ready') {
-      host.innerHTML = '<strong>Human Review persistence connected.</strong><span>Only acknowledged and needs_review are durable. Viewed is session-only; approved/rejected remain fail-closed.</span>';
-    } else if (mode === 'loading') {
-      host.innerHTML = '<strong>Human Review persistence checking current scope…</strong><span>No optimistic review state is shown.</span>';
-    } else if (mode === 'scope_required') {
-      host.innerHTML = '<strong>Human Review persistence unavailable.</strong><span>Select a current store and date range first.</span>';
-    } else {
-      host.innerHTML = `<strong>Human Review persistence failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no durable state is inferred.</span>`;
-    }
+    mutatePresentation(() => {
+      let host = section.querySelector('[data-cfhr-status]');
+      if (!host) {
+        host = document.createElement('div');
+        host.className = 'cfhr-status';
+        host.dataset.cfhrStatus = '';
+        host.setAttribute('role', 'status');
+        host.setAttribute('aria-live', 'polite');
+        const safety = section.querySelector('.cfri-safety-grid');
+        if (safety) safety.insertAdjacentElement('afterend', host);
+        else section.prepend(host);
+      }
+      host.dataset.mode = mode;
+      const html = mode === 'ready'
+        ? '<strong>Human Review persistence connected.</strong><span>Only acknowledged and needs_review are durable. Viewed is session-only; approved/rejected remain fail-closed.</span>'
+        : mode === 'loading'
+          ? '<strong>Human Review persistence checking current scope…</strong><span>No optimistic review state is shown.</span>'
+          : mode === 'scope_required'
+            ? '<strong>Human Review persistence unavailable.</strong><span>Select a current store and date range first.</span>'
+            : `<strong>Human Review persistence failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no durable state is inferred.</span>`;
+      if (host.innerHTML !== html) host.innerHTML = html;
+    });
   }
 
   function handleClick(event) {
@@ -374,6 +399,7 @@
     state.requestController?.abort();
     state.requestController = null;
     clearState();
+    clearPresentation();
     scheduleSync();
   }
 
@@ -383,6 +409,23 @@
     state.reviews.clear();
     state.busy.clear();
     state.errors.clear();
+  }
+
+  function clearPresentation() {
+    const section = recommendationSection();
+    if (!section) return;
+    mutatePresentation(() => {
+      section.querySelectorAll('[data-cfhr-status],[data-cfhr-review],[data-cfhr-drawer]').forEach((node) => node.remove());
+      section.querySelectorAll('.cfri-review[hidden]').forEach((node) => { node.hidden = false; });
+      section.querySelectorAll('.cfri-review + small[hidden]').forEach((node) => { node.hidden = false; });
+      section.querySelectorAll('[data-cfhr-durable-state]').forEach((node) => delete node.dataset.cfhrDurableState);
+      const control = section.querySelector('[data-cfri-filter="reviewState"]');
+      const label = control?.closest('label');
+      if (label?.dataset.cfhrLegacyReviewFilterSuppressed === 'true') {
+        label.hidden = false;
+        delete label.dataset.cfhrLegacyReviewFilterSuppressed;
+      }
+    });
   }
 
   function recommendationSection() {
