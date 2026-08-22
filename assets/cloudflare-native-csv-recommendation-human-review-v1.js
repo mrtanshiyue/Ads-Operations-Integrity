@@ -1,9 +1,10 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
+  const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
   const REQUEST_TIMEOUT_MS = 30000;
   const DURABLE_STATES = new Set(['acknowledged', 'needs_review']);
   const state = {
@@ -16,6 +17,9 @@
     requestController: null,
     reviews: new Map(),
     authority: null,
+    library: null,
+    libraryItems: new Map(),
+    libraryFilters: defaultLibraryFilters(),
     busy: new Set(),
     errors: new Map(),
   };
@@ -25,6 +29,7 @@
       version: VERSION,
       contractVersion: CONTRACT_VERSION,
       decisionPacketVersion: DECISION_PACKET_VERSION,
+      candidateLibraryVersion: CANDIDATE_LIBRARY_VERSION,
       refresh: () => refresh(true),
     }),
     writable: false,
@@ -57,6 +62,7 @@
     state.panel = panel;
     panel.dataset.csvRecommendationHumanReviewUiVersion = VERSION;
     panel.addEventListener('click', handleClick);
+    panel.addEventListener('change', handleChange);
     global.addEventListener?.('cloudflare-operator-store-change', resetScope);
     state.observer = new MutationObserver(scheduleSync);
     observePanel();
@@ -97,6 +103,8 @@
     if (!scopeComplete(scope)) {
       state.scopeKey = '';
       state.reviews.clear();
+      state.library = null;
+      state.libraryItems.clear();
       renderGlobalStatus(section, 'scope_required', null);
       applySnapshot(section);
       return;
@@ -133,6 +141,8 @@
       state.scopeKey = key;
       state.authority = payload.authority || null;
       state.reviews = new Map((payload.items || []).map((item) => [String(item?.inboxItemId || ''), item]).filter(([id]) => id));
+      state.library = payload.candidateLibrary;
+      state.libraryItems = new Map((payload.candidateLibrary?.items || []).map((item) => [String(item?.inboxItemId || ''), item]).filter(([id]) => id));
       renderGlobalStatus(recommendationSection(), 'ready', null);
       applySnapshot(recommendationSection());
     } catch (error) {
@@ -140,6 +150,8 @@
       state.scopeKey = key;
       state.authority = null;
       state.reviews.clear();
+      state.library = null;
+      state.libraryItems.clear();
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
       applySnapshot(recommendationSection());
     } finally {
@@ -232,6 +244,7 @@
       if (item?.review?.persisted === true && !DURABLE_STATES.has(reviewState)) throw new Error('human_review_persisted_state_invalid');
       validateDecisionPacket(item?.decisionPacket, item);
     }
+    validateCandidateLibrary(payload?.candidateLibrary, payload.items, expectedStoreId);
   }
 
   function validateDecisionPacket(packet, item) {
@@ -244,6 +257,34 @@
     const stale = Array.isArray(packet?.reviewEvidence?.staleEvidence) ? packet.reviewEvidence.staleEvidence : [];
     if (Number(packet?.reviewEvidence?.staleEvidenceCount) !== stale.length) throw new Error('decision_packet_stale_count_mismatch');
     if (stale.some((review) => review?.inheritedAsCurrent !== false || review?.stale !== true)) throw new Error('decision_packet_stale_inheritance_boundary_invalid');
+  }
+
+  function validateCandidateLibrary(library, reviewItems, expectedStoreId) {
+    if (library?.schemaVersion !== CANDIDATE_LIBRARY_VERSION) throw new Error('candidate_library_contract_version_mismatch');
+    if (String(library?.storeId || '') !== expectedStoreId) throw new Error('candidate_library_store_scope_mismatch');
+    if (library?.authority?.readOnly !== true) throw new Error('candidate_library_read_only_boundary_invalid');
+    if (library?.authority?.executionAuthorized !== false) throw new Error('candidate_library_execution_boundary_invalid');
+    if (library?.authority?.amazonMutationAuthorized !== false) throw new Error('candidate_library_amazon_boundary_invalid');
+    const available = library?.status?.available === true;
+    const items = Array.isArray(library?.items) ? library.items : [];
+    if (!available) {
+      if (library?.status?.reasonCode !== 'candidate_emission_not_authorized') throw new Error('candidate_library_fail_closed_reason_missing');
+      if (library?.summary?.candidateCount !== null || items.length !== 0) throw new Error('candidate_library_blocked_scope_not_null');
+      return;
+    }
+    if (Number(library?.summary?.candidateCount) !== items.length) throw new Error('candidate_library_count_mismatch');
+    const reviewById = new Map((reviewItems || []).map((item) => [String(item?.inboxItemId || ''), item]));
+    if (items.length !== reviewById.size) throw new Error('candidate_library_review_item_coverage_mismatch');
+    for (const item of items) {
+      const reviewItem = reviewById.get(String(item?.inboxItemId || ''));
+      if (!reviewItem) throw new Error('candidate_library_unknown_inbox_item');
+      if (!['keyword', 'negative'].includes(String(item?.libraryFamily || ''))) throw new Error('candidate_library_family_invalid');
+      if (!['harvest', 'scale', 'exact_negative', 'phrase_negative_review'].includes(String(item?.libraryKind || ''))) throw new Error('candidate_library_kind_invalid');
+      if (String(item?.currentFingerprint || '') !== String(reviewItem?.recommendationFingerprint || '')) throw new Error('candidate_library_fingerprint_mismatch');
+      if (String(item?.currentReviewState || '') !== String(reviewItem?.review?.state || 'unreviewed')) throw new Error('candidate_library_review_state_mismatch');
+      if (item?.decisionPacketAvailable !== true) throw new Error('candidate_library_decision_packet_missing');
+      if (item?.authority?.executionAuthorized !== false || item?.authority?.amazonMutationAuthorized !== false) throw new Error('candidate_library_item_authority_invalid');
+    }
   }
 
   function validateWriteResponse(payload, expectedStoreId) {
@@ -290,8 +331,10 @@
   function applySnapshot(section) {
     if (!section) return;
     mutatePresentation(() => {
+      renderLibraryControls(section);
       for (const row of section.querySelectorAll('tr[data-cfri-item]')) {
         const inboxItemId = String(row.dataset.cfriItem || '');
+        row.classList.toggle('cfgl-filtered-out', !libraryRowVisible(inboxItemId));
         const cell = row.children?.[6];
         if (!inboxItemId || !cell) continue;
         const baseStateNode = cell.querySelector('.cfri-review');
@@ -313,6 +356,59 @@
       }
       renderDrawerPersistence(section);
     });
+  }
+
+  function renderLibraryControls(section) {
+    let host = section.querySelector('[data-cfgl-library]');
+    if (!host) {
+      host = document.createElement('section');
+      host.className = 'cfgl-library';
+      host.dataset.cfglLibrary = '';
+      const status = section.querySelector('[data-cfhr-status]');
+      if (status) status.insertAdjacentElement('afterend', host);
+      else section.prepend(host);
+    }
+    const library = state.library;
+    if (!library) {
+      host.innerHTML = '<strong>Keyword / Negative Candidate Library</strong><span>Server library unavailable. No candidate class or review state is inferred client-side.</span>';
+      host.dataset.mode = 'unavailable';
+      return;
+    }
+    if (library?.status?.available !== true) {
+      host.innerHTML = `<strong>Keyword / Negative Candidate Library unavailable.</strong><span>${esc(library?.status?.reasonCode || 'candidate_emission_not_authorized')} · governed candidate emission is blocked for this scope.</span>`;
+      host.dataset.mode = 'blocked';
+      return;
+    }
+    host.dataset.mode = 'ready';
+    const summary = library.summary || {};
+    const filters = state.libraryFilters;
+    host.innerHTML = `<div class="cfgl-head"><div><strong>Keyword / Negative Candidate Library</strong><span>${esc(display(summary.candidateCount))} candidates · ${esc(display(summary.keywordCount))} keyword · ${esc(display(summary.negativeCount))} negative · ${esc(display(summary.staleEvidenceCandidateCount))} with stale evidence</span></div><button type="button" class="btn" data-cfgl-reset>Reset filters</button></div>
+      <div class="cfgl-filters" role="group" aria-label="Governed candidate library filters">
+        ${librarySelect('family', 'Family', filters.family, [['all','All'],['keyword','Keyword'],['negative','Negative']])}
+        ${librarySelect('kind', 'Kind', filters.kind, [['all','All'],['harvest','Harvest'],['scale','Scale'],['exact_negative','Exact negative'],['phrase_negative_review','Phrase negative review']])}
+        ${librarySelect('priority', 'Priority', filters.priority, [['all','All'],['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']])}
+        ${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged']])}
+        ${librarySelect('stale', 'Evidence', filters.stale, [['all','All'],['has_stale','Has stale evidence'],['no_stale','No stale evidence']])}
+      </div><small>Server-projected registry only. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, or evidence.</small>`;
+  }
+
+  function librarySelect(key, label, selected, options) {
+    return `<label><span>${esc(label)}</span><select data-cfgl-filter="${esc(key)}">${options.map(([value, text]) => `<option value="${esc(value)}"${selected === value ? ' selected' : ''}>${esc(text)}</option>`).join('')}</select></label>`;
+  }
+
+  function libraryRowVisible(inboxItemId) {
+    const library = state.library;
+    if (!library || library?.status?.available !== true) return true;
+    const item = state.libraryItems.get(inboxItemId);
+    if (!item) return false;
+    const filters = state.libraryFilters;
+    if (filters.family !== 'all' && item.libraryFamily !== filters.family) return false;
+    if (filters.kind !== 'all' && item.libraryKind !== filters.kind) return false;
+    if (filters.priority !== 'all' && item.priority !== filters.priority) return false;
+    if (filters.review !== 'all' && item.currentReviewState !== filters.review) return false;
+    if (filters.stale === 'has_stale' && Number(item.staleEvidenceCount) <= 0) return false;
+    if (filters.stale === 'no_stale' && Number(item.staleEvidenceCount) > 0) return false;
+    return true;
   }
 
   function reviewCellHtml(inboxItemId, item, viewedThisSession) {
@@ -438,17 +534,25 @@
       }
       host.dataset.mode = mode;
       const html = mode === 'ready'
-        ? '<strong>Human Review persistence + Decision Packet connected.</strong><span>Packet evidence is server-projected; only acknowledged and needs_review are durable. Execution and Amazon mutation remain disabled.</span>'
+        ? '<strong>Human Review + Decision Packet + Candidate Library connected.</strong><span>Library and packet evidence are server-projected; only acknowledged and needs_review are durable. Execution and Amazon mutation remain disabled.</span>'
         : mode === 'loading'
-          ? '<strong>Human Review / Decision Packet checking current scope…</strong><span>No optimistic review or reconstructed evidence is shown.</span>'
+          ? '<strong>Human Review / Decision Packet / Candidate Library checking current scope…</strong><span>No optimistic review or reconstructed evidence is shown.</span>'
           : mode === 'scope_required'
-            ? '<strong>Human Review / Decision Packet unavailable.</strong><span>Select a current store and date range first.</span>'
-            : `<strong>Human Review / Decision Packet failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no review or evidence state is inferred.</span>`;
+            ? '<strong>Human Review / Decision Packet / Candidate Library unavailable.</strong><span>Select a current store and date range first.</span>'
+            : `<strong>Human Review / Decision Packet / Candidate Library failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no review, evidence, or candidate-library state is inferred.</span>`;
       if (host.innerHTML !== html) host.innerHTML = html;
     });
   }
 
   function handleClick(event) {
+    const reset = event.target.closest?.('[data-cfgl-reset]');
+    if (reset) {
+      event.preventDefault();
+      event.stopPropagation();
+      state.libraryFilters = defaultLibraryFilters();
+      applySnapshot(recommendationSection());
+      return;
+    }
     const button = event.target.closest?.('[data-cfhr-set]');
     if (!button) return;
     event.preventDefault();
@@ -457,6 +561,15 @@
     const inboxItemId = String(button.dataset.cfhrItem || '');
     if (!DURABLE_STATES.has(requestedState) || !inboxItemId) return;
     void persistReview(inboxItemId, requestedState);
+  }
+
+  function handleChange(event) {
+    const control = event.target.closest?.('[data-cfgl-filter]');
+    if (!control) return;
+    const key = String(control.dataset.cfglFilter || '');
+    if (!Object.prototype.hasOwnProperty.call(state.libraryFilters, key)) return;
+    state.libraryFilters = { ...state.libraryFilters, [key]: String(control.value || 'all') };
+    applySnapshot(recommendationSection());
   }
 
   function resetScope() {
@@ -472,6 +585,9 @@
     state.scopeKey = '';
     state.authority = null;
     state.reviews.clear();
+    state.library = null;
+    state.libraryItems.clear();
+    state.libraryFilters = defaultLibraryFilters();
     state.busy.clear();
     state.errors.clear();
   }
@@ -480,7 +596,8 @@
     const section = recommendationSection();
     if (!section) return;
     mutatePresentation(() => {
-      section.querySelectorAll('[data-cfhr-status],[data-cfhr-review],[data-cfhr-drawer]').forEach((node) => node.remove());
+      section.querySelectorAll('[data-cfhr-status],[data-cfhr-review],[data-cfhr-drawer],[data-cfgl-library]').forEach((node) => node.remove());
+      section.querySelectorAll('tr.cfgl-filtered-out').forEach((row) => row.classList.remove('cfgl-filtered-out'));
       section.querySelectorAll('.cfri-review[hidden]').forEach((node) => { node.hidden = false; });
       section.querySelectorAll('.cfri-review + small[hidden]').forEach((node) => { node.hidden = false; });
       section.querySelectorAll('[data-cfhr-durable-state]').forEach((node) => delete node.dataset.cfhrDurableState);
@@ -491,6 +608,10 @@
         delete label.dataset.cfhrLegacyReviewFilterSuppressed;
       }
     });
+  }
+
+  function defaultLibraryFilters() {
+    return { family: 'all', kind: 'all', priority: 'all', review: 'all', stale: 'all' };
   }
 
   function recommendationSection() {
@@ -542,11 +663,13 @@
     style.textContent = `
       .cfhr-status{display:flex;gap:8px;align-items:center;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--hover-bg);font-size:10px}.cfhr-status span{color:var(--muted)}
       .cfhr-status[data-mode="ready"]{border-color:color-mix(in srgb,#16a34a 35%,var(--line));background:color-mix(in srgb,#16a34a 7%,var(--card))}.cfhr-status[data-mode="failed"]{border-color:color-mix(in srgb,#dc2626 35%,var(--line));background:color-mix(in srgb,#dc2626 7%,var(--card))}
+      .cfgl-library{display:flex;flex-direction:column;gap:7px;margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfgl-library>span,.cfgl-library small,.cfgl-head span{font-size:9px;color:var(--muted)}.cfgl-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.cfgl-head>div{display:flex;flex-direction:column;gap:2px}.cfgl-head .btn{padding:4px 7px;font-size:9px}.cfgl-filters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}.cfgl-filters label{display:flex;flex-direction:column;gap:3px}.cfgl-filters label span{font-size:8px;color:var(--muted)}.cfgl-filters select{width:100%;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:7px;background:var(--input-bg);color:var(--text);font-size:9px}.cfgl-filtered-out{display:none!important}.cfgl-library[data-mode="blocked"],.cfgl-library[data-mode="unavailable"]{border-color:color-mix(in srgb,var(--warn) 35%,var(--line));background:color-mix(in srgb,var(--warn) 6%,var(--card))}
       [data-cfhr-review]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:145px}.cfhr-state{display:inline-flex;padding:3px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfhr-state.acknowledged{color:var(--good);background:var(--softGood)}.cfhr-state.needs_review{color:var(--warn);background:var(--softWarn)}.cfhr-state.unavailable{color:var(--bad);background:var(--softBad)}
       .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy{color:var(--muted)}.cfhr-error{display:block;color:var(--bad);font-size:9px;font-style:normal;overflow-wrap:anywhere}.cfhr-blocked{color:var(--muted)}
       .cfhr-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:8px}.cfhr-drawer-grid>div{padding:7px 8px;border:1px solid var(--line);border-radius:8px}.cfhr-drawer-grid span,.cfhr-drawer-grid strong{display:block}.cfhr-drawer-grid span{font-size:9px;color:var(--muted)}.cfhr-drawer-grid strong{margin-top:2px;font-size:10px;overflow-wrap:anywhere}
       .cfdp{display:flex;flex-direction:column;gap:9px;margin-bottom:12px}.cfdp h4{margin:0}.cfdp-section{padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--card)}.cfdp-section h5{margin:0 0 7px;font-size:10px}.cfdp-section p,.cfdp-section small{margin:5px 0;color:var(--muted);font-size:9px}.cfdp-list{display:grid;gap:4px;margin-top:5px}.cfdp-list>strong{font-size:9px}.cfdp-list>span{font-size:9px;color:var(--muted)}.cfdp-evidence{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:5px 8px;align-items:start}.cfdp-evidence span{font-size:9px;color:var(--muted)}.cfdp-evidence strong,.cfdp-evidence code{font-size:9px;overflow-wrap:anywhere}.cfdp details{margin-top:7px}.cfdp summary{cursor:pointer;font-size:9px;font-weight:700}.cfdp pre{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:7px;border:1px solid var(--line);border-radius:7px;font-size:8px}.cfdp-stale{display:grid;gap:3px;padding:6px 0;border-bottom:1px solid var(--line)}.cfdp-stale code{overflow-wrap:anywhere;font-size:8px}
-      @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}.cfdp-evidence{grid-template-columns:1fr}}
+      @media(max-width:900px){.cfgl-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}.cfdp-evidence{grid-template-columns:1fr}.cfgl-head{align-items:flex-start;flex-direction:column}.cfgl-filters{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
