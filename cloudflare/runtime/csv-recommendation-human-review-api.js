@@ -6,6 +6,7 @@ import {
 } from './csv-recommendation-human-review-contract.js';
 import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
 import { buildRecommendationDecisionPacket } from './recommendation-decision-packet.js';
+import { buildGovernedKeywordNegativeCandidateLibrary } from './governed-keyword-negative-candidate-library.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_BODY_BYTES = 64 * 1024;
@@ -136,40 +137,49 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
   const byFingerprint = new Map(stored.map((row) => [row.recommendation_fingerprint, row]));
   const staleByContext = groupStaleRowsByContext(stored);
 
+  const items = bindings.map(({ item, binding }) => {
+    const row = byFingerprint.get(binding.recommendationFingerprint) || null;
+    const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
+    const staleRows = (staleByContext.get(contextKey) || [])
+      .filter((candidate) => candidate.recommendation_fingerprint !== binding.recommendationFingerprint);
+    const currentReview = row ? publicReview(row) : null;
+    const staleEvidence = staleRows.map(publicDecisionReviewEvidence);
+    return {
+      inboxItemId: item.inboxItemId,
+      persistenceAuthorized: item?.review?.persistenceAuthorized === true,
+      recommendationFingerprint: binding.recommendationFingerprint,
+      sourceEvidenceSha256: binding.sourceEvidenceSha256,
+      review: currentReview || {
+        state: 'unreviewed',
+        persisted: false,
+        reviewerUserId: null,
+        reviewedAt: null,
+        updatedAt: null,
+      },
+      staleReviewIds: staleRows.map((candidate) => candidate.review_id),
+      decisionPacket: buildRecommendationDecisionPacket({
+        item,
+        binding,
+        currentReview,
+        staleReviews: staleEvidence,
+        analysisScope: snapshot.analysisScope,
+      }),
+    };
+  });
+
+  const candidateLibrary = buildGovernedKeywordNegativeCandidateLibrary({
+    storeId,
+    analysisScope: snapshot.analysisScope,
+    items,
+  });
+
   return json(request, {
     schemaVersion: CSV_RECOMMENDATION_HUMAN_REVIEW_CONTRACT_VERSION,
     storeId,
     authority: reviewAuthority(),
     analysisScope: compactScope(snapshot.analysisScope),
-    items: bindings.map(({ item, binding }) => {
-      const row = byFingerprint.get(binding.recommendationFingerprint) || null;
-      const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
-      const staleRows = (staleByContext.get(contextKey) || [])
-        .filter((candidate) => candidate.recommendation_fingerprint !== binding.recommendationFingerprint);
-      const currentReview = row ? publicReview(row) : null;
-      const staleEvidence = staleRows.map(publicDecisionReviewEvidence);
-      return {
-        inboxItemId: item.inboxItemId,
-        persistenceAuthorized: item?.review?.persistenceAuthorized === true,
-        recommendationFingerprint: binding.recommendationFingerprint,
-        sourceEvidenceSha256: binding.sourceEvidenceSha256,
-        review: currentReview || {
-          state: 'unreviewed',
-          persisted: false,
-          reviewerUserId: null,
-          reviewedAt: null,
-          updatedAt: null,
-        },
-        staleReviewIds: staleRows.map((candidate) => candidate.review_id),
-        decisionPacket: buildRecommendationDecisionPacket({
-          item,
-          binding,
-          currentReview,
-          staleReviews: staleEvidence,
-          analysisScope: snapshot.analysisScope,
-        }),
-      };
-    }),
+    candidateLibrary,
+    items,
   }, 200);
 }
 
