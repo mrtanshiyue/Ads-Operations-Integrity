@@ -1,8 +1,9 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
+  const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const REQUEST_TIMEOUT_MS = 30000;
   const DURABLE_STATES = new Set(['acknowledged', 'needs_review']);
   const state = {
@@ -23,6 +24,7 @@
     value: Object.freeze({
       version: VERSION,
       contractVersion: CONTRACT_VERSION,
+      decisionPacketVersion: DECISION_PACKET_VERSION,
       refresh: () => refresh(true),
     }),
     writable: false,
@@ -171,8 +173,6 @@
       });
       validateWriteResponse(payload, scope.storeId);
       if (scopeKey(currentScope()) !== writeScopeKey) throw new Error('human_review_scope_changed_during_write');
-      // UI never trusts an optimistic POST response as durable presentation truth.
-      // Re-read the current server-generated recommendation snapshot and persisted review.
       await loadSnapshot(scope, { force: true });
       const verified = state.reviews.get(inboxItemId);
       if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
@@ -230,7 +230,20 @@
       const reviewState = String(item?.review?.state || 'unreviewed');
       if (!['unreviewed', 'acknowledged', 'needs_review'].includes(reviewState)) throw new Error('human_review_state_unsupported');
       if (item?.review?.persisted === true && !DURABLE_STATES.has(reviewState)) throw new Error('human_review_persisted_state_invalid');
+      validateDecisionPacket(item?.decisionPacket, item);
     }
+  }
+
+  function validateDecisionPacket(packet, item) {
+    if (packet?.schemaVersion !== DECISION_PACKET_VERSION) throw new Error('decision_packet_contract_version_mismatch');
+    if (packet?.authority?.readOnly !== true) throw new Error('decision_packet_read_only_boundary_invalid');
+    if (packet?.authority?.executionAuthorized !== false) throw new Error('decision_packet_execution_boundary_invalid');
+    if (packet?.authority?.amazonMutationAuthorized !== false) throw new Error('decision_packet_amazon_boundary_invalid');
+    if (String(packet?.recommendation?.inboxItemId || '') !== String(item?.inboxItemId || '')) throw new Error('decision_packet_item_identity_mismatch');
+    if (!String(packet?.reviewEvidence?.currentFingerprint || '')) throw new Error('decision_packet_current_fingerprint_missing');
+    const stale = Array.isArray(packet?.reviewEvidence?.staleEvidence) ? packet.reviewEvidence.staleEvidence : [];
+    if (Number(packet?.reviewEvidence?.staleEvidenceCount) !== stale.length) throw new Error('decision_packet_stale_count_mismatch');
+    if (stale.some((review) => review?.inheritedAsCurrent !== false || review?.stale !== true)) throw new Error('decision_packet_stale_inheritance_boundary_invalid');
   }
 
   function validateWriteResponse(payload, expectedStoreId) {
@@ -312,7 +325,7 @@
     const reviewState = String(review.state || 'unreviewed');
     const persisted = review.persisted === true;
     const allowed = item.persistenceAuthorized === true;
-    const staleCount = Array.isArray(item.staleReviewIds) ? item.staleReviewIds.length : 0;
+    const staleCount = Number(item?.decisionPacket?.reviewEvidence?.staleEvidenceCount ?? (Array.isArray(item.staleReviewIds) ? item.staleReviewIds.length : 0));
     const status = `<span class="cfhr-state ${esc(reviewState)}">${esc(reviewState)}</span><small>${persisted ? 'persisted' : 'not persisted'}${viewedThisSession ? ' · viewed this session' : ''}${staleCount ? ` · ${staleCount} stale prior evidence record${staleCount === 1 ? '' : 's'}` : ''}</small>`;
     const controls = allowed
       ? `<div class="cfhr-actions" role="group" aria-label="Human review actions">
@@ -337,14 +350,67 @@
       scroll.appendChild(block);
     }
     const html = item
-      ? `<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
+      ? `${decisionPacketHtml(item.decisionPacket)}<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
           <div><span>State</span><strong>${esc(item.review?.state || 'unreviewed')}</strong></div>
           <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
           <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
           <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
         </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`
-      : '<h4>Durable Human Review</h4><div class="cfri-callout warn"><strong>Persistence snapshot unavailable.</strong> No durable state is inferred from the presentation-only drawer.</div>';
+      : '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Packet unavailable.</strong> No recommendation, review state, financial evidence, or provenance is inferred from the presentation layer.</div>';
     if (block.innerHTML !== html) block.innerHTML = html;
+  }
+
+  function decisionPacketHtml(packet) {
+    if (packet?.schemaVersion !== DECISION_PACKET_VERSION) {
+      return '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Server packet unavailable.</strong> The UI will not reconstruct recommendation evidence client-side.</div>';
+    }
+    const recommendation = packet.recommendation || {};
+    const why = packet.why || {};
+    const priority = packet.priorityEvidence || {};
+    const financial = packet.financialComparability || {};
+    const review = packet.reviewEvidence || {};
+    const source = packet.sourceEvidence || {};
+    const roots = Array.isArray(packet?.root?.impactedRoots) ? packet.root.impactedRoots : [];
+    const lifecycle = Array.isArray(packet?.lifecycle?.items) ? packet.lifecycle.items : [];
+    const stale = Array.isArray(review.staleEvidence) ? review.staleEvidence : [];
+    return `<div class="cfdp" data-cfdp-packet>
+      <h4>Recommendation Decision Packet</h4>
+      <div class="cfdp-section"><h5>1. Recommendation + Why</h5><div class="cfhr-drawer-grid">
+        <div><span>Recommendation</span><strong>${esc(recommendation.actionType || '—')} · ${esc(recommendation.value || '—')}</strong></div>
+        <div><span>Candidate</span><strong>${esc(recommendation.candidateType || '—')} / ${esc(recommendation.matchScope || '—')}</strong></div>
+      </div><p>${esc(why.reason || 'No reason supplied by the server')}</p></div>
+      <div class="cfdp-section"><h5>2. Priority evidence</h5><div class="cfhr-drawer-grid">
+        <div><span>Priority</span><strong>${esc(display(priority.priority))} · score ${esc(display(priority.priorityScore))}</strong></div>
+        <div><span>Spend / Sales</span><strong>${esc(display(priority.spendMicros))} / ${esc(display(priority.salesMicros))}</strong></div>
+        <div><span>Orders / Clicks</span><strong>${esc(display(priority.orders))} / ${esc(display(priority.clicks))}</strong></div>
+        <div><span>ACOS / CVR</span><strong>${esc(display(priority.acos))} / ${esc(display(priority.cvr))}</strong></div>
+      </div></div>
+      <div class="cfdp-section"><h5>3. Root + Lifecycle</h5>${contextList('Root', roots, (row) => `${row.root || '—'} · ${row.primaryState || (Array.isArray(row.states) ? row.states.join(', ') : '—')}`)}${contextList('Lifecycle', lifecycle, (row) => `${row.searchTerm || '—'} · ${row.state || '—'} · ${row.previousClassification || '—'} → ${row.currentClassification || '—'}`)}</div>
+      <div class="cfdp-section"><h5>4. Financial comparability</h5><div class="cfhr-drawer-grid">
+        <div><span>Financially comparable</span><strong>${esc(display(financial.financiallyComparable))}</strong></div>
+        <div><span>Analysis scope complete</span><strong>${esc(display(financial.analysisScopeComplete))}</strong></div>
+      </div>${financial.reasons?.length ? `<small>${esc(financial.reasons.join(' · '))}</small>` : ''}</div>
+      <div class="cfdp-section"><h5>5. Fingerprint + review evidence</h5><div class="cfdp-evidence"><span>Current fingerprint</span><code>${esc(review.currentFingerprint || '—')}</code><span>Prior review state</span><strong>${esc(review.priorReviewState || 'unreviewed')}</strong><span>Stale evidence</span><strong>${stale.length}</strong></div>${staleEvidenceHtml(stale)}</div>
+      <div class="cfdp-section"><h5>6. Source evidence / provenance</h5><div class="cfdp-evidence"><span>Source evidence SHA-256</span><code>${esc(source.sourceEvidenceSha256 || '—')}</code><span>Provenance gate</span><strong>${esc(source.provenanceGate || '—')}</strong><span>Analysis window</span><strong>${esc(source.analysisWindow ? `${source.analysisWindow.startDate} → ${source.analysisWindow.endDate}` : '—')}</strong><span>Source imports</span><strong>${esc(Array.isArray(source.sourceImportIds) && source.sourceImportIds.length ? source.sourceImportIds.join(', ') : '—')}</strong></div><details><summary>Bound source evidence</summary><pre>${esc(source.sourceEvidenceJson || 'null')}</pre></details></div>
+      <div class="cfri-callout warn"><strong>Read-only packet:</strong> This is server-authoritative review context only. No auto acknowledge, auto approve, Optimization Action, execution permit, Store Score, or Amazon mutation is authorized.</div>
+    </div>`;
+  }
+
+  function contextList(label, rows, line) {
+    if (!rows.length) return `<p><strong>${esc(label)}:</strong> unavailable</p>`;
+    return `<div class="cfdp-list"><strong>${esc(label)}</strong>${rows.map((row) => `<span>${esc(line(row))}</span>`).join('')}</div>`;
+  }
+
+  function staleEvidenceHtml(rows) {
+    if (!rows.length) return '<small>No same-context stale review evidence.</small>';
+    return `<details><summary>${rows.length} stale prior evidence record${rows.length === 1 ? '' : 's'}</summary>${rows.map((row) => `<div class="cfdp-stale"><strong>${esc(row.state || 'unsupported')}</strong><code>${esc(row.recommendationFingerprint || '—')}</code><small>${esc(row.updatedAt || row.reviewedAt || '—')} · never inherited as current</small></div>`).join('')}</details>`;
+  }
+
+  function display(value) {
+    if (value === null || value === undefined || value === '') return 'unavailable';
+    if (value === true) return 'yes';
+    if (value === false) return 'no';
+    return String(value);
   }
 
   function currentDrawerReview(section) {
@@ -372,12 +438,12 @@
       }
       host.dataset.mode = mode;
       const html = mode === 'ready'
-        ? '<strong>Human Review persistence connected.</strong><span>Only acknowledged and needs_review are durable. Viewed is session-only; approved/rejected remain fail-closed.</span>'
+        ? '<strong>Human Review persistence + Decision Packet connected.</strong><span>Packet evidence is server-projected; only acknowledged and needs_review are durable. Execution and Amazon mutation remain disabled.</span>'
         : mode === 'loading'
-          ? '<strong>Human Review persistence checking current scope…</strong><span>No optimistic review state is shown.</span>'
+          ? '<strong>Human Review / Decision Packet checking current scope…</strong><span>No optimistic review or reconstructed evidence is shown.</span>'
           : mode === 'scope_required'
-            ? '<strong>Human Review persistence unavailable.</strong><span>Select a current store and date range first.</span>'
-            : `<strong>Human Review persistence failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no durable state is inferred.</span>`;
+            ? '<strong>Human Review / Decision Packet unavailable.</strong><span>Select a current store and date range first.</span>'
+            : `<strong>Human Review / Decision Packet failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no review or evidence state is inferred.</span>`;
       if (host.innerHTML !== html) host.innerHTML = html;
     });
   }
@@ -479,7 +545,8 @@
       [data-cfhr-review]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:145px}.cfhr-state{display:inline-flex;padding:3px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfhr-state.acknowledged{color:var(--good);background:var(--softGood)}.cfhr-state.needs_review{color:var(--warn);background:var(--softWarn)}.cfhr-state.unavailable{color:var(--bad);background:var(--softBad)}
       .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy{color:var(--muted)}.cfhr-error{display:block;color:var(--bad);font-size:9px;font-style:normal;overflow-wrap:anywhere}.cfhr-blocked{color:var(--muted)}
       .cfhr-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:8px}.cfhr-drawer-grid>div{padding:7px 8px;border:1px solid var(--line);border-radius:8px}.cfhr-drawer-grid span,.cfhr-drawer-grid strong{display:block}.cfhr-drawer-grid span{font-size:9px;color:var(--muted)}.cfhr-drawer-grid strong{margin-top:2px;font-size:10px;overflow-wrap:anywhere}
-      @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}}
+      .cfdp{display:flex;flex-direction:column;gap:9px;margin-bottom:12px}.cfdp h4{margin:0}.cfdp-section{padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--card)}.cfdp-section h5{margin:0 0 7px;font-size:10px}.cfdp-section p,.cfdp-section small{margin:5px 0;color:var(--muted);font-size:9px}.cfdp-list{display:grid;gap:4px;margin-top:5px}.cfdp-list>strong{font-size:9px}.cfdp-list>span{font-size:9px;color:var(--muted)}.cfdp-evidence{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:5px 8px;align-items:start}.cfdp-evidence span{font-size:9px;color:var(--muted)}.cfdp-evidence strong,.cfdp-evidence code{font-size:9px;overflow-wrap:anywhere}.cfdp details{margin-top:7px}.cfdp summary{cursor:pointer;font-size:9px;font-weight:700}.cfdp pre{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:7px;border:1px solid var(--line);border-radius:7px;font-size:8px}.cfdp-stale{display:grid;gap:3px;padding:6px 0;border-bottom:1px solid var(--line)}.cfdp-stale code{overflow-wrap:anywhere;font-size:8px}
+      @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}.cfdp-evidence{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
   }
