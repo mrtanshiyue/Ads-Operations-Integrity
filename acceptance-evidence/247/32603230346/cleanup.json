@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "operator-work-queue-production-runtime-cleanup-v1",
+  "result": "PASS",
+  "runId": "32603230346",
+  "actions": {
+    "store_members": true,
+    "role_permissions": true,
+    "app_role": true,
+    "principalDisposition": "deleted",
+    "service_principal": true,
+    "access_policy": true,
+    "service_token": true
+  },
+  "verification": {
+    "activeStoreMemberships": 0,
+    "rolePermissions": 0,
+    "roles": 0,
+    "activeTemporaryPrincipals": 0,
+    "namedAccessPolicies": 0,
+    "namedServiceTokens": 0,
+    "accountServiceTokens": 0
+  },
+  "allowedAuditResidue": [],
+  "amazonRequests": 0
+}

@@ -1,0 +1,631 @@
+{
+  "schemaVersion": "operator-work-queue-production-runtime-acceptance-v1",
+  "issue": 247,
+  "runId": "32603230346",
+  "target": "https://ads-operations-web-prod.tanshiyuesir.workers.dev",
+  "expectedCanonicalMain": "46a86f79fe42f120096e26331dc80344d643466c",
+  "expectedProductionVersionId": "55c490c6-0346-4cbc-ac4f-c1ca83117b90",
+  "startedAt": "2026-08-22T22:43:24.674Z",
+  "authorityBoundary": {
+    "readOnly": true,
+    "executionAuthorized": false,
+    "amazonMutationAuthorized": false,
+    "amazonApiHardOff": true
+  },
+  "temporaryIdentity": {
+    "userId": "svc-owq-acceptance-32603230346",
+    "roleKey": "owq_acceptance_32603230346",
+    "permission": "analytics.read",
+    "roleScope": "store",
+    "serviceToken": {
+      "id": "87f84342-27c1-41e1-a8de-bb06bc3c9294",
+      "clientId": "8ccc4e67466b72fac415288c9e1aed44.access",
+      "expiresAt": "2026-08-22T23:43:36Z"
+    },
+    "accessPolicy": {
+      "id": "ee20bdaf-c507-4d6c-92d2-070c324a607d",
+      "name": "OWQ #247 acceptance 32603230346",
+      "decision": "non_identity"
+    }
+  },
+  "checks": {
+    "failClosedCanonicalContract": true,
+    "serviceTokenBaselineZero": true,
+    "productionAccessAppExact": true,
+    "productionFourStoreRegistryExact": true,
+    "productionSyncUntouchedHardOff": true,
+    "ephemeralServiceTokenCreated": true,
+    "ephemeralNonIdentityPolicyCreated": true,
+    "ephemeralStoreScopedAnalyticsReadIdentity": true,
+    "fourStoreLiveOrdering": true,
+    "productionRuntimeVersionExact": true,
+    "highestPriorityReturnedUnder10s": true,
+    "durableReviewMapping": true,
+    "staleReviewEvidenceMapping": true,
+    "candidateEmissionBlockedSemantics": true,
+    "productionUiPathContract": true,
+    "firstActionableRecommendationWithinTwoClicks": true,
+    "rbacCrossStoreOmission": true,
+    "productionWebHardOff": true,
+    "businessExecutionTablesUnchanged": true,
+    "amazonRequestsZero": true
+  },
+  "runtime": {
+    "serviceTokenCountBefore": 0,
+    "accessApp": {
+      "id": "499b5470-a257-4aec-9ede-7c3a460a42a4",
+      "name": "ads-operations-integrity production access",
+      "domain": "ads-operations-web-prod.tanshiyuesir.workers.dev",
+      "aud": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8"
+    },
+    "stores": [
+      {
+        "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+        "storeCode": "STORE01",
+        "binding": "STORE_01_DB"
+      },
+      {
+        "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+        "storeCode": "STORE02",
+        "binding": "STORE_02_DB"
+      },
+      {
+        "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+        "storeCode": "STORE03",
+        "binding": "STORE_03_DB"
+      },
+      {
+        "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+        "storeCode": "STORE04",
+        "binding": "STORE_04_DB"
+      }
+    ],
+    "productionSync": {
+      "worker": "ads-operations-sync-prod",
+      "scheduleCount": 0,
+      "settingsVisible": true,
+      "amazonAdsEnabled": false
+    },
+    "fourStoreOneDay": {
+      "requestedDateRange": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-01"
+      },
+      "elapsedMs": 2600,
+      "runtimeVersion": "55c490c6-0346-4cbc-ac4f-c1ca83117b90",
+      "authority": {
+        "readOnly": true,
+        "executionAuthorized": false,
+        "amazonMutationAuthorized": false
+      },
+      "rows": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "priority": 2,
+          "queueClass": "needs_review",
+          "reasonCode": "needs_review",
+          "reasonText": "2 current recommendations need review",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 2,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 10,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "12 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "12 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "12 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        }
+      ],
+      "decisionStores": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 2,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 10,
+          "unreviewedCount": 10,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "unreviewedCount": 12,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "unreviewedCount": 12,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 12,
+          "unreviewedCount": 12,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        }
+      ]
+    },
+    "staleWindow": {
+      "requestedDateRange": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-02"
+      },
+      "elapsedMs": 2591,
+      "runtimeVersion": "55c490c6-0346-4cbc-ac4f-c1ca83117b90",
+      "authority": {
+        "readOnly": true,
+        "executionAuthorized": false,
+        "amazonMutationAuthorized": false
+      },
+      "rows": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "priority": 2,
+          "queueClass": "stale_review_evidence",
+          "reasonCode": "stale_review_evidence",
+          "reasonText": "2 stale review evidence records require operator attention",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 2,
+          "highUnreviewedCount": 14,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "14 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "14 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "priority": 3,
+          "queueClass": "high_unreviewed",
+          "reasonCode": "critical_high_unreviewed",
+          "reasonText": "14 critical/high recommendations remain unreviewed",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        }
+      ],
+      "decisionStores": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 2,
+          "highUnreviewedCount": 14,
+          "unreviewedCount": 14,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "unreviewedCount": 14,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "unreviewedCount": 14,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "recommendationCandidateCount": 14,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 14,
+          "unreviewedCount": 14,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        }
+      ]
+    },
+    "monthBlockedRange": {
+      "requestedDateRange": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-30"
+      },
+      "elapsedMs": 2837,
+      "runtimeVersion": "55c490c6-0346-4cbc-ac4f-c1ca83117b90",
+      "authority": {
+        "readOnly": true,
+        "executionAuthorized": false,
+        "amazonMutationAuthorized": false
+      },
+      "rows": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "priority": 5,
+          "queueClass": "no_active_queue",
+          "reasonCode": "candidate_emission_not_authorized",
+          "reasonText": "The requested analysis scope does not authorize recommendation candidate emission",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "priority": 5,
+          "queueClass": "no_active_queue",
+          "reasonCode": "candidate_emission_not_authorized",
+          "reasonText": "The requested analysis scope does not authorize recommendation candidate emission",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "priority": 5,
+          "queueClass": "no_active_queue",
+          "reasonCode": "candidate_emission_not_authorized",
+          "reasonText": "The requested analysis scope does not authorize recommendation candidate emission",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available"
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "priority": 5,
+          "queueClass": "no_active_queue",
+          "reasonCode": "candidate_emission_not_authorized",
+          "reasonText": "The requested analysis scope does not authorize recommendation candidate emission",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available"
+        }
+      ],
+      "decisionStores": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "unreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 36,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "750e8b1e-c223-4cca-bac3-9ab217c0a75a",
+          "storeCode": "STORE02",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "unreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 36,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "8b65a448-0d81-415e-a92c-62eaf0440990",
+          "storeCode": "STORE03",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "unreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 36,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available",
+          "error": null
+        },
+        {
+          "storeId": "b225e1d2-0e86-4495-ae65-d912c1149e29",
+          "storeCode": "STORE04",
+          "recommendationCandidateCount": 0,
+          "needsReviewCount": 0,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 0,
+          "unreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 36,
+          "candidateEmissionAuthorized": false,
+          "evidenceState": "available",
+          "error": null
+        }
+      ]
+    },
+    "uiPath": {
+      "asset": "/assets/cloudflare-native-operations-health-v1.js",
+      "status": 200,
+      "elapsedMs": 54,
+      "explicitRangeRequired": true,
+      "serverOrderingConsumedDirectly": true,
+      "storeContextTransferred": true,
+      "dateRangeTransferred": true,
+      "decisionLauncherOpened": true,
+      "actionClicks": 1
+    },
+    "store01Only": {
+      "requestedDateRange": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-06-01"
+      },
+      "elapsedMs": 2109,
+      "runtimeVersion": "55c490c6-0346-4cbc-ac4f-c1ca83117b90",
+      "authority": {
+        "readOnly": true,
+        "executionAuthorized": false,
+        "amazonMutationAuthorized": false
+      },
+      "rows": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "priority": 2,
+          "queueClass": "needs_review",
+          "reasonCode": "needs_review",
+          "reasonText": "2 current recommendations need review",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 2,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 10,
+          "otherUnreviewedCount": 0,
+          "acknowledgedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available"
+        }
+      ],
+      "decisionStores": [
+        {
+          "storeId": "4f7c9804-1280-41c9-85be-f604b3d09151",
+          "storeCode": "STORE01",
+          "recommendationCandidateCount": 12,
+          "needsReviewCount": 2,
+          "staleReviewEvidenceCount": 0,
+          "highUnreviewedCount": 10,
+          "unreviewedCount": 10,
+          "acknowledgedCount": 0,
+          "scopeBlockedCount": 0,
+          "candidateEmissionAuthorized": true,
+          "evidenceState": "available",
+          "error": null
+        }
+      ]
+    },
+    "productionHealth": {
+      "environment": "production",
+      "syncTriggerEnabled": false,
+      "runtimeVersion": "55c490c6-0346-4cbc-ac4f-c1ca83117b90"
+    }
+  },
+  "businessDifferential": {
+    "before": {
+      "STORE01": {
+        "advisory_review_records": 2,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE02": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE03": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE04": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      }
+    },
+    "after": {
+      "STORE01": {
+        "advisory_review_records": 2,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE02": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE03": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      },
+      "STORE04": {
+        "advisory_review_records": 0,
+        "optimization_actions": 0,
+        "optimization_execution_receipts": 0,
+        "sync_runs": 0
+      }
+    }
+  },
+  "cleanup": {
+    "storeMembershipsRemoved": true,
+    "rolePermissionsRemoved": true,
+    "temporaryRoleRemoved": true,
+    "principalDisposition": "deleted",
+    "servicePrincipalRemovedOrDisabled": true,
+    "accessPolicyDeleted": true,
+    "serviceTokenDeleted": true
+  },
+  "amazonRequests": [],
+  "blockers": [],
+  "result": "PASS",
+  "finishedAt": "2026-08-22T22:44:03.504Z"
+}
