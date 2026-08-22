@@ -54,7 +54,7 @@ export async function verifyEnvironmentReleaseTrace({ gh, owner, name, mainSha, 
   const expectedJobName = RELEASE_TRACE_JOB[environment];
   if (!expectedJobName) throw new Error(`FINAL_CLOSURE_RELEASE_TRACE_ENVIRONMENT_INVALID:${environment}`);
   const artifactName = `cloudflare-release-trace-${environment}-${mainSha}`;
-  const artifacts = await findArtifacts({ gh, owner, name, artifactName, maxPages: 10 });
+  const artifacts = await findArtifacts({ gh, owner, name, artifactName });
   artifacts.sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
 
   let latestCandidate = null;
@@ -151,15 +151,10 @@ function r2EvidenceReadable(r2) {
   return bucketReadable && objectsReadable;
 }
 
-async function findArtifacts({ gh, owner, name, artifactName, maxPages }) {
-  const found = [];
-  for (let page = 1; page <= maxPages; page += 1) {
-    const body = await gh(`/repos/${owner}/${name}/actions/artifacts?per_page=100&page=${page}`);
-    const artifacts = Array.isArray(body?.artifacts) ? body.artifacts : [];
-    found.push(...artifacts.filter((artifact) => artifact?.name === artifactName));
-    if (artifacts.length < 100) break;
-  }
-  return found;
+async function findArtifacts({ gh, owner, name, artifactName }) {
+  const body = await gh(`/repos/${owner}/${name}/actions/artifacts?name=${encodeURIComponent(artifactName)}&per_page=100`);
+  const artifacts = Array.isArray(body?.artifacts) ? body.artifacts : [];
+  return artifacts.filter((artifact) => artifact?.name === artifactName);
 }
 
 async function githubGet({ fetchImpl, githubToken, path }) {
