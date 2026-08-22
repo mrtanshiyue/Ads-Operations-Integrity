@@ -1,0 +1,197 @@
+name: Live Human Review Service Auth Acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/cloudflare-human-review-acceptance-permission-probe.mjs'
+      - 'scripts/cloudflare-user-token-bootstrap-probe.mjs'
+      - 'scripts/live-human-review-service-auth-acceptance.mjs'
+      - 'scripts/live-human-review-service-auth-acceptance-runner.mjs'
+      - 'scripts/live-human-review-service-auth-cleanup.mjs'
+      - '.github/workflows/live-human-review-service-auth-acceptance.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run the read-only capability probe or the real Production acceptance harness'
+        required: true
+        default: probe
+        type: choice
+        options:
+          - probe
+          - acceptance
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-human-review-service-auth-acceptance
+  cancel-in-progress: false
+
+jobs:
+  cloudflare-permission-probe:
+    name: Cloudflare acceptance credential permission probe
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      ACCEPTANCE_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN != '' }}
+      PROD_TRIGGER_UUID: fa90d482-de7b-466b-9ada-04404569ede9
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+      DEV_WORKER: ads-operations-web-dev
+      PROD_WORKER: ads-operations-web-prod
+      PROD_WORKER_TAG: 5c14f185e8ad4cc6a74baf706a5274ec
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+    steps:
+      - name: Checkout acceptance harness branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require dedicated least-privilege Cloudflare credential
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT != 'true'
+        run: |
+          echo 'BLOCKED_BY_CLOUDFLARE_ADMIN_CREDENTIAL: repository secret CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN is not configured.'
+          exit 1
+
+      - name: Run no-side-effect capability probe
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/cloudflare-human-review-acceptance-permission-probe.mjs
+
+      - name: Upload permission probe evidence
+        if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-human-review-acceptance-permission-probe-${{ github.run_id }}
+          path: artifacts/cloudflare-human-review-acceptance-permission-probe/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  cloudflare-user-token-bootstrap-probe:
+    name: Cloudflare user-token bootstrap capability probe
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_BOOTSTRAP_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      BOOTSTRAP_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - name: Checkout acceptance harness branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record missing bootstrap credential
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT != 'true'
+        run: echo 'NO_USER_TOKEN_BOOTSTRAP_CREDENTIAL'
+
+      - name: Run GET-only user-token bootstrap probe
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/cloudflare-user-token-bootstrap-probe.mjs
+
+      - name: Upload bootstrap capability evidence
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-user-token-bootstrap-probe-${{ github.run_id }}
+          path: artifacts/cloudflare-user-token-bootstrap-probe/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  cloudflare-generic-token-access-probe:
+    name: Cloudflare repository token split-credential probe
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GENERIC_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+      PROD_TRIGGER_UUID: fa90d482-de7b-466b-9ada-04404569ede9
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+      DEV_WORKER: ads-operations-web-dev
+      PROD_WORKER: ads-operations-web-prod
+      PROD_WORKER_TAG: 5c14f185e8ad4cc6a74baf706a5274ec
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+    steps:
+      - name: Checkout acceptance harness branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record missing repository credential
+        if: env.GENERIC_CREDENTIAL_PRESENT != 'true'
+        run: echo 'NO_GENERIC_CLOUDFLARE_API_TOKEN'
+
+      - name: Run GET-only split-credential capability probe
+        if: env.GENERIC_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/cloudflare-human-review-acceptance-permission-probe.mjs
+
+      - name: Upload split-credential probe evidence
+        if: always() && env.GENERIC_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-generic-token-access-probe-${{ github.run_id }}
+          path: artifacts/cloudflare-human-review-acceptance-permission-probe/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  production-human-review:
+    name: Production Human Review service-auth acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'acceptance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      ACCEPTANCE_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN != '' }}
+      EXPECTED_MAIN_SHA: 535552f760dd9f94befc019a61f90b5f5ca145cb
+      PROD_TRIGGER_UUID: fa90d482-de7b-466b-9ada-04404569ede9
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+      PROD_STORE01_DB_ID: 2e53bbad-5680-431c-bcf7-68e89b231ea1
+      OLD_PROD_VERSION: 7fd1413e-ff8d-4870-a5af-de44f6940210
+    steps:
+      - name: Checkout acceptance harness branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require dedicated least-privilege Cloudflare credential
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT != 'true'
+        run: |
+          echo 'BLOCKED_BY_CLOUDFLARE_ADMIN_CREDENTIAL: repository secret CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN is not configured.'
+          exit 1
+
+      - name: Run ephemeral service-auth acceptance
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/live-human-review-service-auth-acceptance-runner.mjs
+
+      - name: Cleanup and verify ephemeral acceptance identity
+        if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/live-human-review-service-auth-cleanup.mjs
+
+      - name: Upload acceptance evidence
+        if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-human-review-service-auth-acceptance-${{ github.run_id }}
+          path: artifacts/live-human-review-service-auth-acceptance/receipt.json
+          if-no-files-found: error
+          retention-days: 90
