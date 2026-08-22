@@ -1,4 +1,4 @@
-name: Cumulative Runtime Development Acceptance
+name: Cumulative Runtime Production Promotion Acceptance
 
 on:
   pull_request:
@@ -6,126 +6,57 @@ on:
       - main
     paths:
       - '.github/workflows/cumulative-runtime-control-plane-probe.yml'
+      - 'scripts/live-cumulative-runtime-prod-acceptance.mjs'
 
 permissions:
   contents: read
 
 concurrency:
-  group: cumulative-runtime-development-acceptance
+  group: cumulative-runtime-production-promotion-acceptance
   cancel-in-progress: false
 
 jobs:
-  development-acceptance:
-    name: Development cumulative runtime acceptance
+  production-promotion-acceptance:
+    name: Production exact-main promotion and cumulative acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     env:
       CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
       EXPECTED_MAIN_SHA: 980631da32e88ecf0a31c89f2a41a8bacb430775
-      EXPECTED_BUILD_UUID: 6118e134-5779-4d44-b259-f27613f7eb76
-      EXPECTED_DEV_DEPLOYMENT: 5a5f3299-4de4-422e-bbdd-9d29a6ea12f9
       EXPECTED_DEV_VERSION: 7aae4c95-9226-4723-9d1f-201091c92423
-      DEV_WORKER: ads-operations-web-dev
-      PROD_SYNC_WORKER: ads-operations-sync-prod
       DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_WORKER: ads-operations-web-prod
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_ACCESS_AUD: 4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8
     steps:
+      - name: Checkout acceptance-only branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Require dedicated acceptance credential
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo 'acceptance credential missing'; exit 1; }
 
-      - name: Verify exact-main Development deployment and HARD-OFF
-        shell: bash
+      - name: Syntax-check cumulative Production harness
         run: |
-          set -euo pipefail
-          api='https://api.cloudflare.com/client/v4'
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          node --check scripts/live-cumulative-runtime-prod-acceptance.mjs
+          node --check scripts/cloudflare-d1-rest-adapter.mjs
 
-          current_main="$(curl -fsS 'https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main' | jq -r '.commit.sha')"
-          test "$current_main" = "$EXPECTED_MAIN_SHA"
+      - name: Promote exact main and run cumulative Production acceptance
+        run: node scripts/live-cumulative-runtime-prod-acceptance.mjs
 
-          build="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/builds/$EXPECTED_BUILD_UUID")"
-          printf '%s' "$build" | jq -e --arg sha "$EXPECTED_MAIN_SHA" '.success == true and .result.status == "stopped" and .result.build_outcome == "success" and .result.build_trigger_metadata.branch == "main" and .result.build_trigger_metadata.commit_hash == $sha' >/dev/null
-
-          deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
-          printf '%s' "$deployments" | jq -e --arg d "$EXPECTED_DEV_DEPLOYMENT" --arg v "$EXPECTED_DEV_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
-
-          settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/settings")"
-          schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/schedules")"
-          printf '%s' "$settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "SYNC_TRIGGER_ENABLED" and .text == "false")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_PERMIT_ID" and .text == "")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_REPORT_DATE" and .text == "")) | length == 1)' >/dev/null
-          printf '%s' "$schedules" | jq -e '.success == true and (.result.schedules | length) == 0' >/dev/null
-
-          sync_deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
-          sync_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
-          sync_schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
-          printf '%s' "$sync_deployments" | jq -e '.success == true and .result.deployments[0].id == "cf0b0adf-96dc-437d-8298-15af58f992ce" and .result.deployments[0].versions[0].version_id == "295df84e-2103-4858-9895-49f67d4b10b4"' >/dev/null
-          printf '%s' "$sync_settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
-          printf '%s' "$sync_schedules" | jq -e '.success == true and (.result.schedules | length) == 0' >/dev/null
-
-      - name: Validate cumulative Development runtime contract and D1 differential
-        shell: bash
-        run: |
-          set -euo pipefail
-          api='https://api.cloudflare.com/client/v4'
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          json=(-H 'Content-Type: application/json')
-
-          health="$(curl -fsS "$DEV_BASE_URL/api/health")"
-          printf '%s' "$health" | jq -e --arg v "$EXPECTED_DEV_VERSION" '.ok == true and .environment == "development" and .syncTriggerEnabled == false and .deployment.versionId == $v' >/dev/null
-
-          settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/settings")"
-          control_db="$(printf '%s' "$settings" | jq -er '.result.bindings[] | select(.name == "CONTROL_DB") | .database_id')"
-          store01_db="$(printf '%s' "$settings" | jq -er '.result.bindings[] | select(.name == "STORE_01_DB") | .database_id')"
-
-          d1_query() {
-            local db="$1" sql="$2" payload
-            payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
-            curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$payload" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$db/query"
-          }
-
-          store_row="$(d1_query "$control_db" "SELECT store_id, store_code FROM stores WHERE d1_binding_key='STORE_01_DB' AND status <> 'disabled' LIMIT 1")"
-          printf '%s' "$store_row" | jq -e '.success == true and (.result[0].results | length) == 1' >/dev/null
-          store_id="$(printf '%s' "$store_row" | jq -er '.result[0].results[0].store_id')"
-
-          count_sql="SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records, (SELECT COUNT(*) FROM optimization_actions) AS optimization_actions, (SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts, (SELECT COUNT(*) FROM sync_runs) AS sync_runs"
-          before="$(d1_query "$store01_db" "$count_sql")"
-          printf '%s' "$before" | jq -e '.success == true' >/dev/null
-          before_counts="$(printf '%s' "$before" | jq -c '.result[0].results[0]')"
-
-          review_url="$DEV_BASE_URL/api/v1/stores/$store_id/advisory-reviews?reviewContract=csv-recommendation-human-review-v1&startDate=2026-06-01&endDate=2026-06-01&limit=50&sort=cost"
-          review="$(curl -fsS -H 'Accept: application/json' "$review_url")"
-          printf '%s' "$review" | jq -e --arg sid "$store_id" '
-            .schemaVersion == "csv-recommendation-human-review-v1" and .storeId == $sid and
-            .authority.executionAuthorized == false and .authority.amazonMutationAuthorized == false and
-            (.items | type == "array") and
-            (all(.items[]; .decisionPacket.schemaVersion == "recommendation-decision-packet-v1" and .decisionPacket.authority.readOnly == true and .decisionPacket.authority.executionAuthorized == false and .decisionPacket.authority.amazonMutationAuthorized == false)) and
-            .candidateLibrary.schemaVersion == "governed-keyword-negative-candidate-library-v1" and .candidateLibrary.authority.readOnly == true and .candidateLibrary.authority.executionAuthorized == false and .candidateLibrary.authority.amazonMutationAuthorized == false and
-            .historicalLearning.schemaVersion == "historical-review-learning-v1" and .historicalLearning.authority.readOnly == true and .historicalLearning.authority.adaptiveLearningAuthorized == false and .historicalLearning.authority.ruleMutationAuthorized == false and .historicalLearning.authority.recommendationMutationAuthorized == false and .historicalLearning.authority.executionAuthorized == false and .historicalLearning.authority.amazonMutationAuthorized == false and
-            (all(.historicalLearning.contexts[]; if .currentCandidateActive == true then (.currentFingerprint != null and .currentReviewState != null and (.currentEvidenceDrift | type) == "boolean") else (.currentFingerprint == null and .currentReviewState == null and .currentMatchedRecordCount == null and .staleEvidenceCount == null and .currentEvidenceDrift == null) end))
-          ' >/dev/null
-
-          asset="$(curl -fsS "$DEV_BASE_URL/assets/cloudflare-native-csv-recommendation-human-review-v1.js")"
-          grep -Fq "const VERSION = '1.3.0';" <<< "$asset"
-          grep -Fq "const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';" <<< "$asset"
-          grep -Fq "const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';" <<< "$asset"
-          grep -Fq "const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';" <<< "$asset"
-
-          after="$(d1_query "$store01_db" "$count_sql")"
-          printf '%s' "$after" | jq -e '.success == true' >/dev/null
-          after_counts="$(printf '%s' "$after" | jq -c '.result[0].results[0]')"
-          test "$before_counts" = "$after_counts" || { echo "Business table counts changed: $before_counts -> $after_counts"; exit 1; }
-
-          mkdir -p artifacts/cumulative-runtime-development-acceptance
-          jq -n --arg expectedMain "$EXPECTED_MAIN_SHA" --arg buildUuid "$EXPECTED_BUILD_UUID" --arg deployment "$EXPECTED_DEV_DEPLOYMENT" --arg version "$EXPECTED_DEV_VERSION" '{schemaVersion:"cumulative-runtime-development-promotion-v1",expectedMain:$expectedMain,buildUuid:$buildUuid,deployment:$deployment,version:$version,buildOutcome:"success",syncTriggerEnabled:false,productionSyncUntouched:true,amazonAdsEnabled:false}' > artifacts/cumulative-runtime-development-acceptance/promotion.json
-          printf '%s' "$review" | jq '{schemaVersion,storeId,authority,itemCount:(.items|length),candidateLibrary:{schemaVersion,status,summary,authority},historicalLearning:{schemaVersion,summary,authority,semantics,currentContextCount:([.historicalLearning.contexts[]|select(.currentCandidateActive==true)]|length),historicalOnlyContextCount:([.historicalLearning.contexts[]|select(.currentCandidateActive!=true)]|length)}}' > artifacts/cumulative-runtime-development-acceptance/runtime.json
-          jq -n --argjson before "$before_counts" --argjson after "$after_counts" '{before:$before,after:$after,unchanged:($before==$after)}' > artifacts/cumulative-runtime-development-acceptance/d1-differential.json
-          echo 'DEVELOPMENT_CUMULATIVE_ACCEPTANCE=PASS'
-          echo 'AMAZON_REQUESTS=0'
-
-      - name: Upload Development acceptance evidence
+      - name: Upload immutable Production acceptance evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cumulative-runtime-development-acceptance-${{ github.run_id }}
-          path: artifacts/cumulative-runtime-development-acceptance/
-          if-no-files-found: error
+          name: cumulative-runtime-production-acceptance-${{ github.run_id }}
+          path: artifacts/cumulative-runtime-production-acceptance/
+          if-no-files-found: warn
           retention-days: 90
