@@ -7,10 +7,14 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.1\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.2\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
 assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
   'Recommendation Decision Packet UI contract version is missing');
+assert.match(ui, /const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1'/,
+  'Governed Keyword / Negative Candidate Library UI contract version is missing');
+assert.match(ui, /candidateLibraryVersion: CANDIDATE_LIBRARY_VERSION/,
+  'Human Review UI public contract must expose Candidate Library version');
 assert.match(ui, /const DURABLE_STATES = new Set\(\['acknowledged', 'needs_review'\]\)/,
   'Human Review UI must expose only the two schema-backed durable states');
 assert.match(ui, /reviewContract: CONTRACT_VERSION/, 'Human Review requests must select the dedicated #230 persistence route');
@@ -42,8 +46,8 @@ assert.match(ui, /REQUEST_TIMEOUT_MS = 30000/, 'GET/POST requests must have a bo
 assert.match(ui, /data-cfri-filter="reviewState"/, 'Human Review layer must explicitly handle the legacy session-only review filter');
 assert.match(ui, /control\.value = ''/, 'Legacy session-only review filter must be cleared before durable presentation');
 assert.match(ui, /label\.hidden = true/, 'Legacy review filter must be hidden rather than misrepresent durable filter support');
-assert.match(ui, /Packet evidence is server-projected; only acknowledged and needs_review are durable\. Execution and Amazon mutation remain disabled\./,
-  'Operator copy must preserve server-authoritative packet, durable-state, execution, and Amazon boundaries');
+assert.match(ui, /Library and packet evidence are server-projected; only acknowledged and needs_review are durable\. Execution and Amazon mutation remain disabled\./,
+  'Operator copy must preserve server-authoritative library/packet, durable-state, execution, and Amazon boundaries');
 
 assert.match(ui, /=== 'Inbox item ID'/,
   'Evidence drawer durable state must bind through the unique Inbox item ID rather than candidate title text');
@@ -67,6 +71,14 @@ assert.match(ui, /packet\?\.authority\?\.executionAuthorized !== false/, 'Decisi
 assert.match(ui, /packet\?\.authority\?\.amazonMutationAuthorized !== false/, 'Decision Packet must reject Amazon mutation authority');
 assert.match(ui, /review\?\.inheritedAsCurrent !== false \|\| review\?\.stale !== true/,
   'Stale evidence must be validated as non-current before rendering');
+
+assert.match(ui, /state\.library = payload\.candidateLibrary/, 'Candidate Library must come from the Human Review server response');
+assert.match(ui, /validateCandidateLibrary\(payload\?\.candidateLibrary, payload\.items, expectedStoreId\)/,
+  'Candidate Library server response must be validated before presentation');
+assert.match(ui, /data-cfgl-filter/, 'Candidate Library server-projected filters must be present');
+assert.match(ui, /cfgl-filtered-out/, 'Candidate Library filters must use additive row visibility state');
+assert.match(ui, /Server-projected registry only\. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, or evidence\./,
+  'Candidate Library must explicitly reject client-side authority recomputation');
 
 assert.doesNotMatch(ui, /localStorage|sessionStorage/, 'Durable review truth must not be stored in browser persistence');
 assert.doesNotMatch(ui, /optimization-actions|optimization_action_events|execution-permits|amazon-ads-api|sp-api/i,
