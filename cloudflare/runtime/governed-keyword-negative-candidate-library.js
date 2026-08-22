@@ -15,10 +15,10 @@ const ACTION_MAP = Object.freeze({
 
 const PRIORITY_RANK = Object.freeze({ critical: 0, high: 1, medium: 2, low: 3 });
 
-export function buildGovernedKeywordNegativeCandidateLibrary({ storeId, analysisScope, entries } = {}) {
+export function buildGovernedKeywordNegativeCandidateLibrary({ storeId, analysisScope, items } = {}) {
   const scope = compactScope(analysisScope);
   const available = scope.candidateEmissionAuthorized === true;
-  const source = Array.isArray(entries) ? entries : [];
+  const source = Array.isArray(items) ? items : [];
 
   if (!available) {
     return Object.freeze({
@@ -41,67 +41,89 @@ export function buildGovernedKeywordNegativeCandidateLibrary({ storeId, analysis
     });
   }
 
-  const items = source.map(toLibraryItem).sort(compareLibraryItem);
+  const libraryItems = source.map(toLibraryItem).sort(compareLibraryItem);
   return Object.freeze({
     schemaVersion: GOVERNED_KEYWORD_NEGATIVE_CANDIDATE_LIBRARY_SCHEMA_VERSION,
     storeId: text(storeId) || null,
     authority: AUTHORITY,
-    status: Object.freeze({
-      available: true,
-      reasonCode: null,
-      reasonText: null,
-    }),
+    status: Object.freeze({ available: true, reasonCode: null, reasonText: null }),
     analysisScope: scope,
     summary: Object.freeze({
-      candidateCount: items.length,
-      keywordCount: items.filter((item) => item.libraryFamily === 'keyword').length,
-      negativeCount: items.filter((item) => item.libraryFamily === 'negative').length,
-      staleEvidenceCandidateCount: items.filter((item) => item.staleEvidenceCount > 0).length,
+      candidateCount: libraryItems.length,
+      keywordCount: libraryItems.filter((item) => item.libraryFamily === 'keyword').length,
+      negativeCount: libraryItems.filter((item) => item.libraryFamily === 'negative').length,
+      staleEvidenceCandidateCount: libraryItems.filter((item) => item.staleEvidenceCount > 0).length,
     }),
-    items: Object.freeze(items),
+    items: Object.freeze(libraryItems),
   });
 }
 
 function toLibraryItem(entry = {}) {
-  const item = entry.item || {};
-  const binding = entry.binding || {};
-  const currentReview = entry.currentReview || null;
-  const staleReviews = Array.isArray(entry.staleReviews) ? entry.staleReviews : [];
-  const decisionPacket = entry.decisionPacket || null;
-  const mapped = ACTION_MAP[text(item.actionType)];
-  if (!mapped) throw libraryError('CANDIDATE_LIBRARY_ACTION_TYPE_UNSUPPORTED');
-  if (item.itemClass !== 'recommendation_candidate') throw libraryError('CANDIDATE_LIBRARY_ITEM_CLASS_INVALID');
-  const currentFingerprint = text(binding.recommendationFingerprint);
-  if (!currentFingerprint) throw libraryError('CANDIDATE_LIBRARY_CURRENT_FINGERPRINT_REQUIRED');
-  if (currentReview?.recommendationFingerprint && text(currentReview.recommendationFingerprint) !== currentFingerprint) {
-    throw libraryError('CANDIDATE_LIBRARY_CURRENT_REVIEW_FINGERPRINT_MISMATCH');
+  const packet = entry?.decisionPacket || {};
+  if (packet?.schemaVersion !== 'recommendation-decision-packet-v1') {
+    throw libraryError('CANDIDATE_LIBRARY_DECISION_PACKET_REQUIRED');
   }
-  for (const stale of staleReviews) {
-    if (text(stale?.recommendationFingerprint) === currentFingerprint) {
-      throw libraryError('CANDIDATE_LIBRARY_STALE_FINGERPRINT_MATCHES_CURRENT');
+  if (packet?.authority?.readOnly !== true
+    || packet?.authority?.executionAuthorized !== false
+    || packet?.authority?.amazonMutationAuthorized !== false) {
+    throw libraryError('CANDIDATE_LIBRARY_DECISION_PACKET_AUTHORITY_INVALID');
+  }
+
+  const recommendation = packet.recommendation || {};
+  const reviewEvidence = packet.reviewEvidence || {};
+  const priorityEvidence = packet.priorityEvidence || {};
+  const financial = packet.financialComparability || {};
+  const sourceEvidence = packet.sourceEvidence || {};
+  const actionType = text(recommendation.actionType);
+  const mapped = ACTION_MAP[actionType];
+  if (!mapped) throw libraryError('CANDIDATE_LIBRARY_ACTION_TYPE_UNSUPPORTED');
+
+  const inboxItemId = text(entry?.inboxItemId);
+  if (!inboxItemId || inboxItemId !== text(recommendation.inboxItemId)) {
+    throw libraryError('CANDIDATE_LIBRARY_INBOX_ID_MISMATCH');
+  }
+
+  const currentFingerprint = text(reviewEvidence.currentFingerprint);
+  if (!currentFingerprint) throw libraryError('CANDIDATE_LIBRARY_CURRENT_FINGERPRINT_REQUIRED');
+  if (text(entry?.recommendationFingerprint) !== currentFingerprint) {
+    throw libraryError('CANDIDATE_LIBRARY_CURRENT_FINGERPRINT_MISMATCH');
+  }
+
+  const staleEvidence = Array.isArray(reviewEvidence.staleEvidence) ? reviewEvidence.staleEvidence : [];
+  if (Number(reviewEvidence.staleEvidenceCount) !== staleEvidence.length) {
+    throw libraryError('CANDIDATE_LIBRARY_STALE_COUNT_MISMATCH');
+  }
+  for (const stale of staleEvidence) {
+    if (text(stale?.recommendationFingerprint) === currentFingerprint || stale?.inheritedAsCurrent !== false || stale?.stale !== true) {
+      throw libraryError('CANDIDATE_LIBRARY_STALE_INHERITANCE_INVALID');
     }
   }
 
+  const reviewState = text(entry?.review?.state) || 'unreviewed';
+  if (reviewState !== text(reviewEvidence.priorReviewState || 'unreviewed')) {
+    throw libraryError('CANDIDATE_LIBRARY_REVIEW_STATE_MISMATCH');
+  }
+
   return Object.freeze({
-    inboxItemId: text(item.inboxItemId),
+    inboxItemId,
     libraryFamily: mapped.family,
     libraryKind: mapped.kind,
-    candidateType: text(item.candidateType),
-    actionType: text(item.actionType),
-    matchScope: text(item.matchScope),
-    value: text(item.value),
-    priority: text(item.priority) || 'low',
-    priorityScore: finiteOrNull(item.priorityScore),
+    candidateType: text(recommendation.candidateType),
+    actionType,
+    matchScope: text(recommendation.matchScope),
+    value: text(recommendation.value),
+    priority: text(priorityEvidence.priority) || 'low',
+    priorityScore: finiteOrNull(priorityEvidence.priorityScore),
     currentFingerprint,
-    currentReviewState: text(currentReview?.state) || 'unreviewed',
-    currentReviewPersisted: currentReview?.persisted === true,
-    staleEvidenceCount: staleReviews.length,
-    financiallyComparable: entry.financiallyComparable === true ? true : entry.financiallyComparable === false ? false : null,
+    currentReviewState: reviewState,
+    currentReviewPersisted: entry?.review?.persisted === true,
+    staleEvidenceCount: staleEvidence.length,
+    financiallyComparable: financial.financiallyComparable === true ? true : financial.financiallyComparable === false ? false : null,
     candidateEmissionAuthorized: true,
-    analysisWindow: normalizeWindow(binding.analysisWindow),
-    sourceImportIds: Object.freeze(uniqueTexts(binding.sourceImportIds)),
-    sourceEvidenceSha256: text(binding.sourceEvidenceSha256),
-    decisionPacketAvailable: decisionPacket?.schemaVersion === 'recommendation-decision-packet-v1',
+    analysisWindow: normalizeWindow(sourceEvidence.analysisWindow),
+    sourceImportIds: Object.freeze(uniqueTexts(sourceEvidence.sourceImportIds)),
+    sourceEvidenceSha256: text(sourceEvidence.sourceEvidenceSha256) || null,
+    decisionPacketAvailable: true,
     authority: AUTHORITY,
   });
 }
@@ -137,6 +159,7 @@ function uniqueTexts(values) {
 }
 
 function finiteOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
