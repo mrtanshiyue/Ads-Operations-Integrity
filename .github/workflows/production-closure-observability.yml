@@ -8,6 +8,7 @@ on:
       - 'scripts/production-closure-observability.mjs'
       - 'scripts/test-production-closure-observability.mjs'
       - 'scripts/test-production-closure-observability-hardoff.mjs'
+      - 'scripts/test-production-closure-observability-cloudflare-contract.mjs'
       - '.github/workflows/production-closure-observability.yml'
   workflow_dispatch:
 
@@ -29,10 +30,12 @@ jobs:
           node --check scripts/production-closure-observability.mjs
           node --check scripts/test-production-closure-observability.mjs
           node --check scripts/test-production-closure-observability-hardoff.mjs
+          node --check scripts/test-production-closure-observability-cloudflare-contract.mjs
       - name: Validate fail-closed observability contract
         run: |
           node scripts/test-production-closure-observability.mjs
           node scripts/test-production-closure-observability-hardoff.mjs
+          node scripts/test-production-closure-observability-cloudflare-contract.mjs
 
   live-read-only:
     name: Live Production closure status
