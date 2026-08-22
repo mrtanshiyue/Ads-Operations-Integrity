@@ -246,25 +246,27 @@ function controlDb({ globalRead = true, accessibleStoreIds = ['store-01'], rows:
   return {
     prepare(sql) {
       const statement = String(sql);
+      const all = async () => {
+        if (statement.includes('SELECT store_id FROM stores WHERE status')) {
+          return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
+        }
+        if (statement.includes('SELECT DISTINCT sm.store_id')) {
+          return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
+        }
+        if (statement.includes('FROM stores s')) return { results: effectiveRows };
+        if (statement.includes('FROM rollup_watermarks')) return { results: [] };
+        if (statement.includes('FROM rollup_runs')) return { results: [] };
+        return { results: [] };
+      };
       return {
+        all,
         bind() {
           return {
             async first() {
               if (statement.includes('FROM user_global_roles')) return globalRead ? { ok: 1 } : null;
               return null;
             },
-            async all() {
-              if (statement.includes('SELECT store_id FROM stores WHERE status')) {
-                return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
-              }
-              if (statement.includes('SELECT DISTINCT sm.store_id')) {
-                return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
-              }
-              if (statement.includes('FROM stores s')) return { results: effectiveRows };
-              if (statement.includes('FROM rollup_watermarks')) return { results: [] };
-              if (statement.includes('FROM rollup_runs')) return { results: [] };
-              return { results: [] };
-            },
+            all,
           };
         },
       };
