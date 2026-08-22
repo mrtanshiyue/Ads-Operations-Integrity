@@ -11,17 +11,22 @@ const PRINCIPAL_USER_ID = `svc-hr-acceptance-${RUN_ID}`;
 const ROLE_KEY = `hr_acceptance_${RUN_ID}`;
 const SERVICE_TOKEN_NAME = `ads-ops-human-review-acceptance-${RUN_ID}`;
 const ACCESS_POLICY_NAME = `Human Review acceptance ${RUN_ID}`;
+const REVIEW_NOTE_PREFIX = `live-acceptance:${RUN_ID}:%`;
 
 const controlDb = createD1RestDatabase({ accountId: ACCOUNT_ID, databaseId: CONTROL_DB_ID, apiToken: API_TOKEN });
 const store01Db = createD1RestDatabase({ accountId: ACCOUNT_ID, databaseId: STORE01_DB_ID, apiToken: API_TOKEN });
 const cleanupErrors = [];
 
 await bestEffort('review_records', async () => {
-  await store01Db.prepare(`DELETE FROM advisory_review_records WHERE reviewer_user_id=?1`).bind(PRINCIPAL_USER_ID).run();
+  await store01Db.prepare(`DELETE FROM advisory_review_records WHERE reviewer_user_id=?1 AND reviewer_note LIKE ?2`).bind(PRINCIPAL_USER_ID, REVIEW_NOTE_PREFIX).run();
 });
 
 await bestEffort('store_members', async () => {
   await controlDb.prepare(`DELETE FROM store_members WHERE user_id=?1`).bind(PRINCIPAL_USER_ID).run();
+});
+
+await bestEffort('service_principal', async () => {
+  await controlDb.prepare(`DELETE FROM users WHERE user_id=?1`).bind(PRINCIPAL_USER_ID).run();
 });
 
 await bestEffort('role_permissions', async () => {
@@ -30,10 +35,6 @@ await bestEffort('role_permissions', async () => {
 
 await bestEffort('app_role', async () => {
   await controlDb.prepare(`DELETE FROM app_roles WHERE role_key=?1 AND is_system=0`).bind(ROLE_KEY).run();
-});
-
-await bestEffort('service_principal', async () => {
-  await controlDb.prepare(`DELETE FROM users WHERE user_id=?1`).bind(PRINCIPAL_USER_ID).run();
 });
 
 await bestEffort('access_policy', async () => {
