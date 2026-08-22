@@ -48,6 +48,8 @@ assert.equal(bundle.authoritative, false);
 assert.equal(bundle.recommendationAuthorized, false);
 assert.equal(bundle.reviewAuthorized, false);
 assert.equal(bundle.amazonExecutionAuthorized, false);
+assert.equal(bundle.financialScope.financiallyComparable, true, 'contract fixtures remain comparable unless an explicit live financial scope says otherwise');
+assert.equal(bundle.financialObservationsSuppressed, false);
 assert.ok(bundle.observations.length <= 80);
 
 const scaleBundle = generateCsvDiagnostics({
@@ -67,6 +69,42 @@ assert.equal(scaleBundle.coverage.partial, false);
 assert.equal(scaleBundle.searchTermComputeLocation, 'd1_ranked_server_side');
 assert.equal(scaleBundle.observations.length, 1, 'Worker must receive ranked observations rather than 100k grouped rows');
 
+const incomparableBundle = generateCsvDiagnostics({
+  searchTermAnalysis: {
+    totalGroups: 2,
+    thresholds: { spendP90: 90, clicksP50: 10, clicksP75: 10, clicksP90: 20, acosP90: 0.9, roasP90: 5, cvrP25: 0.02, cvrP90: 0.2 },
+    observations: [
+      { kind: 'diagnostic', category: 'search-term', rule: 'high_acos', severity: 'medium', subject: 'financial', explanation: 'financial', evidence: { impressions: 10, clicks: 2, spendMicros: 5_000_000, orders: 1, salesMicros: 2_000_000, acos: 2.5, roas: 0.4, cvr: 0.5 }, authoritative: false, recommendationAuthorized: false, amazonExecutionAuthorized: false },
+      { kind: 'diagnostic', category: 'search-term', rule: 'large_click_volume', severity: 'info', subject: 'traffic', explanation: 'traffic', evidence: { impressions: 100, clicks: 20, spendMicros: 5_000_000, orders: 2, salesMicros: 8_000_000, acos: 0.625, roas: 1.6, cvr: 0.1 }, authoritative: false, recommendationAuthorized: false, amazonExecutionAuthorized: false },
+    ],
+  },
+  financialScope: {
+    kind: 'filtered_csv_business_financial_scope',
+    factRows: 2,
+    financiallyComparable: false,
+    currencyCodes: ['USD', 'CAD'],
+    marketplaces: ['US'],
+    reasons: ['multiple_currency_codes'],
+  },
+});
+assert.equal(incomparableBundle.financialScope.financiallyComparable, false);
+assert.deepEqual(incomparableBundle.financialScope.currencyCodes, ['CAD', 'USD']);
+assert.deepEqual(incomparableBundle.financialScope.marketplaces, ['US']);
+assert.deepEqual(incomparableBundle.financialScope.reasons, ['multiple_currency_codes']);
+assert.equal(incomparableBundle.financialObservationPolicy, 'suppressed_not_comparable');
+assert.equal(incomparableBundle.financialObservationsSuppressed, true);
+assert.equal(incomparableBundle.thresholds.searchTerm.spendP90, null);
+assert.equal(incomparableBundle.thresholds.searchTerm.acosP90, null);
+assert.equal(incomparableBundle.thresholds.searchTerm.roasP90, null);
+assert.deepEqual(incomparableBundle.observations.map((item) => item.rule), ['large_click_volume'], 'financial rules must fail closed while traffic diagnostics remain visible');
+assert.equal(incomparableBundle.observations[0].evidence.spendMicros, null);
+assert.equal(incomparableBundle.observations[0].evidence.salesMicros, null);
+assert.equal(incomparableBundle.observations[0].evidence.acos, null);
+assert.equal(incomparableBundle.observations[0].evidence.roas, null);
+assert.equal(incomparableBundle.observations[0].evidence.financialEvidenceSuppressed, true);
+assert.equal(incomparableBundle.observations[0].evidence.clicks, 20);
+assert.equal(incomparableBundle.observations[0].evidence.cvr, 0.1);
+
 for (const rule of [
   'high_spend_zero_orders', 'high_acos', 'high_roas', 'high_conversion', 'large_click_volume', 'low_conversion',
   'campaign_spend_concentration', 'campaign_sales_concentration', 'acos_outlier', 'traffic_without_conversion',
@@ -80,6 +118,13 @@ assert.match(server, /GROUP BY f\.report_date/, 'Daily aggregation must execute 
 assert.match(server, /GROUP BY f\.match_type/, 'Match-type aggregation must execute on D1');
 assert.match(server, /json_group_array\(json_object/, 'High-cardinality search diagnostics must be ranked and bounded inside D1');
 assert.match(server, /SELECT COUNT\(\*\) FROM metrics/, 'Full grouped cardinality must be computed inside D1');
+assert.match(server, /GROUP_CONCAT\(DISTINCT NULLIF\(TRIM\(f\.currency_code\)/, 'Live diagnostics must derive distinct currency codes from the exact filtered D1 scope');
+assert.match(server, /GROUP_CONCAT\(DISTINCT NULLIF\(TRIM\(f\.marketplace\)/, 'Live diagnostics must derive distinct marketplaces from the exact filtered D1 scope');
+assert.match(server, /multiple_currency_codes/, 'Diagnostics must expose the shared financial comparability reason vocabulary');
+assert.match(server, /multiple_marketplaces/, 'Diagnostics must expose the shared financial comparability reason vocabulary');
+assert.match(server, /currency_code_missing/, 'Diagnostics must fail closed when currency metadata is missing');
+assert.match(server, /marketplace_missing/, 'Diagnostics must fail closed when marketplace metadata is missing');
+assert.match(server, /suppressed_not_comparable/, 'Diagnostics must explicitly disclose financial suppression');
 assert.doesNotMatch(server, /function readSearchTerms\s*\(/, 'Runtime must not materialize every search-term group in Worker memory');
 assert.doesNotMatch(server, /\bLIMIT\s+5000\b/i, 'Server diagnostics must not cap search-term groups at 5000');
 assert.doesNotMatch(server, /amazon-ads|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|optimization-actions|execution-permits/i, 'Diagnostics server must remain isolated from Amazon/execution transports');
@@ -93,12 +138,14 @@ assert.match(entry, /handleCsvAnalyticsDiagnosticsApiRoute/, 'Web entry must dis
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'csv-server-side-diagnostics-v2',
+  contract: 'csv-server-side-diagnostics-v3-financial-comparability',
   juneGroupsCovered: 6557,
   scaleGroupsCovered: 100000,
   d1RankedSearchDiagnostics: true,
   browserPaginationCapRemovedFromRuntime: true,
   workerSearchTermMaterializationRemoved: true,
+  financialComparabilityGuard: true,
+  incomparableFinancialObservationsSuppressed: true,
   authoritative: false,
   recommendationAuthorized: false,
   reviewAuthorized: false,
