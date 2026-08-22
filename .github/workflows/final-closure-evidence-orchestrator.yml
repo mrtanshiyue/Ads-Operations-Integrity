@@ -66,6 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       FINAL_CLOSURE_OUTPUT_DIR: artifacts/final-closure-evidence
