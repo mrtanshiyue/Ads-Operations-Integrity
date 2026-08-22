@@ -17,6 +17,7 @@ export async function collectFinalClosureEvidence(options = {}) {
 
   const gh = (path) => githubGet({ fetchImpl, githubToken, path });
   const cfRuntime = (method, path, body) => cloudflareStrict({ fetchImpl, accountId, token: runtimeToken, method, path, body });
+  const cfRuntimeSoft = (method, path, body) => cloudflareSoft({ fetchImpl, accountId, token: runtimeToken, method, path, body });
   const cfPrivileged = (method, path, body) => cloudflareStrict({ fetchImpl, accountId, token: privilegedToken, method, path, body });
   const cfPrivilegedSoft = (method, path, body) => cloudflareSoft({ fetchImpl, accountId, token: privilegedToken, method, path, body });
 
@@ -134,7 +135,7 @@ export async function collectFinalClosureEvidence(options = {}) {
     cfPrivilegedSoft('GET', `/access/apps/${EXPECTED.accessAppId}`),
     cfPrivilegedSoft('GET', `/access/apps/${EXPECTED.accessAppId}/policies?per_page=100`),
     cfPrivilegedSoft('GET', '/access/service_tokens?per_page=100'),
-    cfRuntime('GET', `/r2/buckets/${EXPECTED.r2Bucket}`),
+    cfRuntimeSoft('GET', `/r2/buckets/${EXPECTED.r2Bucket}`),
   ]);
   const policies = accessPolicies?._success && Array.isArray(accessPolicies?.result) ? accessPolicies.result : [];
   const serviceTokenList = serviceTokens?._success && Array.isArray(serviceTokens?.result) ? serviceTokens.result : [];
@@ -147,9 +148,12 @@ export async function collectFinalClosureEvidence(options = {}) {
   };
 
   let verifiedObjectCount = 0;
+  const objectProbeStatuses = [];
   for (const store of stores) {
     if (!store.objectKey) continue;
-    const listed = await cfRuntime('GET', `/r2/buckets/${EXPECTED.r2Bucket}/objects?prefix=${encodeURIComponent(store.objectKey)}&per_page=10`);
+    const listed = await cfRuntimeSoft('GET', `/r2/buckets/${EXPECTED.r2Bucket}/objects?prefix=${encodeURIComponent(store.objectKey)}&per_page=10`);
+    objectProbeStatuses.push({ storeId: store.storeId, status: listed?._httpStatus });
+    if (!listed?._success) continue;
     const objects = Array.isArray(listed?.result) ? listed.result : [];
     const exact = objects.find((object) => object?.key === store.objectKey);
     const expectedEtag = String(store.r2Etag || '').replaceAll('"', '');
@@ -158,8 +162,10 @@ export async function collectFinalClosureEvidence(options = {}) {
     }
   }
   const r2 = {
-    bucketName: bucket?.result?.name,
-    location: bucket?.result?.location,
+    bucketStatus: bucket?._httpStatus,
+    bucketName: bucket?._success ? bucket?.result?.name : null,
+    location: bucket?._success ? bucket?.result?.location : null,
+    objectProbeStatuses,
     verifiedObjectCount,
   };
 
