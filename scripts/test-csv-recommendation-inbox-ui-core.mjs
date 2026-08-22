@@ -70,7 +70,7 @@ const triageRequired = [
   'data-cfot-order',
   'data-cfot-first-attention',
   'data-cfot-refresh-review',
-  'data-cfhr-durable-state',
+  'cfhrDurableState',
   'stale prior evidence record',
   'Attention now',
   'Needs review',
