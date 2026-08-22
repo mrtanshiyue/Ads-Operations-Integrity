@@ -6,7 +6,13 @@ on:
       - main
     paths:
       - 'cloudflare/runtime/csv-recommendation-human-review-contract.js'
+      - 'cloudflare/runtime/csv-recommendation-human-review-api.js'
+      - 'cloudflare/runtime/csv-productization-api.js'
+      - 'cloudflare/runtime/csv-productization-api-core.js'
       - 'scripts/test-recommendation-human-review-contract.mjs'
+      - 'scripts/test-recommendation-human-review-persistence.mjs'
+      - 'scripts/test-csv-recommendation-inbox-ui.mjs'
+      - 'scripts/test-csv-recommendation-inbox-ui-core.mjs'
       - '.github/workflows/human-review-contract-ci.yml'
   workflow_dispatch:
 
@@ -31,10 +37,15 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate contract syntax
+      - name: Validate contract and persistence syntax
         run: |
           node --check cloudflare/runtime/csv-recommendation-human-review-contract.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check cloudflare/runtime/csv-productization-api.js
           node --check scripts/test-recommendation-human-review-contract.mjs
+          node --check scripts/test-recommendation-human-review-persistence.mjs
 
       - name: Validate human review invariants
-        run: node scripts/test-recommendation-human-review-contract.mjs
+        run: |
+          node scripts/test-recommendation-human-review-contract.mjs
+          node scripts/test-recommendation-human-review-persistence.mjs
