@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'scripts/cloudflare-human-review-acceptance-permission-probe.mjs'
+      - 'scripts/cloudflare-user-token-bootstrap-probe.mjs'
       - 'scripts/live-human-review-service-auth-acceptance.mjs'
       - '.github/workflows/live-human-review-service-auth-acceptance.yml'
   workflow_dispatch:
@@ -68,6 +69,39 @@ jobs:
         with:
           name: cloudflare-human-review-acceptance-permission-probe-${{ github.run_id }}
           path: artifacts/cloudflare-human-review-acceptance-permission-probe/receipt.json
+          if-no-files-found: error
+          retention-days: 90
+
+  cloudflare-user-token-bootstrap-probe:
+    name: Cloudflare user-token bootstrap capability probe
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'probe')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_BOOTSTRAP_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      BOOTSTRAP_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - name: Checkout acceptance harness branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Record missing bootstrap credential
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT != 'true'
+        run: echo 'NO_USER_TOKEN_BOOTSTRAP_CREDENTIAL'
+
+      - name: Run GET-only user-token bootstrap probe
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT == 'true'
+        run: node scripts/cloudflare-user-token-bootstrap-probe.mjs
+
+      - name: Upload bootstrap capability evidence
+        if: env.BOOTSTRAP_CREDENTIAL_PRESENT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-user-token-bootstrap-probe-${{ github.run_id }}
+          path: artifacts/cloudflare-user-token-bootstrap-probe/receipt.json
           if-no-files-found: error
           retention-days: 90
 
