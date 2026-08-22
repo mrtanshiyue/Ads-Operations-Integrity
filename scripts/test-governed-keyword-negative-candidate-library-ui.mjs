@@ -41,8 +41,10 @@ assert.doesNotMatch(ui, /fetch\([^\n]*candidate-library|\/candidate-library|\/ke
   'Library UI must not create an independent network endpoint');
 assert.match(ui, /Server-projected registry only\. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, or evidence\./,
   'Library UI must state that filters are presentation-only');
-assert.doesNotMatch(ui, /Store Score|storeScore|urgencyMultiplier|financialImpactScore/i,
-  'Library UI must not introduce an opaque score');
+assert.doesNotMatch(ui, /\bstoreScore\b|urgencyMultiplier|financialImpactScore/i,
+  'Library UI must not implement an opaque score');
+assert.match(ui, /No auto acknowledge, auto approve, Optimization Action, execution permit, Store Score, or Amazon mutation is authorized\./,
+  'Decision Packet safety copy must continue to prohibit Store Score and execution authority');
 assert.doesNotMatch(ui, /data-cfhr-set="(?:approved|rejected|execute)"/,
   'Library UI must not expose approve/reject/execute actions');
 assert.doesNotMatch(ui, /amazon-ads-api|sp-api|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|startSync/i,
@@ -54,6 +56,7 @@ console.log(JSON.stringify({
   serverProjectionOnly: true,
   filters: ['family', 'kind', 'priority', 'review', 'stale'],
   decisionPacketReused: true,
+  storeScoreImplemented: false,
   executionAuthorized: false,
   amazonMutationAuthorized: false,
 }));
