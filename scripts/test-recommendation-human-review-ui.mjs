@@ -7,8 +7,10 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.0\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.1\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
+assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
+  'Recommendation Decision Packet UI contract version is missing');
 assert.match(ui, /const DURABLE_STATES = new Set\(\['acknowledged', 'needs_review'\]\)/,
   'Human Review UI must expose only the two schema-backed durable states');
 assert.match(ui, /reviewContract: CONTRACT_VERSION/, 'Human Review requests must select the dedicated #230 persistence route');
@@ -28,7 +30,8 @@ assert.match(ui, /await loadSnapshot\(scope, \{ force: true \}\)/,
   'POST success must be followed by a fresh server read');
 assert.match(ui, /human_review_read_after_write_mismatch/,
   'UI must fail closed if read-after-write does not confirm requested durable state');
-assert.match(ui, /No optimistic review state is shown/, 'UI must explicitly reject optimistic durable presentation');
+assert.match(ui, /No optimistic review or reconstructed evidence is shown/,
+  'UI must explicitly reject optimistic durable presentation and client evidence reconstruction');
 
 assert.match(ui, /state\.observer\?\.disconnect\(\)/, 'Human Review UI must isolate its own DOM mutations from MutationObserver feedback');
 assert.match(ui, /function mutatePresentation\(callback\)/, 'Observer-isolated presentation mutation helper is missing');
@@ -39,8 +42,8 @@ assert.match(ui, /REQUEST_TIMEOUT_MS = 30000/, 'GET/POST requests must have a bo
 assert.match(ui, /data-cfri-filter="reviewState"/, 'Human Review layer must explicitly handle the legacy session-only review filter');
 assert.match(ui, /control\.value = ''/, 'Legacy session-only review filter must be cleared before durable presentation');
 assert.match(ui, /label\.hidden = true/, 'Legacy review filter must be hidden rather than misrepresent durable filter support');
-assert.match(ui, /Viewed is session-only; approved\/rejected remain fail-closed\./,
-  'Operator copy must preserve session-vs-durable and unsupported-state boundaries');
+assert.match(ui, /Packet evidence is server-projected; only acknowledged and needs_review are durable\. Execution and Amazon mutation remain disabled\./,
+  'Operator copy must preserve server-authoritative packet, durable-state, execution, and Amazon boundaries');
 
 assert.match(ui, /=== 'Inbox item ID'/,
   'Evidence drawer durable state must bind through the unique Inbox item ID rather than candidate title text');
@@ -49,13 +52,28 @@ assert.match(ui, /state\.reviews\.get\(inboxItemId\)/,
 assert.doesNotMatch(ui, /rows\.find\([\s\S]*cfriDrawerTitle/,
   'Evidence drawer must not infer durable identity from a potentially duplicated candidate title');
 
+for (const fragment of [
+  'Recommendation Decision Packet',
+  '1. Recommendation + Why',
+  '2. Priority evidence',
+  '3. Root + Lifecycle',
+  '4. Financial comparability',
+  '5. Fingerprint + review evidence',
+  '6. Source evidence / provenance',
+  'The UI will not reconstruct recommendation evidence client-side.',
+]) assert.ok(ui.includes(fragment), `Decision Packet presentation contract missing: ${fragment}`);
+assert.match(ui, /packet\?\.authority\?\.readOnly !== true/, 'Decision Packet must validate the read-only authority bit');
+assert.match(ui, /packet\?\.authority\?\.executionAuthorized !== false/, 'Decision Packet must reject execution authority');
+assert.match(ui, /packet\?\.authority\?\.amazonMutationAuthorized !== false/, 'Decision Packet must reject Amazon mutation authority');
+assert.match(ui, /review\?\.inheritedAsCurrent !== false \|\| review\?\.stale !== true/,
+  'Stale evidence must be validated as non-current before rendering');
+
 assert.doesNotMatch(ui, /localStorage|sessionStorage/, 'Durable review truth must not be stored in browser persistence');
 assert.doesNotMatch(ui, /optimization-actions|optimization_action_events|execution-permits|amazon-ads-api|sp-api/i,
   'Human Review UI must not expose Optimization Action, execution permit, or Amazon transport endpoints');
 assert.doesNotMatch(ui, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|PHASE5_SINGLE_RUN/i,
   'Human Review UI must not touch Amazon/sync enablement controls');
 
-// Existing Inbox browsing/usability layers remain read-only. All write capability is isolated to the new layer.
 for (const source of [inbox, usability]) {
   assert.doesNotMatch(source, /method\s*:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/i,
     'Existing Recommendation Inbox layers must remain read-only');
