@@ -22,10 +22,10 @@ assert.match(ui, /candidate_emission_not_authorized/,
 assert.match(ui, /candidate_library_blocked_scope_not_null/,
   'Blocked scope must reject fabricated zero candidate counts');
 
-for (const filter of ['family', 'kind', 'priority', 'review', 'stale']) {
+for (const filter of ['family', 'kind', 'priority', 'review', 'stale', 'history']) {
   assert.match(ui, new RegExp(`librarySelect\\('${filter}'`), `Candidate Library filter missing: ${filter}`);
 }
-for (const value of ['keyword', 'negative', 'harvest', 'scale', 'exact_negative', 'phrase_negative_review', 'critical', 'high', 'medium', 'low', 'unreviewed', 'needs_review', 'acknowledged', 'has_stale', 'no_stale']) {
+for (const value of ['keyword', 'negative', 'harvest', 'scale', 'exact_negative', 'phrase_negative_review', 'critical', 'high', 'medium', 'low', 'unreviewed', 'needs_review', 'acknowledged', 'has_stale', 'no_stale', 'recurring', 'no_history']) {
   assert.ok(ui.includes(`'${value}'`), `Candidate Library filter value missing: ${value}`);
 }
 
@@ -39,8 +39,8 @@ assert.match(ui, /decisionPacketHtml\(item\.decisionPacket\)/,
   'Library drill-through must reuse #248 Decision Packet in the existing drawer');
 assert.doesNotMatch(ui, /fetch\([^\n]*candidate-library|\/candidate-library|\/keyword-library|\/negative-library/i,
   'Library UI must not create an independent network endpoint');
-assert.match(ui, /Server-projected registry only\. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, or evidence\./,
-  'Library UI must state that filters are presentation-only');
+assert.match(ui, /Server-projected registry and historical review intelligence only\. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, evidence, rules, or learning weights\./,
+  'Library UI must state that filters are presentation-only even after Historical Learning integration');
 assert.doesNotMatch(ui, /\bstoreScore\b|urgencyMultiplier|financialImpactScore/i,
   'Library UI must not implement an opaque score');
 assert.match(ui, /No auto acknowledge, auto approve, Optimization Action, execution permit, Store Score, or Amazon mutation is authorized\./,
@@ -54,7 +54,8 @@ console.log(JSON.stringify({
   ok: true,
   contract: 'governed-keyword-negative-candidate-library-ui-v1',
   serverProjectionOnly: true,
-  filters: ['family', 'kind', 'priority', 'review', 'stale'],
+  filters: ['family', 'kind', 'priority', 'review', 'stale', 'history'],
+  historicalLearningIntegrated: true,
   decisionPacketReused: true,
   storeScoreImplemented: false,
   executionAuthorized: false,
