@@ -198,7 +198,7 @@ async function getVersion({ accountId, token, fetchImpl, workerName, versionId }
     accountId,
     token,
     fetchImpl,
-    path: `/workers/workers/${encodeURIComponent(workerName)}/versions/${encodeURIComponent(versionId)}`,
+    path: `/workers/scripts/${encodeURIComponent(workerName)}/versions/${encodeURIComponent(versionId)}`,
   });
   if (!body?.result || typeof body.result !== 'object') {
     throw new Error(`CLOSURE_OBSERVABILITY_VERSION_INVALID:${workerName}`);
@@ -276,8 +276,10 @@ function normalizeBindings(version) {
       if (binding?.type === 'plain_text') out[name] = String(binding.text ?? '');
     }
   }
-  if (Array.isArray(version?.bindings)) {
-    for (const binding of version.bindings) {
+  const bindingCollections = [version?.resources?.bindings, version?.bindings];
+  for (const bindings of bindingCollections) {
+    if (!Array.isArray(bindings)) continue;
+    for (const binding of bindings) {
       if (binding?.type === 'plain_text' && binding?.name) out[binding.name] = String(binding.text ?? '');
     }
   }
