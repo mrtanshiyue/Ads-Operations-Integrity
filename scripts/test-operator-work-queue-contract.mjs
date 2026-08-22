@@ -1,0 +1,136 @@
+import assert from 'node:assert/strict';
+import {
+  OPERATOR_WORK_QUEUE_AUTHORITY,
+  OPERATOR_WORK_QUEUE_SCHEMA_VERSION,
+  buildOperatorWorkQueue,
+  buildOperatorWorkQueueRow,
+} from '../cloudflare/runtime/operator-work-queue.js';
+
+const range = { startDate: '2026-06-01', endDate: '2026-06-02' };
+const base = {
+  evidenceState: 'available',
+  unavailable: false,
+  recommendationCandidateCount: 12,
+  criticalHighCandidateCount: 12,
+  unreviewedCount: 12,
+  needsReviewCount: 0,
+  acknowledgedCount: 0,
+  staleReviewEvidenceCount: 0,
+  highUnreviewedCount: 12,
+  analysisScopeComplete: true,
+  financiallyComparable: true,
+  candidateEmissionAuthorized: true,
+};
+
+assert.equal(OPERATOR_WORK_QUEUE_SCHEMA_VERSION, 'daily-operator-work-queue-v1');
+assert.deepEqual(OPERATOR_WORK_QUEUE_AUTHORITY, {
+  readOnly: true,
+  executionAuthorized: false,
+  amazonMutationAuthorized: false,
+});
+
+const queue = buildOperatorWorkQueue({
+  generatedAt: '2026-08-23T00:00:00.000Z',
+  dateRange: range,
+  stores: [
+    { ...base, storeId: 'store-04', storeCode: 'STORE04', unreviewedCount: 0, highUnreviewedCount: 0, recommendationCandidateCount: 0, criticalHighCandidateCount: 0 },
+    { ...base, storeId: 'store-03', storeCode: 'STORE03', highUnreviewedCount: 5 },
+    { ...base, storeId: 'store-02', storeCode: 'STORE02', staleReviewEvidenceCount: 2, unreviewedCount: 10, highUnreviewedCount: 10 },
+    { ...base, storeId: 'store-01', storeCode: 'STORE01', needsReviewCount: 2, unreviewedCount: 10, highUnreviewedCount: 10 },
+    { storeId: 'store-05', storeCode: 'STORE05', evidenceState: 'unavailable', unavailable: true, error: { code: 'snapshot_failed' } },
+  ],
+});
+
+assert.equal(queue.schemaVersion, 'daily-operator-work-queue-v1');
+assert.deepEqual(queue.requestedDateRange, range);
+assert.deepEqual(queue.authority, OPERATOR_WORK_QUEUE_AUTHORITY);
+assert.deepEqual(queue.rows.map((row) => row.queueClass), [
+  'authoritative_read_failure',
+  'stale_review_evidence',
+  'needs_review',
+  'high_unreviewed',
+  'no_active_queue',
+]);
+assert.deepEqual(queue.rows.map((row) => row.priority), [1, 2, 2, 3, 5]);
+assert.equal(queue.rows[0].recommendationCandidateCount, null, 'unavailable evidence must remain null');
+assert.equal(queue.rows[1].otherUnreviewedCount, 0);
+assert.equal(queue.rows[2].otherUnreviewedCount, 0);
+assert.equal(queue.rows[3].otherUnreviewedCount, 7, 'other count is authoritative unreviewed minus high unreviewed');
+assert.equal(queue.rows[0].authority.executionAuthorized, false);
+assert.equal(queue.rows[0].authority.amazonMutationAuthorized, false);
+
+const other = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-other',
+  storeCode: 'STORE06',
+  recommendationCandidateCount: 5,
+  criticalHighCandidateCount: 0,
+  unreviewedCount: 5,
+  highUnreviewedCount: 0,
+}, range);
+assert.equal(other.queueClass, 'other_unreviewed');
+assert.equal(other.priority, 4);
+assert.equal(other.otherUnreviewedCount, 5);
+
+const acknowledged = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-ack',
+  storeCode: 'STORE07',
+  recommendationCandidateCount: 2,
+  criticalHighCandidateCount: 0,
+  unreviewedCount: 0,
+  highUnreviewedCount: 0,
+  acknowledgedCount: 2,
+}, range);
+assert.equal(acknowledged.queueClass, 'acknowledged_only');
+assert.equal(acknowledged.priority, 5);
+
+const emissionBlocked = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-blocked',
+  storeCode: 'STORE08',
+  recommendationCandidateCount: 0,
+  criticalHighCandidateCount: 0,
+  unreviewedCount: 0,
+  highUnreviewedCount: 0,
+  candidateEmissionAuthorized: false,
+}, range);
+assert.equal(emissionBlocked.queueClass, 'no_active_queue');
+assert.equal(emissionBlocked.reasonCode, 'candidate_emission_not_authorized');
+assert.match(emissionBlocked.reasonText, /does not authorize recommendation candidate emission/);
+
+const inconsistent = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-gap',
+  storeCode: 'STORE09',
+  recommendationCandidateCount: 1,
+  criticalHighCandidateCount: 1,
+  unreviewedCount: 1,
+  highUnreviewedCount: 2,
+}, range);
+assert.equal(inconsistent.queueClass, 'evidence_gap');
+assert.equal(inconsistent.priority, 1);
+assert.equal(inconsistent.highUnreviewedCount, null, 'inconsistent evidence must fail closed rather than clamp');
+assert.equal(inconsistent.financiallyComparable, null);
+
+const missingComparable = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-null',
+  storeCode: 'STORE10',
+  financiallyComparable: null,
+}, range);
+assert.equal(missingComparable.queueClass, 'evidence_gap');
+assert.equal(missingComparable.recommendationCandidateCount, null);
+
+const tie = buildOperatorWorkQueue({
+  dateRange: range,
+  stores: [
+    { ...base, storeId: 'b', storeCode: 'STORE02', needsReviewCount: 1, unreviewedCount: 11, highUnreviewedCount: 11 },
+    { ...base, storeId: 'a', storeCode: 'STORE01', needsReviewCount: 3, unreviewedCount: 9, highUnreviewedCount: 9 },
+    { ...base, storeId: 'c', storeCode: 'STORE03', staleReviewEvidenceCount: 1 },
+  ],
+});
+assert.deepEqual(tie.rows.map((row) => row.storeCode), ['STORE03', 'STORE01', 'STORE02'],
+  'P2 tie-break is stale class first, then salient count descending, then deterministic store code');
+
+console.log('operator work queue contract: PASS');

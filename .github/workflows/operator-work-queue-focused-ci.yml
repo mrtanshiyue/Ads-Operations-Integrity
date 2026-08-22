@@ -1,0 +1,59 @@
+name: Operator Work Queue Focused CI
+
+on:
+  push:
+    branches:
+      - 'feature/daily-operator-work-queue-v1'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/operator-work-queue.js'
+      - 'cloudflare/runtime/data-health-api.js'
+      - 'assets/cloudflare-native-operations-health-v1.js'
+      - 'scripts/test-operator-work-queue-contract.mjs'
+      - '.github/workflows/operator-work-queue-focused-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-work-queue-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Operator work queue contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and deterministic contract
+        run: |
+          node --check cloudflare/runtime/operator-work-queue.js
+          node --check cloudflare/runtime/data-health-api.js
+          node --check assets/cloudflare-native-operations-health-v1.js
+          node --check scripts/test-operator-work-queue-contract.mjs
+          node scripts/test-operator-work-queue-contract.mjs
+      - name: Lock read-only and Amazon HARD-OFF boundary
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const sources = [
+            'cloudflare/runtime/operator-work-queue.js',
+            'assets/cloudflare-native-operations-health-v1.js',
+          ].map((path) => fs.readFileSync(path, 'utf8')).join('\n');
+          const forbidden = [/\.startSync\s*\(/, /optimization-actions/i, /Amazon\s*(Ads|Advertising|SP-API)/i, /campaign\s*mutation/i, /bid\s*mutation/i, /auto\s*(approve|acknowledge|execute)/i];
+          for (const pattern of forbidden) {
+            if (pattern.test(sources)) throw new Error(`forbidden operator work queue capability: ${pattern}`);
+          }
+          if (!/readOnly:\s*true/.test(sources) || !/executionAuthorized:\s*false/.test(sources) || !/amazonMutationAuthorized:\s*false/.test(sources)) {
+            throw new Error('operator work queue authority invariant missing');
+          }
+          NODE

@@ -8,6 +8,7 @@ import {
   RECOMMENDATION_REVIEW_SOURCE_KIND,
   buildRecommendationReviewBinding,
 } from './csv-recommendation-human-review-contract.js';
+import { buildOperatorWorkQueue } from './operator-work-queue.js';
 
 export const FOUR_STORE_DECISION_QUEUE_SUMMARY_SCHEMA_VERSION = 'four-store-decision-queue-summary-v1';
 
@@ -23,17 +24,13 @@ export async function handleDataHealthApiRoute({ request, env, actor, url }) {
 
   const includeDecisionQueue = url.searchParams.get('includeDecisionQueue') === 'true';
   const decisionRange = includeDecisionQueue ? explicitDecisionQueueRange(url) : null;
-  if (decisionRange?.error) {
-    return json(request, { error: decisionRange.error }, 400);
-  }
+  if (decisionRange?.error) return json(request, { error: decisionRange.error }, 400);
 
   const storeIds = await accessibleStoreIds(env.CONTROL_DB, actor.user_id);
   if (!storeIds.length) return json(request, { error: 'forbidden', permission: 'analytics.read' }, 403);
 
   const requestedStoreId = optionalText(url.searchParams.get('storeId'), 200);
-  const scopedStoreIds = requestedStoreId
-    ? (storeIds.includes(requestedStoreId) ? [requestedStoreId] : [])
-    : storeIds;
+  const scopedStoreIds = requestedStoreId ? (storeIds.includes(requestedStoreId) ? [requestedStoreId] : []) : storeIds;
   if (!scopedStoreIds.length) return json(request, { error: 'store_scope_forbidden' }, 403);
 
   const placeholders = scopedStoreIds.map((_, index) => `?${index + 1}`).join(',');
@@ -112,12 +109,7 @@ export async function handleDataHealthApiRoute({ request, env, actor, url }) {
   if (includeDecisionQueue) {
     const sourceRows = stores.results || [];
     const decisionStores = await Promise.all(sourceRows.map((row) => buildDecisionQueueStoreSummary({
-      request,
-      env,
-      actor,
-      row,
-      range: decisionRange,
-      generatedAt,
+      request, env, actor, row, range: decisionRange, generatedAt,
     })));
     response.decisionQueue = {
       schemaVersion: FOUR_STORE_DECISION_QUEUE_SUMMARY_SCHEMA_VERSION,
@@ -126,97 +118,52 @@ export async function handleDataHealthApiRoute({ request, env, actor, url }) {
       authority: DECISION_QUEUE_AUTHORITY,
       stores: decisionStores,
     };
+    response.operatorWorkQueue = buildOperatorWorkQueue(response.decisionQueue);
   }
 
   return json(request, response, 200);
 }
 
 async function buildDecisionQueueStoreSummary({ request, env, actor, row, range, generatedAt }) {
-  const identity = {
-    storeId: row.store_id,
-    storeCode: row.store_code,
-    displayName: row.display_name,
-  };
+  const identity = { storeId: row.store_id, storeCode: row.store_code, displayName: row.display_name };
   const dateRange = { startDate: range.startDate, endDate: range.endDate };
-
   try {
-    if (!STORE_BINDINGS.has(row.d1_binding_key) || !env[row.d1_binding_key]) {
-      throw decisionQueueError('store_db_unavailable');
-    }
-
+    if (!STORE_BINDINGS.has(row.d1_binding_key) || !env[row.d1_binding_key]) throw decisionQueueError('store_db_unavailable');
     const intelligenceUrl = new URL(`/api/v1/stores/${encodeURIComponent(row.store_id)}/search-term-intelligence`, request.url);
     intelligenceUrl.searchParams.set('source', 'csv');
     intelligenceUrl.searchParams.set('startDate', range.startDate);
     intelligenceUrl.searchParams.set('endDate', range.endDate);
     intelligenceUrl.searchParams.set('limit', '100');
     intelligenceUrl.searchParams.set('sort', 'cost');
-
     const headers = new Headers({ accept: 'application/json' });
     const cfRay = request.headers.get('cf-ray');
     if (cfRay) headers.set('cf-ray', cfRay);
     const intelligenceRequest = new Request(intelligenceUrl.toString(), { method: 'GET', headers });
-    const intelligenceResponse = await handleCsvSearchTermIntelligenceApiRoute({
-      request: intelligenceRequest,
-      env,
-      actor,
-      url: intelligenceUrl,
-    });
+    const intelligenceResponse = await handleCsvSearchTermIntelligenceApiRoute({ request: intelligenceRequest, env, actor, url: intelligenceUrl });
     if (!intelligenceResponse) throw decisionQueueError('recommendation_snapshot_unavailable');
-
     const payload = await intelligenceResponse.json().catch(() => ({}));
-    if (!intelligenceResponse.ok) {
-      throw decisionQueueError(payload?.error || 'recommendation_snapshot_failed');
-    }
+    if (!intelligenceResponse.ok) throw decisionQueueError(payload?.error || 'recommendation_snapshot_failed');
     const productization = payload?.productization || {};
     const inbox = productization?.recommendationInbox;
-    if (!inbox || inbox.schemaVersion !== 'csv-recommendation-inbox-v1') {
-      throw decisionQueueError('recommendation_inbox_contract_unavailable');
-    }
-
+    if (!inbox || inbox.schemaVersion !== 'csv-recommendation-inbox-v1') throw decisionQueueError('recommendation_inbox_contract_unavailable');
     const stored = await env[row.d1_binding_key].prepare(`
-      SELECT
-        review_id,
-        recommendation_fingerprint,
-        state,
-        source_evidence_json
+      SELECT review_id, recommendation_fingerprint, state, source_evidence_json
       FROM advisory_review_records
       WHERE source_kind = ?1
     `).bind(RECOMMENDATION_REVIEW_SOURCE_KIND).all();
-
     const summary = await summarizeDecisionQueueReviewState({
       inbox,
       analysisScope: productization?.analysisScope || inbox?.analysisScope || {},
       storedReviews: stored.results || [],
     });
-
-    return {
-      ...identity,
-      generatedAt,
-      dateRange,
-      evidenceState: 'available',
-      unavailable: false,
-      ...summary,
-      authority: DECISION_QUEUE_AUTHORITY,
-    };
+    return { ...identity, generatedAt, dateRange, evidenceState: 'available', unavailable: false, ...summary, authority: DECISION_QUEUE_AUTHORITY };
   } catch (error) {
     return {
-      ...identity,
-      generatedAt,
-      dateRange,
-      evidenceState: 'unavailable',
-      unavailable: true,
-      recommendationCandidateCount: null,
-      criticalHighCandidateCount: null,
-      governanceBlockedCount: null,
-      scopeBlockedCount: null,
-      unreviewedCount: null,
-      needsReviewCount: null,
-      acknowledgedCount: null,
-      staleReviewEvidenceCount: null,
-      highUnreviewedCount: null,
-      analysisScopeComplete: null,
-      financiallyComparable: null,
-      candidateEmissionAuthorized: null,
+      ...identity, generatedAt, dateRange, evidenceState: 'unavailable', unavailable: true,
+      recommendationCandidateCount: null, criticalHighCandidateCount: null, governanceBlockedCount: null,
+      scopeBlockedCount: null, unreviewedCount: null, needsReviewCount: null, acknowledgedCount: null,
+      staleReviewEvidenceCount: null, highUnreviewedCount: null, analysisScopeComplete: null,
+      financiallyComparable: null, candidateEmissionAuthorized: null,
       error: { code: error?.code || cleanErrorCode(error?.message) || 'decision_queue_summary_failed' },
       authority: DECISION_QUEUE_AUTHORITY,
     };
@@ -229,7 +176,6 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
   const stored = Array.isArray(storedReviews) ? storedReviews : [];
   const byFingerprint = new Map();
   const staleByContext = new Map();
-
   for (const row of stored) {
     const fingerprint = clean(row?.recommendation_fingerprint);
     if (fingerprint && !byFingerprint.has(fingerprint)) byFingerprint.set(fingerprint, row);
@@ -239,48 +185,34 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
     rows.push(row);
     staleByContext.set(contextKey, rows);
   }
-
   let unreviewedCount = 0;
   let needsReviewCount = 0;
   let acknowledgedCount = 0;
   let highUnreviewedCount = 0;
   const staleReviewIds = new Set();
-
   for (const item of candidates) {
     const authorizedItem = authorizeReviewCandidateForPersistence(item, analysisScope);
     const binding = await buildRecommendationReviewBinding(authorizedItem);
     const row = byFingerprint.get(binding.recommendationFingerprint) || null;
     const state = row ? persistedStateToUiState(row.state) : 'unreviewed';
     if (row && !state) throw decisionQueueError('unsupported_durable_review_state');
-
     if (state === 'unreviewed') {
       unreviewedCount += 1;
       if (item?.priority === 'critical' || item?.priority === 'high') highUnreviewedCount += 1;
-    } else if (state === 'needs_review') {
-      needsReviewCount += 1;
-    } else if (state === 'acknowledged') {
-      acknowledgedCount += 1;
-    }
-
+    } else if (state === 'needs_review') needsReviewCount += 1;
+    else if (state === 'acknowledged') acknowledgedCount += 1;
     const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
     for (const stale of staleByContext.get(contextKey) || []) {
-      if (stale?.recommendation_fingerprint !== binding.recommendationFingerprint && stale?.review_id) {
-        staleReviewIds.add(stale.review_id);
-      }
+      if (stale?.recommendation_fingerprint !== binding.recommendationFingerprint && stale?.review_id) staleReviewIds.add(stale.review_id);
     }
   }
-
   const inboxSummary = inbox?.summary || {};
   return {
     recommendationCandidateCount: candidates.length,
     criticalHighCandidateCount: candidates.filter((item) => item?.priority === 'critical' || item?.priority === 'high').length,
     governanceBlockedCount: number(inboxSummary.blockedByGovernanceCount),
     scopeBlockedCount: number(inboxSummary.blockedByScopeCount),
-    unreviewedCount,
-    needsReviewCount,
-    acknowledgedCount,
-    staleReviewEvidenceCount: staleReviewIds.size,
-    highUnreviewedCount,
+    unreviewedCount, needsReviewCount, acknowledgedCount, staleReviewEvidenceCount: staleReviewIds.size, highUnreviewedCount,
     analysisScopeComplete: analysisScope?.complete === true,
     financiallyComparable: analysisScope?.financiallyComparable === true,
     candidateEmissionAuthorized: analysisScope?.candidateEmissionAuthorized === true,
@@ -290,9 +222,7 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
 function explicitDecisionQueueRange(url) {
   const startDate = clean(url.searchParams.get('startDate'));
   const endDate = clean(url.searchParams.get('endDate'));
-  if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) {
-    return { error: 'decision_queue_date_range_required' };
-  }
+  if (!validDate(startDate) || !validDate(endDate) || startDate > endDate) return { error: 'decision_queue_date_range_required' };
   return { startDate, endDate };
 }
 
@@ -305,12 +235,9 @@ async function accessibleStoreIds(db, userId) {
     LIMIT 1
   `).bind(userId).first();
   if (global) {
-    const result = await db.prepare(`
-      SELECT store_id FROM stores WHERE status = 'active' ORDER BY sort_order, store_id
-    `).all();
+    const result = await db.prepare(`SELECT store_id FROM stores WHERE status = 'active' ORDER BY sort_order, store_id`).all();
     return (result.results || []).map((row) => row.store_id);
   }
-
   const result = await db.prepare(`
     SELECT DISTINCT sm.store_id
     FROM store_members sm
@@ -322,42 +249,15 @@ async function accessibleStoreIds(db, userId) {
   return (result.results || []).map((row) => row.store_id);
 }
 
-function validDate(value) {
-  return /^\d{4}-\d{2}-\d{2}$/u.test(value || '') && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`));
-}
-function optionalText(value, maxLength) {
-  const text = String(value || '').trim();
-  if (!text) return null;
-  return text.length <= maxLength ? text : null;
-}
-function clean(value) {
-  const text = String(value ?? '').trim();
-  return text || null;
-}
-function cleanErrorCode(value) {
-  const text = clean(value);
-  return text && /^[a-z0-9_:-]+$/iu.test(text) ? text : null;
-}
-function number(value) {
-  const parsed = Number(value || 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-function nullableNumber(value) {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-function decisionQueueError(code) {
-  const error = new Error(code);
-  error.code = code;
-  return error;
-}
+function validDate(value) { return /^\d{4}-\d{2}-\d{2}$/u.test(value || '') && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`)); }
+function optionalText(value, maxLength) { const text = String(value || '').trim(); if (!text) return null; return text.length <= maxLength ? text : null; }
+function clean(value) { const text = String(value ?? '').trim(); return text || null; }
+function cleanErrorCode(value) { const text = clean(value); return text && /^[a-z0-9_:-]+$/iu.test(text) ? text : null; }
+function number(value) { const parsed = Number(value || 0); return Number.isFinite(parsed) ? parsed : 0; }
+function nullableNumber(value) { if (value === null || value === undefined || value === '') return null; const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
+function decisionQueueError(code) { const error = new Error(code); error.code = code; return error; }
 function json(request, payload, status) {
-  const headers = new Headers({
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
+  const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   const ray = request.headers.get('cf-ray');
   if (ray) headers.set('x-request-id', ray);
   return new Response(JSON.stringify(payload), { status, headers });
