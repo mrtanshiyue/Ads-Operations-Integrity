@@ -9,6 +9,12 @@ const SEARCH_RULES = Object.freeze([
   ['large_click_volume', 'info'],
   ['low_conversion', 'medium'],
 ]);
+const FINANCIAL_RULES = new Set([
+  'high_spend_zero_orders', 'high_acos', 'high_roas',
+  'campaign_spend_concentration', 'campaign_sales_concentration', 'acos_outlier',
+  'spend_leader', 'efficiency_leader', 'efficiency_laggard',
+  'spend_spike', 'sales_drop', 'acos_deterioration', 'roas_improvement',
+]);
 
 export async function handleCsvAnalyticsDiagnosticsApiRoute({ request, env, actor, url }) {
   if (request.method !== 'GET' && request.method !== 'HEAD') return null;
@@ -21,17 +27,19 @@ export async function handleCsvAnalyticsDiagnosticsApiRoute({ request, env, acto
   if (range.error) return json(request, { error: range.error }, 400);
   const filters = parseFilters(url);
   const where = buildWhere(range, filters);
-  const [searchAnalysisRow, campaignsResult, dailyResult, matchTypesResult] = await Promise.all([
+  const [searchAnalysisRow, campaignsResult, dailyResult, matchTypesResult, financialScopeRow] = await Promise.all([
     readSearchTermAnalysis(route.storeDb, where),
     readCampaigns(route.storeDb, where),
     readDaily(route.storeDb, where),
     readMatchTypes(route.storeDb, where),
+    readFinancialScope(route.storeDb, where),
   ]);
   const bundle = generateCsvDiagnostics({
     searchTermAnalysis: parseSearchTermAnalysis(searchAnalysisRow),
     campaigns: rows(campaignsResult).map(campaignRow),
     daily: rows(dailyResult).map(dailyRow),
     matchTypes: rows(matchTypesResult).map(matchTypeRow),
+    financialScope: financialScopeFromRow(financialScopeRow),
     scope: { storeId, startDate: range.startDate, endDate: range.endDate, filters: publicFilters(filters) },
   });
   return json(request, bundle, 200);
@@ -42,6 +50,7 @@ export function generateCsvDiagnostics(input = {}) {
   const campaigns = (input.campaigns || []).map(metricRow);
   const daily = (input.daily || []).map(metricRow);
   const matchTypes = (input.matchTypes || []).map(metricRow);
+  const financialScope = normalizeFinancialScope(input.financialScope);
   const observations = [];
   let searchThresholds;
   let totalGroups;
@@ -80,11 +89,22 @@ export function generateCsvDiagnostics(input = {}) {
   addRanked(observations, campaigns.filter((row) => row.orders === 0 && row.clicks >= numberOr(campaignThresholds.clicksP75, 0)), 'clicks', 'desc', 5, (row) => observation('campaign', 'traffic_without_conversion', 'high', row.campaignName, `${formatInt(row.clicks)} clicks produced zero attributed orders.`, row, { observedId: row.campaignId, identityResolved: false }));
   addMatchTypeObservations(observations, matchTypes);
   addTrendObservations(observations, daily);
+
+  const financialSuppressed = financialScope.financiallyComparable !== true;
+  const visibleObservations = financialSuppressed
+    ? observations.filter((item) => !FINANCIAL_RULES.has(item.rule)).map(suppressFinancialEvidence)
+    : observations;
+  const publicSearchThresholds = financialSuppressed ? { ...searchThresholds, spendP90: null, acosP90: null, roasP90: null } : searchThresholds;
+  const publicCampaignThresholds = financialSuppressed ? { ...campaignThresholds, acosP90: null } : campaignThresholds;
+
   return Object.freeze({
     kind: 'diagnostic_bundle', authoritative: false, recommendationAuthorized: false, reviewAuthorized: false, amazonExecutionAuthorized: false,
     sourceKind: 'csv_business_analytics', computeLocation: 'worker_server_side', searchTermComputeLocation: input.searchTermAnalysis ? 'd1_ranked_server_side' : 'worker_in_memory_contract', scope: input.scope || null,
+    financialScope,
+    financialObservationPolicy: financialSuppressed ? 'suppressed_not_comparable' : 'comparable_scope',
+    financialObservationsSuppressed: financialSuppressed,
     coverage: Object.freeze({ totalGroups, analyzedGroups: totalGroups, coverageRatio: 1, partial: false, truncationReason: null, pagesLoaded: 0, searchTermRowsAnalyzed: totalGroups, searchTermRowsTotal: totalGroups, searchTermComplete: true, campaignRowsAnalyzed: campaigns.length, dailyRowsAnalyzed: daily.length, matchTypeRowsAnalyzed: matchTypes.length }),
-    thresholds: Object.freeze({ searchTerm: searchThresholds, campaign: campaignThresholds }), observations: Object.freeze(observations.slice(0, MAX_OBSERVATIONS)),
+    thresholds: Object.freeze({ searchTerm: Object.freeze(publicSearchThresholds), campaign: Object.freeze(publicCampaignThresholds) }), observations: Object.freeze(visibleObservations.slice(0, MAX_OBSERVATIONS)),
   });
 }
 
@@ -157,6 +177,28 @@ function searchObservation(rule, severity, row) {
 function readCampaigns(db, where) { return db.prepare(`SELECT f.campaign_name AS campaign_name,f.campaign_id AS campaign_id,f.advertiser_account_id AS advertiser_account_id,f.profile_id AS profile_id,SUM(f.impressions) AS impressions,SUM(f.clicks) AS clicks,SUM(f.cost_micros) AS spend_micros,SUM(f.purchases) AS purchases,SUM(f.sales_micros) AS sales_micros FROM csv_business_search_term_daily f WHERE ${where.sql} GROUP BY f.campaign_name, f.campaign_id, f.advertiser_account_id, f.profile_id`).bind(...where.params).all(); }
 function readDaily(db, where) { return db.prepare(`SELECT f.report_date AS report_date,SUM(f.impressions) AS impressions,SUM(f.clicks) AS clicks,SUM(f.cost_micros) AS spend_micros,SUM(f.purchases) AS purchases,SUM(f.sales_micros) AS sales_micros FROM csv_business_search_term_daily f WHERE ${where.sql} GROUP BY f.report_date ORDER BY f.report_date ASC`).bind(...where.params).all(); }
 function readMatchTypes(db, where) { return db.prepare(`SELECT f.match_type AS match_type,SUM(f.impressions) AS impressions,SUM(f.clicks) AS clicks,SUM(f.cost_micros) AS spend_micros,SUM(f.purchases) AS purchases,SUM(f.sales_micros) AS sales_micros FROM csv_business_search_term_daily f WHERE ${where.sql} GROUP BY f.match_type`).bind(...where.params).all(); }
+function readFinancialScope(db, where) {
+  return db.prepare(`SELECT COUNT(*) AS fact_rows,GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.currency_code), '')) AS currency_codes,GROUP_CONCAT(DISTINCT NULLIF(TRIM(f.marketplace), '')) AS marketplaces,SUM(CASE WHEN f.currency_code IS NULL OR TRIM(f.currency_code) = '' THEN 1 ELSE 0 END) AS currency_missing_rows,SUM(CASE WHEN f.marketplace IS NULL OR TRIM(f.marketplace) = '' THEN 1 ELSE 0 END) AS marketplace_missing_rows FROM csv_business_search_term_daily f WHERE ${where.sql}`).bind(...where.params).first();
+}
+function financialScopeFromRow(row = {}) {
+  const factRows = Math.max(0, integer(row?.fact_rows));
+  const currencyCodes = splitCsv(row?.currency_codes);
+  const marketplaces = splitCsv(row?.marketplaces);
+  const reasons = [];
+  if (currencyCodes.length > 1) reasons.push('multiple_currency_codes');
+  if (marketplaces.length > 1) reasons.push('multiple_marketplaces');
+  if (factRows > 0 && (integer(row?.currency_missing_rows) > 0 || currencyCodes.length === 0)) reasons.push('currency_code_missing');
+  if (factRows > 0 && (integer(row?.marketplace_missing_rows) > 0 || marketplaces.length === 0)) reasons.push('marketplace_missing');
+  const financiallyComparable = factRows === 0 || (currencyCodes.length === 1 && marketplaces.length === 1 && !reasons.length);
+  return Object.freeze({ kind: 'filtered_csv_business_financial_scope', factRows, financiallyComparable, currencyCodes: Object.freeze(currencyCodes), marketplaces: Object.freeze(marketplaces), reasons: Object.freeze(reasons) });
+}
+function normalizeFinancialScope(value) {
+  if (!value || typeof value !== 'object') return Object.freeze({ kind: 'contract_fixture_financial_scope', factRows: null, financiallyComparable: true, currencyCodes: Object.freeze([]), marketplaces: Object.freeze([]), reasons: Object.freeze([]) });
+  return Object.freeze({ kind: String(value.kind || 'filtered_csv_business_financial_scope'), factRows: value.factRows == null ? null : Math.max(0, integer(value.factRows)), financiallyComparable: value.financiallyComparable === true, currencyCodes: Object.freeze(uniqueTexts(value.currencyCodes)), marketplaces: Object.freeze(uniqueTexts(value.marketplaces)), reasons: Object.freeze(uniqueTexts(value.reasons)) });
+}
+function suppressFinancialEvidence(item) {
+  return Object.freeze({ ...item, evidence: Object.freeze({ ...item.evidence, spendMicros: null, salesMicros: null, acos: null, roas: null, financialEvidenceSuppressed: true }) });
+}
 
 function parseDateRange(url) { const startDate=isoDate(url.searchParams.get('startDate')); const endDate=isoDate(url.searchParams.get('endDate')); if(!startDate||!endDate)return{error:'date_range_required'}; if(endDate<startDate)return{error:'date_range_invalid'}; if(inclusiveDays(startDate,endDate)>MAX_RANGE_DAYS)return{error:'date_range_too_large'}; return{startDate,endDate}; }
 function parseFilters(url) { return { q:normalizeSearch(url.searchParams.get('q')),campaignId:optionalText(url.searchParams.get('campaignId'),200),adGroupId:optionalText(url.searchParams.get('adGroupId'),200),targetingId:optionalText(url.searchParams.get('targetingId'),200),matchType:optionalText(url.searchParams.get('matchType'),80),marketplace:optionalText(url.searchParams.get('marketplace'),80),profileId:optionalText(url.searchParams.get('profileId'),200),advertiserAccountId:optionalText(url.searchParams.get('advertiserAccountId'),240) }; }
@@ -193,6 +235,8 @@ function money(value){return Number.isFinite(value)?`$${(value/1_000_000).toFixe
 function formatInt(value){return Math.trunc(numberOr(value,0)).toLocaleString('en-US');}
 function rows(result){return Array.isArray(result?.results)?result.results:[];}
 function jsonArray(value){if(Array.isArray(value))return value;if(typeof value!=='string'||!value.trim())return[];try{const parsed=JSON.parse(value);return Array.isArray(parsed)?parsed:[];}catch{return[];}}
+function splitCsv(value){return String(value||'').split(',').map((item)=>item.trim()).filter(Boolean).sort();}
+function uniqueTexts(values){return[...new Set((values||[]).map((value)=>String(value||'').trim()).filter(Boolean))].sort();}
 function isoDate(value){const text=String(value||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(text))return null;const date=new Date(`${text}T00:00:00.000Z`);return Number.isNaN(date.getTime())||date.toISOString().slice(0,10)!==text?null:text;}
 function inclusiveDays(startDate,endDate){return Math.floor((Date.parse(`${endDate}T00:00:00.000Z`)-Date.parse(`${startDate}T00:00:00.000Z`))/86400000)+1;}
 function normalizeSearch(value){const text=String(value||'').trim().replace(/\s+/g,' ').slice(0,200);return text||null;}

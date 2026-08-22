@@ -1,0 +1,86 @@
+name: Production Closure Observability
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/production-closure-observability.mjs'
+      - 'scripts/test-production-closure-observability.mjs'
+      - 'scripts/test-production-closure-observability-hardoff.mjs'
+      - 'scripts/test-production-closure-observability-cloudflare-contract.mjs'
+      - '.github/workflows/production-closure-observability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: Production closure observability contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: |
+          node --check scripts/production-closure-observability.mjs
+          node --check scripts/test-production-closure-observability.mjs
+          node --check scripts/test-production-closure-observability-hardoff.mjs
+          node --check scripts/test-production-closure-observability-cloudflare-contract.mjs
+      - name: Validate fail-closed observability contract
+        run: |
+          node scripts/test-production-closure-observability.mjs
+          node scripts/test-production-closure-observability-hardoff.mjs
+          node scripts/test-production-closure-observability-cloudflare-contract.mjs
+
+  live-read-only:
+    name: Live Production closure status
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout observability dispatch ref
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve canonical main SHA without changing collector checkout
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          EXPECTED_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+          test "${#EXPECTED_MAIN_SHA}" -eq 40 || { echo 'canonical main SHA resolution failed'; exit 1; }
+          echo "EXPECTED_MAIN_SHA=$EXPECTED_MAIN_SHA" >> "$GITHUB_ENV"
+
+      - name: Require read-only Cloudflare evidence credential
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo 'CLOUDFLARE_ACCOUNT_ID is required'; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'CLOUDFLARE_API_TOKEN is required'; exit 1; }
+
+      - name: Collect live closure observability
+        run: |
+          mkdir -p artifacts
+          node scripts/production-closure-observability.mjs \
+            --output artifacts/production-closure-observability.json \
+            --summary artifacts/production-closure-observability.md
+          cat artifacts/production-closure-observability.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload live observability evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-closure-observability-${{ github.run_id }}
+          path: |
+            artifacts/production-closure-observability.json
+            artifacts/production-closure-observability.md
+          if-no-files-found: error
+          retention-days: 90
