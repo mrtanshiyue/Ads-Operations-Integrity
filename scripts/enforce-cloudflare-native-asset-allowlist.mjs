@@ -19,6 +19,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-intelligence-v1.js',
   'cloudflare-native-csv-recommendation-inbox-v1.js',
   'cloudflare-native-csv-recommendation-inbox-usability-v1.js',
+  'cloudflare-native-csv-recommendation-operator-triage-v1.js',
   'cloudflare-native-csv-recommendation-human-review-v1.js',
   'cloudflare-native-csv-root-lifecycle-usability-v1.js',
   'cloudflare-native-csv-joint-analysis-v1.js',

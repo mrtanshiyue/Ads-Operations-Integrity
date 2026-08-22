@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 const ui = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-inbox-v1.js', import.meta.url), 'utf8');
 const usability = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
+const triage = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-operator-triage-v1.js', import.meta.url), 'utf8');
 const loader = readFileSync(new URL('../assets/generated/inline-script-10.js', import.meta.url), 'utf8');
 const allowlist = readFileSync(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
@@ -62,6 +63,30 @@ for (const token of usabilityRequired) {
   if (!usability.includes(token)) throw new Error(`Recommendation Inbox usability layer missing required token: ${token}`);
 }
 
+const triageRequired = [
+  'CloudflareCsvRecommendationOperatorTriage',
+  'needs_review > stale_review_evidence > unreviewed_critical_high > other_unreviewed > unavailable > acknowledged',
+  'data-cfri-operator-triage',
+  'data-cfot-order',
+  'data-cfot-first-attention',
+  'data-cfot-refresh-review',
+  'cfhrDurableState',
+  'stale prior evidence record',
+  'Attention now',
+  'Needs review',
+  'Stale evidence',
+  'High unreviewed',
+  'Acknowledged',
+  'Snapshot pending',
+  'Triage priority',
+  'Existing Inbox order',
+  'Advisory only.',
+  'does not approve, execute, persist Optimization Actions, or authorize any Amazon mutation',
+];
+for (const token of triageRequired) {
+  if (!triage.includes(token)) throw new Error(`Recommendation Inbox operator triage layer missing required token: ${token}`);
+}
+
 const prohibitedUiControls = [
   '>Apply<',
   '>Execute<',
@@ -71,7 +96,9 @@ const prohibitedUiControls = [
   '>Pause Campaign<',
 ];
 for (const token of prohibitedUiControls) {
-  if (ui.includes(token) || usability.includes(token)) throw new Error(`Recommendation Inbox UI exposes prohibited execution control: ${token}`);
+  if (ui.includes(token) || usability.includes(token) || triage.includes(token)) {
+    throw new Error(`Recommendation Inbox UI exposes prohibited execution control: ${token}`);
+  }
 }
 
 const prohibitedNetworkWrites = [
@@ -81,13 +108,18 @@ const prohibitedNetworkWrites = [
   /method\s*:\s*['"]DELETE['"]/u,
 ];
 for (const pattern of prohibitedNetworkWrites) {
-  if (pattern.test(ui) || pattern.test(usability)) throw new Error(`Recommendation Inbox UI violates read-only network contract: ${pattern}`);
+  if (pattern.test(ui) || pattern.test(usability) || pattern.test(triage)) {
+    throw new Error(`Recommendation Inbox presentation layers violate read-only network contract: ${pattern}`);
+  }
 }
 
+if (/\bfetch\s*\(/u.test(triage)) {
+  throw new Error('Operator triage must consume already-rendered governed state and must not create a separate network path');
+}
 if (/localStorage\s*\??\.\s*setItem/u.test(ui)) {
   throw new Error('Base Recommendation Inbox must not persist state; presentation persistence belongs only to the namespaced usability layer');
 }
-if (/sessionStorage\s*\??\.\s*setItem/u.test(ui) || /sessionStorage\s*\??\.\s*setItem/u.test(usability)) {
+if (/sessionStorage\s*\??\.\s*setItem/u.test(ui) || /sessionStorage\s*\??\.\s*setItem/u.test(usability) || /sessionStorage\s*\??\.\s*setItem/u.test(triage)) {
   throw new Error('Recommendation Inbox must not persist session review/viewed state to sessionStorage');
 }
 
@@ -107,20 +139,30 @@ if (!/const STORAGE_PREFIX = 'cfri:presentation:v1:'/u.test(usability)) {
 
 const baseAssetPath = 'cloudflare-native-csv-recommendation-inbox-v1.js';
 const usabilityAssetPath = 'cloudflare-native-csv-recommendation-inbox-usability-v1.js';
+const triageAssetPath = 'cloudflare-native-csv-recommendation-operator-triage-v1.js';
 if (!loader.includes(`assets/${baseAssetPath}?v=1.0.0`)) {
   throw new Error('Recommendation Inbox UI loader is not wired into the deployed native shell');
 }
 if (!loader.includes(`assets/${usabilityAssetPath}?v=1.0.0`)) {
   throw new Error('Recommendation Inbox usability loader is not wired after the base Inbox asset');
 }
+if (!loader.includes(`assets/${triageAssetPath}?v=1.0.0`)) {
+  throw new Error('Recommendation Inbox operator triage loader is not wired after the usability layer');
+}
 if (!loader.includes("script.addEventListener('load',loadUsability")) {
   throw new Error('Recommendation Inbox usability layer must load only after the base Inbox asset');
+}
+if (!loader.includes("usability.addEventListener('load',loadTriage")) {
+  throw new Error('Operator triage must load only after Recommendation Inbox usability');
+}
+if (!loader.includes("triage.addEventListener('load',loadRootLifecycle")) {
+  throw new Error('Root/Lifecycle usability must remain chained after operator triage');
 }
 if (/https?:\/\//u.test(loader.split('csvRecommendationInboxUiV1')[1] || '')) {
   throw new Error('Recommendation Inbox UI loaders must remain same-origin');
 }
-if (!allowlist.includes(`'${baseAssetPath}'`) || !allowlist.includes(`'${usabilityAssetPath}'`)) {
+if (!allowlist.includes(`'${baseAssetPath}'`) || !allowlist.includes(`'${usabilityAssetPath}'`) || !allowlist.includes(`'${triageAssetPath}'`)) {
   throw new Error('Recommendation Inbox assets are missing from the explicit Cloudflare Native deployment allowlist');
 }
 
-console.log('csv recommendation inbox operator UI usability contract: ok');
+console.log('csv recommendation inbox operator UI usability + triage contract: ok');
