@@ -350,11 +350,10 @@
   function currentDrawerReview(section) {
     const drawer = section.querySelector('[data-cfri-drawer]');
     if (!drawer || drawer.hidden) return null;
-    const title = String(drawer.querySelector('#cfriDrawerTitle')?.textContent || '').trim();
-    if (!title) return null;
-    const rows = [...section.querySelectorAll('tr[data-cfri-item]')];
-    const matching = rows.find((row) => String(row.children?.[1]?.querySelector('strong')?.textContent || '').trim() === title);
-    return matching ? state.reviews.get(String(matching.dataset.cfriItem || '')) || null : null;
+    const inboxPair = [...drawer.querySelectorAll('.cfri-dl > div')]
+      .find((node) => String(node.querySelector('dt')?.textContent || '').trim() === 'Inbox item ID');
+    const inboxItemId = String(inboxPair?.querySelector('dd')?.textContent || '').trim();
+    return inboxItemId ? state.reviews.get(inboxItemId) || null : null;
   }
 
   function renderGlobalStatus(section, mode, detail) {
