@@ -1,0 +1,66 @@
+name: Cumulative Runtime Control Plane Probe
+
+on:
+  push:
+    branches:
+      - acceptance/255-cumulative-runtime-promotion
+    paths:
+      - '.github/workflows/cumulative-runtime-control-plane-probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cumulative-runtime-control-plane-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Read-only Cloudflare Builds probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      EXPECTED_MAIN_SHA: 980631da32e88ecf0a31c89f2a41a8bacb430775
+      DEV_WORKER: ads-operations-web-dev
+      PROD_WORKER: ads-operations-web-prod
+    steps:
+      - name: Require dedicated acceptance credential
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo 'acceptance credential missing'; exit 1; }
+
+      - name: Probe existing Web Workers Builds control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+
+          workers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")"
+          printf '%s' "$workers" | jq -e '.success == true' >/dev/null
+
+          dev_tag="$(printf '%s' "$workers" | jq -er --arg n "$DEV_WORKER" '.result[] | select(.id == $n) | .tag')"
+          prod_tag="$(printf '%s' "$workers" | jq -er --arg n "$PROD_WORKER" '.result[] | select(.id == $n) | .tag')"
+          test -n "$dev_tag" && test -n "$prod_tag"
+
+          dev_triggers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$dev_tag/triggers")"
+          prod_triggers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$prod_tag/triggers")"
+          printf '%s' "$dev_triggers" | jq -e '.success == true and (.result | length) > 0' >/dev/null
+          printf '%s' "$prod_triggers" | jq -e '.success == true and (.result | length) > 0' >/dev/null
+
+          dev_builds="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$dev_tag/builds?per_page=3")"
+          prod_builds="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$prod_tag/builds?per_page=3")"
+          printf '%s' "$dev_builds" | jq -e '.success == true' >/dev/null
+          printf '%s' "$prod_builds" | jq -e '.success == true' >/dev/null
+
+          dev_trigger_uuid="$(printf '%s' "$dev_triggers" | jq -er '.result[0].trigger_uuid')"
+          prod_trigger_uuid="$(printf '%s' "$prod_triggers" | jq -er '.result[0].trigger_uuid')"
+
+          echo "DEV_WORKER_TAG=$dev_tag"
+          echo "DEV_TRIGGER_UUID=$dev_trigger_uuid"
+          echo "PROD_WORKER_TAG=$prod_tag"
+          echo "PROD_TRIGGER_UUID=$prod_trigger_uuid"
+          echo "EXPECTED_MAIN_SHA=$EXPECTED_MAIN_SHA"
+          echo 'CONTROL_PLANE_PROBE=PASS'
+          echo 'MUTATIONS=0'
