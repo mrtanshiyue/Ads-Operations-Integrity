@@ -289,11 +289,14 @@
       controls = document.createElement('div');
       controls.className = 'crlu-controls';
       controls.dataset.crluLifecycleControls = '';
+      controls.setAttribute('role', 'group');
+      controls.setAttribute('aria-label', 'Lifecycle presentation controls');
       const summary = section.querySelector('[data-csv-lifecycle-summary]');
       if (summary) summary.insertAdjacentElement('afterend', controls);
       else section.prepend(controls);
     }
 
+    const focusedControlKey = focusedLifecycleControlKey(controls);
     const rootOptions = [...new Set(roots.map((root) => String(root?.root || '').trim()).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b));
     controls.innerHTML = `<label>Lifecycle state<select data-crlu-control="state"><option value="">All states</option>${LIFECYCLE_STATES.map((value) => `<option value="${value}"${state.lifecycleFilter === value ? ' selected' : ''}>${escapeHtml(lifecycleLabel(value))}</option>`).join('')}</select></label>
@@ -306,6 +309,7 @@
         <option value="term"${state.lifecycleSort === 'term' ? ' selected' : ''}>Search term</option>
       </select></label>
       <div class="crlu-authority"><strong>Presentation only</strong><span>${scope.candidateEmissionAuthorized === true ? 'Governed candidate linkage visible' : 'Candidate emission blocked by scope'}</span></div>`;
+    restoreLifecycleControlFocus(controls, focusedControlKey);
 
     const byTerm = new Map(lifecycleItems.map((item) => [normalize(item?.searchTerm), item]));
     const tbody = section.querySelector('tbody');
@@ -334,6 +338,8 @@
       empty.className = 'crlu-note';
       empty.dataset.crluLifecycleEmpty = '';
       empty.hidden = true;
+      empty.setAttribute('role', 'status');
+      empty.setAttribute('aria-live', 'polite');
       controls.insertAdjacentElement('afterend', empty);
     }
     empty.hidden = visible.length > 0 || rows.length === 0;
@@ -367,6 +373,19 @@
     if (!HOST_SCOPE_TEXT_CONTROL_NAMES.has(name)) return;
     invalidateContext();
     scheduleSync();
+  }
+
+  function focusedLifecycleControlKey(controls) {
+    const active = document.activeElement;
+    if (!active || !controls?.contains(active)) return '';
+    const key = String(active.closest?.('[data-crlu-control]')?.dataset?.crluControl || '');
+    return ['state', 'root', 'sort'].includes(key) ? key : '';
+  }
+
+  function restoreLifecycleControlFocus(controls, key) {
+    if (!key) return;
+    const next = controls?.querySelector(`[data-crlu-control="${key}"]`);
+    if (typeof next?.focus === 'function') next.focus({ preventScroll: true });
   }
 
   function lifecycleComparator(a, b) {
