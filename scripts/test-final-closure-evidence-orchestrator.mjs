@@ -79,7 +79,7 @@ const base = {
     verified: true,
     artifact: 'live-human-review-service-auth-acceptance-1',
     runId: 1,
-    headSha: '37433c6fdbc8907b46e2fdb1b501e7d25fac6397',
+    headSha: 'd529e227107939b13bf91e14e18927a6a486b867',
   },
 };
 
