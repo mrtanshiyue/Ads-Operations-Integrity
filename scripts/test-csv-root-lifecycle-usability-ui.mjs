@@ -77,7 +77,8 @@ for (const value of taxonomy) {
 }
 assert.equal((asset.match(/const LIFECYCLE_STATES = Object\.freeze\(\[/g) || []).length, 1);
 assert.match(loader, /cloudflare-native-csv-root-lifecycle-usability-v1\.js\?v=1\.0\.2/);
-assert.match(loader, /usability\.addEventListener\('load',loadRootLifecycle/);
+assert.match(loader, /triage\.addEventListener\('load',loadRootLifecycle/);
+assert.match(loader, /usability\.addEventListener\('load',loadTriage/);
 assert.match(allowlist, /cloudflare-native-csv-root-lifecycle-usability-v1\.js/);
 
 console.log(JSON.stringify({
