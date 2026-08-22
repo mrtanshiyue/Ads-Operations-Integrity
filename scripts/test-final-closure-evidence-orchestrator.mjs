@@ -101,8 +101,38 @@ assert.equal(staged.status, 'blocked');
 assert(staged.blockers.includes('production_not_exact_main'));
 assert(staged.blockers.includes('production_release_trace_missing'));
 assert(staged.blockers.includes('human_review_live_acceptance_missing'));
+assert(!staged.blockers.includes('human_review_acceptance_head_mismatch'));
 assert.equal(staged.driftReceipt, undefined);
 assert.equal(staged.productionBaseline, undefined);
+
+const unreadableR2 = buildFinalClosureEvidence({
+  ...base,
+  r2: {
+    bucketStatus: 403,
+    bucketName: null,
+    location: null,
+    objectProbeStatuses: stores.map((store) => ({ storeId: store.storeId, status: 403 })),
+    verifiedObjectCount: 0,
+  },
+});
+assert.equal(unreadableR2.status, 'blocked');
+assert(unreadableR2.blockers.includes('production_r2_bucket_unreadable'));
+assert(unreadableR2.blockers.includes('production_r2_objects_unreadable'));
+assert(!unreadableR2.blockers.includes('production_r2_bucket_missing'));
+assert(!unreadableR2.blockers.includes('production_r2_location_mismatch'));
+assert(!unreadableR2.blockers.includes('four_store_r2_object_verification_required'));
+assert.equal(unreadableR2.productionBaseline, undefined);
+
+const wrongAcceptedHead = buildFinalClosureEvidence({
+  ...base,
+  acceptance: {
+    ...base.acceptance,
+    headSha: '1111111111111111111111111111111111111111',
+  },
+});
+assert.equal(wrongAcceptedHead.status, 'blocked');
+assert(wrongAcceptedHead.blockers.includes('human_review_acceptance_head_mismatch'));
+assert(!wrongAcceptedHead.blockers.includes('human_review_live_acceptance_missing'));
 
 const unsafe = buildFinalClosureEvidence({
   ...base,
