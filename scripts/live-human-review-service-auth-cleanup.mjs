@@ -12,13 +12,23 @@ const ROLE_KEY = `hr_acceptance_${RUN_ID}`;
 const SERVICE_TOKEN_NAME = `ads-ops-human-review-acceptance-${RUN_ID}`;
 const ACCESS_POLICY_NAME = `Human Review acceptance ${RUN_ID}`;
 const REVIEW_NOTE_PREFIX = `live-acceptance:${RUN_ID}:%`;
+const ACCEPTANCE_CREATOR_PATTERN = 'svc-hr-acceptance-%';
 
 const controlDb = createD1RestDatabase({ accountId: ACCOUNT_ID, databaseId: CONTROL_DB_ID, apiToken: API_TOKEN });
 const store01Db = createD1RestDatabase({ accountId: ACCOUNT_ID, databaseId: STORE01_DB_ID, apiToken: API_TOKEN });
 const cleanupErrors = [];
 
-await bestEffort('review_records', async () => {
-  await store01Db.prepare(`DELETE FROM advisory_review_records WHERE reviewer_user_id=?1 AND reviewer_note LIKE ?2`).bind(PRINCIPAL_USER_ID, REVIEW_NOTE_PREFIX).run();
+// advisory_review_records is an immutable audit plane by canonical migration 0019:
+// physical DELETE is intentionally forbidden. Cleanup therefore removes all mutable
+// run identity from acceptance-owned audit rows while preserving immutable source
+// evidence, fingerprint, created_by and created_at provenance.
+await bestEffort('review_records_neutralize', async () => {
+  await store01Db.prepare(`
+    UPDATE advisory_review_records
+    SET state='open', reviewer_user_id=NULL, reviewer_note=NULL,
+        reviewed_at=NULL, snoozed_until=NULL, updated_at=CURRENT_TIMESTAMP
+    WHERE created_by LIKE ?1 OR reviewer_user_id=?2 OR reviewer_note LIKE ?3
+  `).bind(ACCEPTANCE_CREATOR_PATTERN, PRINCIPAL_USER_ID, REVIEW_NOTE_PREFIX).run();
 });
 
 await bestEffort('store_members', async () => {
@@ -56,7 +66,20 @@ await bestEffort('service_token', async () => {
 });
 
 const verification = {
-  reviewRecords: await count(store01Db, `SELECT COUNT(*) AS count FROM advisory_review_records WHERE reviewer_user_id=?1`, PRINCIPAL_USER_ID),
+  reviewReviewerRefs: await count(store01Db, `SELECT COUNT(*) AS count FROM advisory_review_records WHERE reviewer_user_id=?1`, PRINCIPAL_USER_ID),
+  reviewNoteRefs: await count(store01Db, `SELECT COUNT(*) AS count FROM advisory_review_records WHERE reviewer_note LIKE ?1`, REVIEW_NOTE_PREFIX),
+  nonNeutralAcceptanceAuditRows: await count(store01Db, `
+    SELECT COUNT(*) AS count
+    FROM advisory_review_records
+    WHERE created_by LIKE ?1
+      AND (
+        state <> 'open'
+        OR reviewer_user_id IS NOT NULL
+        OR reviewer_note IS NOT NULL
+        OR reviewed_at IS NOT NULL
+        OR snoozed_until IS NOT NULL
+      )
+  `, ACCEPTANCE_CREATOR_PATTERN),
   storeMemberships: await count(controlDb, `SELECT COUNT(*) AS count FROM store_members WHERE user_id=?1`, PRINCIPAL_USER_ID),
   rolePermissions: await count(controlDb, `SELECT COUNT(*) AS count FROM role_permissions WHERE role_key=?1`, ROLE_KEY),
   roles: await count(controlDb, `SELECT COUNT(*) AS count FROM app_roles WHERE role_key=?1`, ROLE_KEY),
@@ -69,6 +92,16 @@ for (const [resource, value] of Object.entries(verification)) {
   assert.equal(value, 0, `temporary_acceptance_resource_leaked:${resource}:${value}`);
 }
 
+const immutableAudit = {
+  retainedRows: await count(store01Db, `SELECT COUNT(*) AS count FROM advisory_review_records WHERE created_by LIKE ?1`, ACCEPTANCE_CREATOR_PATTERN),
+  currentRunRows: await count(store01Db, `SELECT COUNT(*) AS count FROM advisory_review_records WHERE created_by=?1`, PRINCIPAL_USER_ID),
+  deleteForbiddenByCanonicalSchema: true,
+  mutableIdentityNeutralized: true,
+  executionAuthorized: false,
+  amazonMutationAuthorized: false,
+};
+assert(immutableAudit.currentRunRows <= 1, `unexpected_current_run_audit_row_count:${immutableAudit.currentRunRows}`);
+
 if (cleanupErrors.length) {
   throw new Error(`temporary_acceptance_cleanup_errors:${cleanupErrors.join('|')}`);
 }
@@ -77,6 +110,7 @@ console.log(JSON.stringify({
   result: 'PASS',
   runId: RUN_ID,
   verification,
+  immutableAudit,
   amazonRequests: 0,
 }));
 
@@ -88,8 +122,9 @@ async function bestEffort(resource, operation) {
   }
 }
 
-async function count(db, sql, param) {
-  const row = await db.prepare(sql).bind(param).first();
+async function count(db, sql, ...params) {
+  const statement = db.prepare(sql);
+  const row = params.length ? await statement.bind(...params).first() : await statement.first();
   return Number(row?.count ?? -1);
 }
 
