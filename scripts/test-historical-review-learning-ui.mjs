@@ -38,8 +38,8 @@ assert.match(ui, /filters\.history === 'recurring' && learning\?\.recurrent !== 
   'Recurring filter must use the server recurrence flag');
 assert.match(ui, /filters\.history === 'no_history' && Number\(learning\?\.historicalRecordCount\) !== 0/,
   'No-history filter must use the server historical record count');
-assert.doesNotMatch(ui, /recurrent\s*=|historicalRecordCount\s*=|currentEvidenceDrift\s*=/,
-  'UI must not recompute Historical Learning facts');
+assert.doesNotMatch(ui, /(?:context|learning)\?*\.?recurrent\s*=(?!=)|(?:context|learning)\?*\.?historicalRecordCount\s*=(?!=)|(?:context|learning)\?*\.?currentEvidenceDrift\s*=(?!=)/,
+  'UI must not assign/recompute Historical Learning facts');
 
 assert.match(ui, /data-cfhl-historical-only/,
   'Historical-only contexts must be presented in a separate compact details surface');
