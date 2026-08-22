@@ -7,6 +7,7 @@ import {
 import { handleCsvSearchTermIntelligenceApiRoute } from './csv-search-term-intelligence-api.js';
 import { buildRecommendationDecisionPacket } from './recommendation-decision-packet.js';
 import { buildGovernedKeywordNegativeCandidateLibrary } from './governed-keyword-negative-candidate-library.js';
+import { buildHistoricalReviewLearning } from './historical-review-learning.js';
 
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_BODY_BYTES = 64 * 1024;
@@ -137,14 +138,14 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
   const byFingerprint = new Map(stored.map((row) => [row.recommendation_fingerprint, row]));
   const staleByContext = groupStaleRowsByContext(stored);
 
-  const items = bindings.map(({ item, binding }) => {
+  const enriched = bindings.map(({ item, binding }) => {
     const row = byFingerprint.get(binding.recommendationFingerprint) || null;
     const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
     const staleRows = (staleByContext.get(contextKey) || [])
       .filter((candidate) => candidate.recommendation_fingerprint !== binding.recommendationFingerprint);
     const currentReview = row ? publicReview(row) : null;
     const staleEvidence = staleRows.map(publicDecisionReviewEvidence);
-    return {
+    const responseItem = {
       inboxItemId: item.inboxItemId,
       persistenceAuthorized: item?.review?.persistenceAuthorized === true,
       recommendationFingerprint: binding.recommendationFingerprint,
@@ -165,12 +166,25 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
         analysisScope: snapshot.analysisScope,
       }),
     };
+    return { contextKey, responseItem };
   });
+  const items = enriched.map((entry) => entry.responseItem);
 
   const candidateLibrary = buildGovernedKeywordNegativeCandidateLibrary({
     storeId,
     analysisScope: snapshot.analysisScope,
     items,
+  });
+  const historicalLearning = buildHistoricalReviewLearning({
+    storeId,
+    historicalEntries: stored.map((row) => ({
+      contextKey: reviewContextKeyFromEvidenceJson(row.source_evidence_json),
+      review: publicDecisionReviewEvidence(row),
+    })),
+    currentEntries: enriched.map((entry) => ({
+      contextKey: entry.contextKey,
+      item: entry.responseItem,
+    })),
   });
 
   return json(request, {
@@ -179,6 +193,7 @@ async function readCurrentReviewState({ request, db, storeId, snapshot }) {
     authority: reviewAuthority(),
     analysisScope: compactScope(snapshot.analysisScope),
     candidateLibrary,
+    historicalLearning,
     items,
   }, 200);
 }

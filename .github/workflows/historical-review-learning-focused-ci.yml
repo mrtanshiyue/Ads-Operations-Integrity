@@ -1,0 +1,54 @@
+name: Historical Review Learning Focused CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloudflare/runtime/historical-review-learning.js'
+      - 'cloudflare/runtime/csv-recommendation-human-review-api.js'
+      - 'assets/cloudflare-native-csv-recommendation-human-review-v1.js'
+      - 'scripts/test-historical-review-learning.mjs'
+      - 'scripts/test-historical-review-learning-integration.mjs'
+      - 'scripts/test-historical-review-learning-ui.mjs'
+      - 'scripts/test-recommendation-human-review-ui.mjs'
+      - '.github/workflows/historical-review-learning-focused-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: historical-review-learning-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Historical Review Learning v1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax-check historical learning server and UI projection
+        run: |
+          node --check cloudflare/runtime/historical-review-learning.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node --check scripts/test-historical-review-learning.mjs
+          node --check scripts/test-historical-review-learning-integration.mjs
+          node --check scripts/test-historical-review-learning-ui.mjs
+          node --check scripts/test-recommendation-human-review-ui.mjs
+
+      - name: Validate historical learning semantics, integration, and UI
+        run: |
+          node scripts/test-historical-review-learning.mjs
+          node scripts/test-historical-review-learning-integration.mjs
+          node scripts/test-historical-review-learning-ui.mjs
+          node scripts/test-recommendation-human-review-ui.mjs

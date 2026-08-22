@@ -1,10 +1,11 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
+  const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';
   const REQUEST_TIMEOUT_MS = 30000;
   const DURABLE_STATES = new Set(['acknowledged', 'needs_review']);
   const state = {
@@ -19,6 +20,8 @@
     authority: null,
     library: null,
     libraryItems: new Map(),
+    historicalLearning: null,
+    historicalCurrentByInboxItem: new Map(),
     libraryFilters: defaultLibraryFilters(),
     busy: new Set(),
     errors: new Map(),
@@ -30,6 +33,7 @@
       contractVersion: CONTRACT_VERSION,
       decisionPacketVersion: DECISION_PACKET_VERSION,
       candidateLibraryVersion: CANDIDATE_LIBRARY_VERSION,
+      historicalLearningVersion: HISTORICAL_LEARNING_VERSION,
       refresh: () => refresh(true),
     }),
     writable: false,
@@ -105,6 +109,8 @@
       state.reviews.clear();
       state.library = null;
       state.libraryItems.clear();
+      state.historicalLearning = null;
+      state.historicalCurrentByInboxItem.clear();
       renderGlobalStatus(section, 'scope_required', null);
       applySnapshot(section);
       return;
@@ -143,6 +149,10 @@
       state.reviews = new Map((payload.items || []).map((item) => [String(item?.inboxItemId || ''), item]).filter(([id]) => id));
       state.library = payload.candidateLibrary;
       state.libraryItems = new Map((payload.candidateLibrary?.items || []).map((item) => [String(item?.inboxItemId || ''), item]).filter(([id]) => id));
+      state.historicalLearning = payload.historicalLearning;
+      state.historicalCurrentByInboxItem = new Map((payload.historicalLearning?.contexts || [])
+        .filter((context) => context?.currentCandidateActive === true && String(context?.inboxItemId || ''))
+        .map((context) => [String(context.inboxItemId), context]));
       renderGlobalStatus(recommendationSection(), 'ready', null);
       applySnapshot(recommendationSection());
     } catch (error) {
@@ -152,6 +162,8 @@
       state.reviews.clear();
       state.library = null;
       state.libraryItems.clear();
+      state.historicalLearning = null;
+      state.historicalCurrentByInboxItem.clear();
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
       applySnapshot(recommendationSection());
     } finally {
@@ -245,6 +257,7 @@
       validateDecisionPacket(item?.decisionPacket, item);
     }
     validateCandidateLibrary(payload?.candidateLibrary, payload.items, expectedStoreId);
+    validateHistoricalLearning(payload?.historicalLearning, payload.items, expectedStoreId);
   }
 
   function validateDecisionPacket(packet, item) {
@@ -285,6 +298,59 @@
       if (item?.decisionPacketAvailable !== true) throw new Error('candidate_library_decision_packet_missing');
       if (item?.authority?.executionAuthorized !== false || item?.authority?.amazonMutationAuthorized !== false) throw new Error('candidate_library_item_authority_invalid');
     }
+  }
+
+  function validateHistoricalLearning(learning, reviewItems, expectedStoreId) {
+    if (learning?.schemaVersion !== HISTORICAL_LEARNING_VERSION) throw new Error('historical_learning_contract_version_mismatch');
+    if (String(learning?.storeId || '') !== expectedStoreId) throw new Error('historical_learning_store_scope_mismatch');
+    const authority = learning?.authority || {};
+    if (authority.readOnly !== true) throw new Error('historical_learning_read_only_boundary_invalid');
+    for (const key of ['adaptiveLearningAuthorized', 'ruleMutationAuthorized', 'recommendationMutationAuthorized', 'executionAuthorized', 'amazonMutationAuthorized']) {
+      if (authority[key] !== false) throw new Error(`historical_learning_${key}_boundary_invalid`);
+    }
+    const semantics = learning?.semantics || {};
+    for (const key of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {
+      if (semantics[key] !== false) throw new Error(`historical_learning_${key}_semantic_invalid`);
+    }
+    const contexts = Array.isArray(learning?.contexts) ? learning.contexts : null;
+    if (!contexts) throw new Error('historical_learning_contexts_missing');
+    const reviewById = new Map((reviewItems || []).map((item) => [String(item?.inboxItemId || ''), item]));
+    const currentIds = new Set();
+    for (const context of contexts) {
+      if (context?.authority?.readOnly !== true || context?.authority?.executionAuthorized !== false || context?.authority?.amazonMutationAuthorized !== false) {
+        throw new Error('historical_learning_context_authority_invalid');
+      }
+      if (typeof context?.recurrent !== 'boolean') throw new Error('historical_learning_recurrence_invalid');
+      if (context?.currentCandidateActive === true) {
+        const inboxItemId = String(context?.inboxItemId || '');
+        const current = reviewById.get(inboxItemId);
+        if (!current || currentIds.has(inboxItemId)) throw new Error('historical_learning_current_context_coverage_invalid');
+        currentIds.add(inboxItemId);
+        if (String(context?.currentFingerprint || '') !== String(current?.recommendationFingerprint || '')) throw new Error('historical_learning_current_fingerprint_mismatch');
+        if (String(context?.currentReviewState || '') !== String(current?.review?.state || 'unreviewed')) throw new Error('historical_learning_current_review_state_mismatch');
+        if (!nonNegativeInteger(context?.historicalRecordCount) || !nonNegativeInteger(context?.distinctFingerprintCount)
+          || !nonNegativeInteger(context?.currentMatchedRecordCount) || !nonNegativeInteger(context?.staleEvidenceCount)) {
+          throw new Error('historical_learning_current_counts_invalid');
+        }
+        if (typeof context?.currentEvidenceDrift !== 'boolean') throw new Error('historical_learning_current_drift_invalid');
+      } else {
+        for (const key of ['currentFingerprint', 'currentReviewState', 'currentReviewPersisted', 'currentMatchedRecordCount', 'staleEvidenceCount', 'currentEvidenceDrift']) {
+          if (context?.[key] !== null) throw new Error('historical_learning_historical_only_current_state_invalid');
+        }
+      }
+    }
+    if (currentIds.size !== reviewById.size) throw new Error('historical_learning_current_item_coverage_mismatch');
+    const summary = learning?.summary || {};
+    for (const key of ['historicalRecordCount', 'usableHistoricalRecordCount', 'unusableHistoricalRecordCount', 'historicalContextCount', 'currentContextCount', 'recurrentContextCount', 'currentMatchedRecordCount', 'staleEvidenceRecordCount', 'historicalOnlyContextCount']) {
+      if (!nonNegativeInteger(summary[key])) throw new Error('historical_learning_summary_count_invalid');
+    }
+    const historicalOnlyCount = contexts.filter((context) => context?.currentCandidateActive !== true && Number(context?.historicalRecordCount) > 0).length;
+    if (summary.historicalOnlyContextCount !== historicalOnlyCount) throw new Error('historical_learning_historical_only_count_mismatch');
+    if (summary.currentContextCount !== currentIds.size) throw new Error('historical_learning_current_count_mismatch');
+  }
+
+  function nonNegativeInteger(value) {
+    return Number.isInteger(value) && value >= 0;
   }
 
   function validateWriteResponse(payload, expectedStoreId) {
@@ -369,13 +435,14 @@
       else section.prepend(host);
     }
     const library = state.library;
-    if (!library) {
-      host.innerHTML = '<strong>Keyword / Negative Candidate Library</strong><span>Server library unavailable. No candidate class or review state is inferred client-side.</span>';
+    const learning = state.historicalLearning;
+    if (!library || !learning) {
+      host.innerHTML = '<strong>Keyword / Negative Candidate Library + Historical Learning</strong><span>Server projection unavailable. No candidate class, review state, recurrence, or evidence drift is inferred client-side.</span>';
       host.dataset.mode = 'unavailable';
       return;
     }
     if (library?.status?.available !== true) {
-      host.innerHTML = `<strong>Keyword / Negative Candidate Library unavailable.</strong><span>${esc(library?.status?.reasonCode || 'candidate_emission_not_authorized')} · governed candidate emission is blocked for this scope.</span>`;
+      host.innerHTML = `<strong>Keyword / Negative Candidate Library unavailable.</strong><span>${esc(library?.status?.reasonCode || 'candidate_emission_not_authorized')} · governed candidate emission is blocked for this scope. Historical review records are not presented as current candidates.</span>${historicalSummaryHtml(learning)}`;
       host.dataset.mode = 'blocked';
       return;
     }
@@ -383,13 +450,30 @@
     const summary = library.summary || {};
     const filters = state.libraryFilters;
     host.innerHTML = `<div class="cfgl-head"><div><strong>Keyword / Negative Candidate Library</strong><span>${esc(display(summary.candidateCount))} candidates · ${esc(display(summary.keywordCount))} keyword · ${esc(display(summary.negativeCount))} negative · ${esc(display(summary.staleEvidenceCandidateCount))} with stale evidence</span></div><button type="button" class="btn" data-cfgl-reset>Reset filters</button></div>
+      ${historicalSummaryHtml(learning)}
       <div class="cfgl-filters" role="group" aria-label="Governed candidate library filters">
         ${librarySelect('family', 'Family', filters.family, [['all','All'],['keyword','Keyword'],['negative','Negative']])}
         ${librarySelect('kind', 'Kind', filters.kind, [['all','All'],['harvest','Harvest'],['scale','Scale'],['exact_negative','Exact negative'],['phrase_negative_review','Phrase negative review']])}
         ${librarySelect('priority', 'Priority', filters.priority, [['all','All'],['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']])}
         ${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged']])}
         ${librarySelect('stale', 'Evidence', filters.stale, [['all','All'],['has_stale','Has stale evidence'],['no_stale','No stale evidence']])}
-      </div><small>Server-projected registry only. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, or evidence.</small>`;
+        ${librarySelect('history', 'History', filters.history, [['all','All'],['recurring','Recurring'],['no_history','No review history']])}
+      </div><small>Server-projected registry and historical review intelligence only. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, evidence, rules, or learning weights.</small>`;
+  }
+
+  function historicalSummaryHtml(learning) {
+    const summary = learning?.summary || {};
+    const historicalOnly = (learning?.contexts || []).filter((context) => context?.currentCandidateActive !== true && Number(context?.historicalRecordCount) > 0);
+    return `<div class="cfhl-summary" data-cfhl-summary>
+      <strong>Historical Review Learning</strong>
+      <span>${esc(display(summary.historicalRecordCount))} historical reviews · ${esc(display(summary.recurrentContextCount))} recurrent contexts · ${esc(display(summary.staleEvidenceRecordCount))} stale-evidence records · ${esc(display(summary.historicalOnlyContextCount))} historical-only contexts</span>
+      ${historicalOnly.length ? `<details data-cfhl-historical-only><summary>${historicalOnly.length} historical-only context${historicalOnly.length === 1 ? '' : 's'}</summary>${historicalOnly.map(historicalOnlyContextHtml).join('')}</details>` : '<small>No historical-only review contexts.</small>'}
+      <small>Recurrence is not effectiveness. Acknowledged is not approved or executed; needs_review is not rejected or failed. Historical Learning never changes recommendation rules or execution authority.</small>
+    </div>`;
+  }
+
+  function historicalOnlyContextHtml(context) {
+    return `<div class="cfhl-historical-only"><strong>${esc(context.value || context.inboxItemId || 'Historical context')}</strong><span>${esc(context.actionType || 'unknown action')} · ${esc(display(context.historicalRecordCount))} review record${Number(context.historicalRecordCount) === 1 ? '' : 's'} · latest ${esc(context.latestObservedAt || 'unavailable')}</span></div>`;
   }
 
   function librarySelect(key, label, selected, options) {
@@ -401,6 +485,7 @@
     if (!library || library?.status?.available !== true) return true;
     const item = state.libraryItems.get(inboxItemId);
     if (!item) return false;
+    const learning = state.historicalCurrentByInboxItem.get(inboxItemId);
     const filters = state.libraryFilters;
     if (filters.family !== 'all' && item.libraryFamily !== filters.family) return false;
     if (filters.kind !== 'all' && item.libraryKind !== filters.kind) return false;
@@ -408,6 +493,8 @@
     if (filters.review !== 'all' && item.currentReviewState !== filters.review) return false;
     if (filters.stale === 'has_stale' && Number(item.staleEvidenceCount) <= 0) return false;
     if (filters.stale === 'no_stale' && Number(item.staleEvidenceCount) > 0) return false;
+    if (filters.history === 'recurring' && learning?.recurrent !== true) return false;
+    if (filters.history === 'no_history' && Number(learning?.historicalRecordCount) !== 0) return false;
     return true;
   }
 
@@ -422,7 +509,10 @@
     const persisted = review.persisted === true;
     const allowed = item.persistenceAuthorized === true;
     const staleCount = Number(item?.decisionPacket?.reviewEvidence?.staleEvidenceCount ?? (Array.isArray(item.staleReviewIds) ? item.staleReviewIds.length : 0));
-    const status = `<span class="cfhr-state ${esc(reviewState)}">${esc(reviewState)}</span><small>${persisted ? 'persisted' : 'not persisted'}${viewedThisSession ? ' · viewed this session' : ''}${staleCount ? ` · ${staleCount} stale prior evidence record${staleCount === 1 ? '' : 's'}` : ''}</small>`;
+    const learning = state.historicalCurrentByInboxItem.get(inboxItemId);
+    const historicalCount = Number(learning?.historicalRecordCount || 0);
+    const historyMeta = ` · ${historicalCount} historical review record${historicalCount === 1 ? '' : 's'}${learning?.recurrent === true ? ' · recurring' : ''}`;
+    const status = `<span class="cfhr-state ${esc(reviewState)}">${esc(reviewState)}</span><small>${persisted ? 'persisted' : 'not persisted'}${viewedThisSession ? ' · viewed this session' : ''}${staleCount ? ` · ${staleCount} stale prior evidence record${staleCount === 1 ? '' : 's'}` : ''}${historyMeta}</small>`;
     const controls = allowed
       ? `<div class="cfhr-actions" role="group" aria-label="Human review actions">
           <button type="button" class="btn" data-cfhr-set="needs_review" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Needs review</button>
@@ -446,14 +536,31 @@
       scroll.appendChild(block);
     }
     const html = item
-      ? `${decisionPacketHtml(item.decisionPacket)}<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
+      ? `${decisionPacketHtml(item.decisionPacket)}${historicalLearningDrawerHtml(item.inboxItemId)}<h4>Durable Human Review</h4><div class="cfhr-drawer-grid">
           <div><span>State</span><strong>${esc(item.review?.state || 'unreviewed')}</strong></div>
           <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
           <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
           <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
         </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`
-      : '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Packet unavailable.</strong> No recommendation, review state, financial evidence, or provenance is inferred from the presentation layer.</div>';
+      : '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Packet unavailable.</strong> No recommendation, review state, financial evidence, historical learning, or provenance is inferred from the presentation layer.</div>';
     if (block.innerHTML !== html) block.innerHTML = html;
+  }
+
+  function historicalLearningDrawerHtml(inboxItemId) {
+    const context = state.historicalCurrentByInboxItem.get(String(inboxItemId || ''));
+    if (!context) {
+      return '<div class="cfhl-drawer"><h4>Historical Review Learning</h4><div class="cfri-callout warn"><strong>Historical context unavailable.</strong> The UI does not reconstruct recurrence or evidence drift.</div></div>';
+    }
+    return `<div class="cfhl-drawer" data-cfhl-drawer><h4>Historical Review Learning</h4><div class="cfhr-drawer-grid">
+      <div><span>Historical reviews</span><strong>${esc(display(context.historicalRecordCount))}</strong></div>
+      <div><span>Distinct fingerprints</span><strong>${esc(display(context.distinctFingerprintCount))}</strong></div>
+      <div><span>Current fingerprint matches</span><strong>${esc(display(context.currentMatchedRecordCount))}</strong></div>
+      <div><span>Stale evidence</span><strong>${esc(display(context.staleEvidenceCount))}</strong></div>
+      <div><span>Acknowledged / Needs review</span><strong>${esc(display(context.acknowledgedCount))} / ${esc(display(context.needsReviewCount))}</strong></div>
+      <div><span>Recurring / Evidence drift</span><strong>${esc(display(context.recurrent))} / ${esc(display(context.currentEvidenceDrift))}</strong></div>
+      <div><span>First observed</span><strong>${esc(context.firstObservedAt || 'unavailable')}</strong></div>
+      <div><span>Latest observed</span><strong>${esc(context.latestObservedAt || 'unavailable')}</strong></div>
+    </div><div class="cfri-callout warn"><strong>Learning boundary:</strong> Recurrence and evidence drift are historical review context only, not effectiveness. No learning weight, rule mutation, recommendation mutation, execution, or Amazon authority is created.</div></div>`;
   }
 
   function decisionPacketHtml(packet) {
@@ -534,12 +641,12 @@
       }
       host.dataset.mode = mode;
       const html = mode === 'ready'
-        ? '<strong>Human Review + Decision Packet + Candidate Library connected.</strong><span>Library and packet evidence are server-projected; only acknowledged and needs_review are durable. Execution and Amazon mutation remain disabled.</span>'
+        ? '<strong>Human Review + Decision Packet + Candidate Library + Historical Learning connected.</strong><span>All review, library, recurrence, and evidence-drift context is server-projected. Historical recurrence is not effectiveness; execution and Amazon mutation remain disabled.</span>'
         : mode === 'loading'
-          ? '<strong>Human Review / Decision Packet / Candidate Library checking current scope…</strong><span>No optimistic review or reconstructed evidence is shown.</span>'
+          ? '<strong>Human Review / Decision Packet / Candidate Library / Historical Learning checking current scope…</strong><span>No optimistic review, reconstructed evidence, or inferred learning state is shown.</span>'
           : mode === 'scope_required'
-            ? '<strong>Human Review / Decision Packet / Candidate Library unavailable.</strong><span>Select a current store and date range first.</span>'
-            : `<strong>Human Review / Decision Packet / Candidate Library failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no review, evidence, or candidate-library state is inferred.</span>`;
+            ? '<strong>Human Review / Decision Packet / Candidate Library / Historical Learning unavailable.</strong><span>Select a current store and date range first.</span>'
+            : `<strong>Human Review / Decision Packet / Candidate Library / Historical Learning failed closed.</strong><span>${esc(detail || 'request_failed')}. Existing governed recommendations remain read-only; no review, evidence, library, or learning state is inferred.</span>`;
       if (host.innerHTML !== html) host.innerHTML = html;
     });
   }
@@ -587,6 +694,8 @@
     state.reviews.clear();
     state.library = null;
     state.libraryItems.clear();
+    state.historicalLearning = null;
+    state.historicalCurrentByInboxItem.clear();
     state.libraryFilters = defaultLibraryFilters();
     state.busy.clear();
     state.errors.clear();
@@ -611,7 +720,7 @@
   }
 
   function defaultLibraryFilters() {
-    return { family: 'all', kind: 'all', priority: 'all', review: 'all', stale: 'all' };
+    return { family: 'all', kind: 'all', priority: 'all', review: 'all', stale: 'all', history: 'all' };
   }
 
   function recommendationSection() {
@@ -663,12 +772,13 @@
     style.textContent = `
       .cfhr-status{display:flex;gap:8px;align-items:center;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--hover-bg);font-size:10px}.cfhr-status span{color:var(--muted)}
       .cfhr-status[data-mode="ready"]{border-color:color-mix(in srgb,#16a34a 35%,var(--line));background:color-mix(in srgb,#16a34a 7%,var(--card))}.cfhr-status[data-mode="failed"]{border-color:color-mix(in srgb,#dc2626 35%,var(--line));background:color-mix(in srgb,#dc2626 7%,var(--card))}
-      .cfgl-library{display:flex;flex-direction:column;gap:7px;margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfgl-library>span,.cfgl-library small,.cfgl-head span{font-size:9px;color:var(--muted)}.cfgl-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.cfgl-head>div{display:flex;flex-direction:column;gap:2px}.cfgl-head .btn{padding:4px 7px;font-size:9px}.cfgl-filters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px}.cfgl-filters label{display:flex;flex-direction:column;gap:3px}.cfgl-filters label span{font-size:8px;color:var(--muted)}.cfgl-filters select{width:100%;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:7px;background:var(--input-bg);color:var(--text);font-size:9px}.cfgl-filtered-out{display:none!important}.cfgl-library[data-mode="blocked"],.cfgl-library[data-mode="unavailable"]{border-color:color-mix(in srgb,var(--warn) 35%,var(--line));background:color-mix(in srgb,var(--warn) 6%,var(--card))}
+      .cfgl-library{display:flex;flex-direction:column;gap:7px;margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfgl-library>span,.cfgl-library small,.cfgl-head span{font-size:9px;color:var(--muted)}.cfgl-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.cfgl-head>div{display:flex;flex-direction:column;gap:2px}.cfgl-head .btn{padding:4px 7px;font-size:9px}.cfgl-filters{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}.cfgl-filters label{display:flex;flex-direction:column;gap:3px}.cfgl-filters label span{font-size:8px;color:var(--muted)}.cfgl-filters select{width:100%;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:7px;background:var(--input-bg);color:var(--text);font-size:9px}.cfgl-filtered-out{display:none!important}.cfgl-library[data-mode="blocked"],.cfgl-library[data-mode="unavailable"]{border-color:color-mix(in srgb,var(--warn) 35%,var(--line));background:color-mix(in srgb,var(--warn) 6%,var(--card))}
+      .cfhl-summary{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--hover-bg)}.cfhl-summary>span,.cfhl-summary small,.cfhl-historical-only span{font-size:9px;color:var(--muted)}.cfhl-summary details{margin-top:2px}.cfhl-summary summary{cursor:pointer;font-size:9px;font-weight:700}.cfhl-historical-only{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid var(--line)}.cfhl-historical-only strong{font-size:9px}.cfhl-drawer{margin:10px 0}.cfhl-drawer h4{margin:0 0 7px}
       [data-cfhr-review]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:145px}.cfhr-state{display:inline-flex;padding:3px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfhr-state.acknowledged{color:var(--good);background:var(--softGood)}.cfhr-state.needs_review{color:var(--warn);background:var(--softWarn)}.cfhr-state.unavailable{color:var(--bad);background:var(--softBad)}
       .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy{color:var(--muted)}.cfhr-error{display:block;color:var(--bad);font-size:9px;font-style:normal;overflow-wrap:anywhere}.cfhr-blocked{color:var(--muted)}
       .cfhr-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:8px}.cfhr-drawer-grid>div{padding:7px 8px;border:1px solid var(--line);border-radius:8px}.cfhr-drawer-grid span,.cfhr-drawer-grid strong{display:block}.cfhr-drawer-grid span{font-size:9px;color:var(--muted)}.cfhr-drawer-grid strong{margin-top:2px;font-size:10px;overflow-wrap:anywhere}
       .cfdp{display:flex;flex-direction:column;gap:9px;margin-bottom:12px}.cfdp h4{margin:0}.cfdp-section{padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--card)}.cfdp-section h5{margin:0 0 7px;font-size:10px}.cfdp-section p,.cfdp-section small{margin:5px 0;color:var(--muted);font-size:9px}.cfdp-list{display:grid;gap:4px;margin-top:5px}.cfdp-list>strong{font-size:9px}.cfdp-list>span{font-size:9px;color:var(--muted)}.cfdp-evidence{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:5px 8px;align-items:start}.cfdp-evidence span{font-size:9px;color:var(--muted)}.cfdp-evidence strong,.cfdp-evidence code{font-size:9px;overflow-wrap:anywhere}.cfdp details{margin-top:7px}.cfdp summary{cursor:pointer;font-size:9px;font-weight:700}.cfdp pre{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:7px;border:1px solid var(--line);border-radius:7px;font-size:8px}.cfdp-stale{display:grid;gap:3px;padding:6px 0;border-bottom:1px solid var(--line)}.cfdp-stale code{overflow-wrap:anywhere;font-size:8px}
-      @media(max-width:900px){.cfgl-filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      @media(max-width:1050px){.cfgl-filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
       @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}.cfdp-evidence{grid-template-columns:1fr}.cfgl-head{align-items:flex-start;flex-direction:column}.cfgl-filters{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
