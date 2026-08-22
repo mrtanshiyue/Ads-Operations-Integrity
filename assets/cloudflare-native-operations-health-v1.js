@@ -1,8 +1,14 @@
 (function initCloudflareNativeOperationsHealth(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const AUDIT_LIMIT = 20;
+  const ATTENTION = Object.freeze({
+    FAILURE: 1,
+    FRESHNESS: 2,
+    MAPPING: 3,
+    HEALTHY: 4,
+  });
 
   function api() {
     if (!global.CloudflareNativeAPI) {
@@ -33,12 +39,160 @@
     return api().capabilities();
   }
 
+  function classifyStoreHealth(store, failures = [], loadError = null) {
+    const sync = store?.sync || {};
+    const rollups = Array.isArray(store?.rollups) ? store.rollups : [];
+    const relevantFailures = Array.isArray(failures) ? failures : [];
+    const mapping = rollups.reduce((totals, row) => {
+      totals.unmapped += safeCount(row?.unmappedRows);
+      totals.ambiguous += safeCount(row?.ambiguousRows);
+      return totals;
+    }, { unmapped: 0, ambiguous: 0 });
+
+    if (loadError) {
+      return attention(ATTENTION.FAILURE, 'evidence_gap', 'P1 Evidence gap',
+        `Health read failed: ${errorText(loadError)}`, mapping);
+    }
+
+    if (relevantFailures.length) {
+      const first = relevantFailures[0] || {};
+      const detail = [first.rollupType, first.partitionKey, first.errorCode].filter(Boolean).join(' · ');
+      return attention(ATTENTION.FAILURE, 'health_failure', 'P1 Health failure',
+        detail ? `Recent rollup failure: ${detail}` : 'Recent rollup failure reported', mapping);
+    }
+
+    const syncStatus = String(sync.status || '').trim().toLowerCase();
+    if (['failed', 'error', 'blocked'].includes(syncStatus)) {
+      return attention(ATTENTION.FAILURE, 'health_failure', 'P1 Health failure',
+        `Sync status: ${syncStatus}${sync.lastErrorCode ? ` · ${sync.lastErrorCode}` : ''}`, mapping);
+    }
+
+    const lastSuccessMs = timestampMs(sync.lastSuccessAt);
+    const lastErrorMs = timestampMs(sync.lastErrorAt);
+    if (lastErrorMs && (!lastSuccessMs || lastErrorMs > lastSuccessMs)) {
+      return attention(ATTENTION.FAILURE, 'health_failure', 'P1 Health failure',
+        `Latest sync evidence is an error${sync.lastErrorCode ? ` · ${sync.lastErrorCode}` : ''}`, mapping);
+    }
+
+    if (!hasFreshnessEvidence(sync, rollups)) {
+      return attention(ATTENTION.FAILURE, 'evidence_gap', 'P1 Evidence gap',
+        'No sync or rollup freshness evidence is available', mapping);
+    }
+
+    const lag = nullableFinite(sync.lagMinutes);
+    if (lag !== null && lag > 0) {
+      return attention(ATTENTION.FRESHNESS, 'freshness_attention', 'P2 Freshness',
+        `Reported data lag: ${formatNumber(lag)} min`, mapping);
+    }
+
+    if (mapping.unmapped > 0 || mapping.ambiguous > 0) {
+      return attention(ATTENTION.MAPPING, 'mapping_anomaly', 'P3 Mapping',
+        `Unresolved mapping: ${mapping.unmapped} unmapped · ${mapping.ambiguous} ambiguous`, mapping);
+    }
+
+    return attention(ATTENTION.HEALTHY, 'healthy', 'P4 Healthy',
+      'No failure, reported lag, or mapping anomaly in the authoritative health read model', mapping);
+  }
+
+  function rankStoreHealthRows(rows) {
+    return (Array.isArray(rows) ? rows : []).slice().sort((left, right) => {
+      const priorityDelta = safeCount(left?.priority) - safeCount(right?.priority);
+      if (priorityDelta) return priorityDelta;
+      const orderDelta = safeCount(left?.storeOrder) - safeCount(right?.storeOrder);
+      if (orderDelta) return orderDelta;
+      return String(left?.storeCode || left?.storeId || '').localeCompare(String(right?.storeCode || right?.storeId || ''));
+    });
+  }
+
+  function buildCommandRow(storeMeta, payload, loadError = null, storeOrder = 0) {
+    const payloadStores = Array.isArray(payload?.stores) ? payload.stores : [];
+    const store = payloadStores.find((row) => String(row?.storeId || '') === String(storeMeta?.storeId || ''))
+      || payloadStores[0]
+      || null;
+    const failures = (Array.isArray(payload?.recentRollupFailures) ? payload.recentRollupFailures : [])
+      .filter((row) => !row?.storeId || String(row.storeId) === String(storeMeta?.storeId || ''));
+    const classification = classifyStoreHealth(store, failures, loadError || (!store ? new Error('health_store_missing') : null));
+    const sync = store?.sync || {};
+    const rollups = Array.isArray(store?.rollups) ? store.rollups : [];
+    return {
+      ...classification,
+      storeId: String(storeMeta?.storeId || store?.storeId || ''),
+      storeCode: String(storeMeta?.storeCode || store?.storeCode || ''),
+      displayName: String(storeMeta?.displayName || store?.displayName || ''),
+      marketplaceCode: String(storeMeta?.marketplaceCode || ''),
+      storeOrder,
+      syncStatus: String(sync.status || 'unknown'),
+      lagMinutes: nullableFinite(sync.lagMinutes),
+      lastSuccessAt: sync.lastSuccessAt || null,
+      evidenceAt: latestEvidenceAt(sync, rollups, payload?.generatedAt),
+      failureCount: failures.length,
+      readError: loadError ? errorText(loadError) : null,
+    };
+  }
+
+  function attention(priority, key, label, reason, mapping) {
+    return Object.freeze({
+      priority,
+      attentionKey: key,
+      label,
+      reason,
+      unmappedRows: safeCount(mapping?.unmapped),
+      ambiguousRows: safeCount(mapping?.ambiguous),
+    });
+  }
+
+  function hasFreshnessEvidence(sync, rollups) {
+    if (sync?.lastSuccessAt || sync?.updatedAt) return true;
+    return (Array.isArray(rollups) ? rollups : []).some((row) =>
+      row?.lastSuccessDate || row?.lastSuccessAsOfDate || row?.updatedAt);
+  }
+
+  function latestEvidenceAt(sync, rollups, generatedAt) {
+    const candidates = [
+      sync?.lastSuccessAt,
+      sync?.updatedAt,
+      ...(Array.isArray(rollups) ? rollups.flatMap((row) => [
+        row?.lastSuccessAsOfDate,
+        row?.lastSuccessDate,
+        row?.updatedAt,
+      ]) : []),
+    ].filter(Boolean);
+    if (!candidates.length) return generatedAt || null;
+    return candidates.slice().sort((a, b) => timestampMs(b) - timestampMs(a))[0] || generatedAt || null;
+  }
+
+  function timestampMs(value) {
+    if (!value) return 0;
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function nullableFinite(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function safeCount(value) {
+    const parsed = Number(value || 0);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function formatNumber(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return '—';
+    return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1);
+  }
+
   const publicApi = Object.freeze({
     version: VERSION,
     dataHealth,
     auditEvents,
     listStores,
     capabilities,
+    classifyStoreHealth,
+    rankStoreHealthRows,
+    buildCommandRow,
     mount,
     open,
   });
@@ -59,6 +213,9 @@
     capabilities: null,
     requestSerial: 0,
     health: null,
+    healthByStore: Object.create(null),
+    overview: [],
+    overviewGeneratedAt: '',
     audits: [],
   };
 
@@ -82,8 +239,8 @@
     button.id = 'btnNativeOperationsHealth';
     button.type = 'button';
     button.className = 'btn';
-    button.textContent = '运营健康';
-    button.title = '查看 Cloudflare Native 数据健康、rollup 水位和最近审计事件';
+    button.textContent = '运营总览';
+    button.title = '查看 Four-Store Command Board、数据健康、rollup 水位和最近审计事件';
     button.style.display = 'none';
     button.addEventListener('click', open);
     host.insertBefore(button, host.firstChild);
@@ -98,19 +255,34 @@
       <div class="largeModal cfOpsHealthModal">
         <div class="largeModalHeader cfOpsHealthHeader">
           <div>
-            <div class="cfOpsHealthEyebrow">PHASE 3 · GATE 3.2 · READ ONLY</div>
-            <h2 id="nativeOperationsHealthTitle">运营健康与审计证据</h2>
-            <div class="small">把 store sync health、rollup watermark、异常计数与治理 audit 收敛到同一运营视图；不提供任何写入、同步启动或部署操作。</div>
+            <div class="cfOpsHealthEyebrow">PRODUCTIZATION · EXECUTIVE OPERATIONS · READ ONLY</div>
+            <h2 id="nativeOperationsHealthTitle">Four-Store Command Board</h2>
+            <div class="small">跨店只读聚合现有 server-authoritative health evidence，按明确证据排序处理优先级；不生成置信度、财务影响或执行建议。</div>
           </div>
           <div class="cfOpsHealthHeaderActions">
             <span id="cfOpsHealthAccess" class="cfOpsHealthAccess">只读</span>
-            <button id="btnCfOpsHealthRefresh" class="btn" type="button">刷新</button>
+            <button id="btnCfOpsHealthRefresh" class="btn" type="button">刷新全部</button>
             <button id="btnCfOpsHealthClose" class="btn" type="button">关闭</button>
           </div>
         </div>
         <div class="largeModalBody cfOpsHealthBody">
+          <section class="cfOpsHealthSection cfOpsHealthOverview" aria-labelledby="cfOpsHealthOverviewHeading">
+            <div class="cfOpsHealthSectionHead">
+              <div><div class="cfOpsHealthKicker">ATTENTION ORDER</div><h3 id="cfOpsHealthOverviewHeading">跨店处理顺序</h3></div>
+              <span class="small" id="cfOpsHealthOverviewGenerated">尚未读取</span>
+            </div>
+            <div class="cfOpsHealthSummary" id="cfOpsHealthSummary"></div>
+            <div class="table-container cfOpsHealthTableWrap cfOpsHealthOverviewWrap">
+              <table class="cfOpsHealthTable">
+                <thead><tr><th>Priority</th><th>Store</th><th>Why</th><th>Lag</th><th>Mapping</th><th>Last success</th><th>Action</th></tr></thead>
+                <tbody id="cfOpsHealthOverviewRows"></tbody>
+              </table>
+            </div>
+            <div class="small cfOpsHealthRule">Deterministic order: health failure / evidence gap → reported lag → unresolved mapping → healthy. Evidence gap is fail-closed and is never presented as healthy.</div>
+          </section>
+
           <div class="cfOpsHealthControls">
-            <label>店铺<select id="cfOpsHealthStore"></select></label>
+            <label>当前检查店铺<select id="cfOpsHealthStore"></select></label>
             <div class="small cfOpsHealthGenerated" id="cfOpsHealthGenerated">尚未读取</div>
           </div>
 
@@ -162,7 +334,7 @@
             </div>
           </section>
 
-          <div class="small cfOpsHealthFoot">数据来源仅为 same-origin <code>analyticsDataHealth</code> 与 <code>auditEvents</code>。本面板不调用 <code>startSync</code>，不修改 Control/Store D1，不触发 Amazon，不执行 Cloudflare deployment。</div>
+          <div class="small cfOpsHealthFoot">数据来源仅为 same-origin <code>stores</code>、<code>capabilities</code>、<code>analyticsDataHealth</code> 与 <code>auditEvents</code>。本面板不调用 <code>startSync</code>，不修改 Control/Store D1，不触发 Amazon，不执行 Cloudflare deployment。</div>
         </div>
       </div>`;
     global.document.body.appendChild(modal);
@@ -171,9 +343,7 @@
     global.document.querySelector('#btnCfOpsHealthClose')?.addEventListener('click', close);
     global.document.querySelector('#btnCfOpsHealthRefresh')?.addEventListener('click', refresh);
     global.document.querySelector('#cfOpsHealthStore')?.addEventListener('change', async (event) => {
-      state.storeId = String(event.target.value || '');
-      renderAccess();
-      await refresh();
+      await selectStore(String(event.target.value || ''));
     });
     global.document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && state.open) close();
@@ -226,28 +396,141 @@
   async function refresh() {
     if (!state.open || !state.storeId || state.loading) return;
     const serial = ++state.requestSerial;
-    setBusy(true, '正在读取运营健康与审计证据…');
+    setBusy(true, '正在读取跨店运营健康证据…');
     const auditAllowed = canReadAudit(state.storeId);
+    const healthTasks = state.stores.map(async (store, storeOrder) => {
+      try {
+        const payload = await dataHealth(store.storeId);
+        return { store, storeOrder, payload, row: buildCommandRow(store, payload, null, storeOrder) };
+      } catch (error) {
+        return { store, storeOrder, payload: null, row: buildCommandRow(store, null, error, storeOrder) };
+      }
+    });
+    const auditTask = auditAllowed
+      ? auditEvents(state.storeId).then((payload) => ({ payload, error: null })).catch((error) => ({ payload: null, error }))
+      : Promise.resolve({ payload: { items: [] }, error: null });
+
     try {
-      const [healthPayload, auditPayload] = await Promise.all([
-        dataHealth(state.storeId),
-        auditAllowed ? auditEvents(state.storeId) : Promise.resolve({ items: [] }),
-      ]);
+      const [healthResults, auditResult] = await Promise.all([Promise.all(healthTasks), auditTask]);
       if (serial !== state.requestSerial) return;
-      state.health = healthPayload || null;
-      state.audits = Array.isArray(auditPayload?.items) ? auditPayload.items : [];
+
+      state.healthByStore = Object.create(null);
+      for (const result of healthResults) {
+        if (result.payload) state.healthByStore[result.store.storeId] = result.payload;
+      }
+      state.overview = rankStoreHealthRows(healthResults.map((result) => result.row));
+      state.overviewGeneratedAt = latestGeneratedAt(healthResults.map((result) => result.payload));
+      state.health = state.healthByStore[state.storeId] || null;
+      state.audits = Array.isArray(auditResult.payload?.items) ? auditResult.payload.items : [];
+
+      renderOverview();
       renderHealth();
       renderAudits(auditAllowed);
-      setStatus('运营健康证据已刷新', 'ok');
-    } catch (error) {
-      if (serial !== state.requestSerial) return;
-      state.health = null;
-      state.audits = [];
-      renderHealth();
-      renderAudits(auditAllowed);
-      setStatus(errorText(error), 'bad');
+
+      const evidenceGaps = state.overview.filter((row) => row.attentionKey === 'evidence_gap').length;
+      if (evidenceGaps) {
+        setStatus(`${evidenceGaps} 个店铺缺少可证明的健康证据；已 fail-closed 排到最前`, 'bad');
+      } else if (auditResult.error) {
+        setStatus(`跨店健康已刷新；当前店铺 audit 读取失败 · ${errorText(auditResult.error)}`, 'bad');
+      } else {
+        setStatus('跨店运营健康证据已刷新', 'ok');
+      }
     } finally {
       if (serial === state.requestSerial) setBusy(false);
+    }
+  }
+
+  async function selectStore(storeId) {
+    const id = String(storeId || '');
+    if (!id || !state.stores.some((store) => store.storeId === id) || !canReadAnalytics(id)) return;
+    state.storeId = id;
+    state.health = state.healthByStore[id] || null;
+    renderStores();
+    renderAccess();
+    renderHealth();
+    await refreshAudit();
+  }
+
+  async function refreshAudit() {
+    if (!state.open || !state.storeId) return;
+    const allowed = canReadAudit(state.storeId);
+    if (!allowed) {
+      state.audits = [];
+      renderAudits(false);
+      return;
+    }
+    try {
+      const payload = await auditEvents(state.storeId);
+      state.audits = Array.isArray(payload?.items) ? payload.items : [];
+      renderAudits(true);
+    } catch (error) {
+      state.audits = [];
+      renderAudits(true);
+      setStatus(`当前店铺 audit 读取失败 · ${errorText(error)}`, 'bad');
+    }
+  }
+
+  function latestGeneratedAt(payloads) {
+    const values = (Array.isArray(payloads) ? payloads : [])
+      .map((payload) => payload?.generatedAt)
+      .filter(Boolean)
+      .sort((a, b) => timestampMs(b) - timestampMs(a));
+    return values[0] || '';
+  }
+
+  function renderOverview() {
+    const generated = global.document.querySelector('#cfOpsHealthOverviewGenerated');
+    if (generated) {
+      generated.textContent = state.overviewGeneratedAt
+        ? `Generated ${state.overviewGeneratedAt} · ${state.overview.length} stores`
+        : `${state.overview.length} readable stores`;
+    }
+
+    const summary = global.document.querySelector('#cfOpsHealthSummary');
+    if (summary) {
+      summary.replaceChildren();
+      const counts = [
+        ['P1 Health / evidence', state.overview.filter((row) => row.priority === ATTENTION.FAILURE).length, 'p1'],
+        ['P2 Freshness', state.overview.filter((row) => row.priority === ATTENTION.FRESHNESS).length, 'p2'],
+        ['P3 Mapping', state.overview.filter((row) => row.priority === ATTENTION.MAPPING).length, 'p3'],
+        ['P4 Healthy', state.overview.filter((row) => row.priority === ATTENTION.HEALTHY).length, 'p4'],
+      ];
+      for (const [label, value, tone] of counts) {
+        const chip = global.document.createElement('span');
+        chip.className = 'cfOpsHealthSummaryChip';
+        chip.dataset.tone = tone;
+        chip.textContent = `${label}: ${value}`;
+        summary.appendChild(chip);
+      }
+    }
+
+    const tbody = global.document.querySelector('#cfOpsHealthOverviewRows');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    if (!state.overview.length) return appendEmpty(tbody, 7, '当前身份没有可读店铺健康证据');
+
+    for (const row of state.overview) {
+      const tr = global.document.createElement('tr');
+      tr.dataset.priority = String(row.priority);
+      const priority = textCell(row.label);
+      priority.dataset.priority = String(row.priority);
+      tr.appendChild(priority);
+      tr.appendChild(textCell([row.displayName || row.storeCode || row.storeId, row.marketplaceCode].filter(Boolean).join('\n')));
+      tr.appendChild(textCell(row.reason));
+      tr.appendChild(textCell(row.lagMinutes === null ? '—' : `${formatNumber(row.lagMinutes)} min`));
+      tr.appendChild(textCell(`${row.unmappedRows} / ${row.ambiguousRows}`));
+      tr.appendChild(textCell(row.lastSuccessAt || '—'));
+
+      const action = global.document.createElement('td');
+      const inspect = global.document.createElement('button');
+      inspect.type = 'button';
+      inspect.className = 'btn cfOpsHealthInspect';
+      inspect.textContent = row.storeId === state.storeId ? '当前店铺' : '查看店铺';
+      inspect.disabled = row.storeId === state.storeId;
+      inspect.addEventListener('click', () => { void selectStore(row.storeId); });
+      action.appendChild(inspect);
+      tr.appendChild(action);
+      tbody.appendChild(tr);
     }
   }
 
@@ -358,7 +641,10 @@
     if (!badge) return;
     const analytics = canReadAnalytics(state.storeId);
     const audit = canReadAudit(state.storeId);
-    badge.textContent = analytics ? (audit ? 'analytics.read + audit.read' : 'analytics.read') : '无权限';
+    const readableStores = state.stores.filter((store) => canReadAnalytics(store.storeId)).length;
+    badge.textContent = analytics
+      ? `${readableStores} stores · ${audit ? 'analytics.read + audit.read' : 'analytics.read'}`
+      : '无权限';
     badge.dataset.mode = analytics ? (audit ? 'full' : 'health') : 'none';
   }
 
@@ -463,11 +749,12 @@
     const style = global.document.createElement('style');
     style.id = 'cloudflareOperationsHealthStyles';
     style.textContent = `
-      .cfOpsHealthOverlay{display:none;z-index:10070}.cfOpsHealthModal{width:min(1280px,96vw);max-height:94vh}.cfOpsHealthHeader{gap:14px;align-items:flex-start}.cfOpsHealthEyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--accent);margin-bottom:4px}.cfOpsHealthHeader h2{margin:0 0 4px;font-size:20px}.cfOpsHealthHeaderActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.cfOpsHealthAccess{padding:5px 9px;border-radius:999px;background:var(--chip);font-size:10px;font-weight:800;color:var(--muted)}.cfOpsHealthAccess[data-mode="full"]{color:var(--good)}.cfOpsHealthAccess[data-mode="health"]{color:var(--accent)}
+      .cfOpsHealthOverlay{display:none;z-index:10070}.cfOpsHealthModal{width:min(1320px,97vw);max-height:94vh}.cfOpsHealthHeader{gap:14px;align-items:flex-start}.cfOpsHealthEyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--accent);margin-bottom:4px}.cfOpsHealthHeader h2{margin:0 0 4px;font-size:20px}.cfOpsHealthHeaderActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.cfOpsHealthAccess{padding:5px 9px;border-radius:999px;background:var(--chip);font-size:10px;font-weight:800;color:var(--muted)}.cfOpsHealthAccess[data-mode="full"]{color:var(--good)}.cfOpsHealthAccess[data-mode="health"]{color:var(--accent)}
       .cfOpsHealthBody{display:grid;gap:12px}.cfOpsHealthControls{display:flex;gap:12px;align-items:end;justify-content:space-between;flex-wrap:wrap}.cfOpsHealthControls label{display:grid;gap:4px;min-width:240px;font-size:10px;color:var(--muted)}.cfOpsHealthControls select{border:1px solid var(--line);border-radius:10px;background:var(--input-bg);color:var(--text);padding:8px 9px}.cfOpsHealthGenerated{color:var(--muted)}.cfOpsHealthStatus{min-height:18px;font-size:11px;color:var(--muted)}.cfOpsHealthStatus[data-tone="ok"]{color:var(--good)}.cfOpsHealthStatus[data-tone="bad"]{color:var(--bad)}
-      .cfOpsHealthSection{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px}.cfOpsHealthSectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.cfOpsHealthKicker{font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--muted)}.cfOpsHealthSection h3{margin:2px 0 0;font-size:14px}.cfOpsHealthPill{padding:5px 9px;border-radius:999px;background:var(--chip);font-size:10px;font-weight:800}.cfOpsHealthPill[data-status="success"],.cfOpsHealthPill[data-status="healthy"],.cfOpsHealthPill[data-status="idle"]{color:var(--good)}.cfOpsHealthPill[data-status="failed"],.cfOpsHealthPill[data-status="error"]{color:var(--bad)}
+      .cfOpsHealthSection{border:1px solid var(--line);border-radius:14px;background:var(--card);padding:12px}.cfOpsHealthOverview{border-width:2px}.cfOpsHealthSectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.cfOpsHealthKicker{font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--muted)}.cfOpsHealthSection h3{margin:2px 0 0;font-size:14px}.cfOpsHealthPill{padding:5px 9px;border-radius:999px;background:var(--chip);font-size:10px;font-weight:800}.cfOpsHealthPill[data-status="success"],.cfOpsHealthPill[data-status="healthy"],.cfOpsHealthPill[data-status="idle"]{color:var(--good)}.cfOpsHealthPill[data-status="failed"],.cfOpsHealthPill[data-status="error"]{color:var(--bad)}
+      .cfOpsHealthSummary{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px}.cfOpsHealthSummaryChip{padding:6px 9px;border:1px solid var(--line);border-radius:999px;background:var(--input-bg);font-size:10px;font-weight:800}.cfOpsHealthSummaryChip[data-tone="p1"]{color:var(--bad)}.cfOpsHealthSummaryChip[data-tone="p4"]{color:var(--good)}.cfOpsHealthRule{margin-top:8px;color:var(--muted)}.cfOpsHealthTable td[data-priority="1"]{color:var(--bad);font-weight:800}.cfOpsHealthTable td[data-priority="2"],.cfOpsHealthTable td[data-priority="3"]{font-weight:800}.cfOpsHealthInspect{white-space:nowrap}
       .cfOpsHealthCards{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px}.cfOpsHealthCard{border:1px solid var(--line);border-radius:10px;padding:9px;background:var(--input-bg);min-width:0}.cfOpsHealthCardKey{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.cfOpsHealthCardValue{margin-top:5px;font-size:11px;font-weight:700;overflow-wrap:anywhere}
-      .cfOpsHealthTableWrap{max-height:260px;overflow:auto}.cfOpsHealthFailureWrap,.cfOpsHealthAuditWrap{max-height:190px}.cfOpsHealthTable{width:100%;border-collapse:collapse}.cfOpsHealthTable th,.cfOpsHealthTable td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:10px}.cfOpsHealthTable th{position:sticky;top:0;background:var(--card);z-index:1;color:var(--muted)}.cfOpsHealthTable td[data-alert="true"]{color:var(--bad);font-weight:800}.cfOpsHealthEmpty{text-align:center!important;color:var(--muted);padding:18px!important}.cfOpsHealthFoot{color:var(--muted)}
+      .cfOpsHealthTableWrap{max-height:260px;overflow:auto}.cfOpsHealthOverviewWrap{max-height:300px}.cfOpsHealthFailureWrap,.cfOpsHealthAuditWrap{max-height:190px}.cfOpsHealthTable{width:100%;border-collapse:collapse}.cfOpsHealthTable th,.cfOpsHealthTable td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;font-size:10px}.cfOpsHealthTable th{position:sticky;top:0;background:var(--card);z-index:1;color:var(--muted)}.cfOpsHealthTable td[data-alert="true"]{color:var(--bad);font-weight:800}.cfOpsHealthEmpty{text-align:center!important;color:var(--muted);padding:18px!important}.cfOpsHealthFoot{color:var(--muted)}
       @media(max-width:980px){.cfOpsHealthCards{grid-template-columns:repeat(3,minmax(120px,1fr))}.cfOpsHealthHeader{display:grid}.cfOpsHealthHeaderActions{justify-content:flex-start}}@media(max-width:580px){.cfOpsHealthCards{grid-template-columns:1fr 1fr}.cfOpsHealthModal{width:98vw}.cfOpsHealthSectionHead{align-items:flex-start}.cfOpsHealthTable th:nth-child(8),.cfOpsHealthTable td:nth-child(8){display:none}}
     `;
     global.document.head.appendChild(style);
