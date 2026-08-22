@@ -6,12 +6,17 @@ on:
       - acceptance/255-cumulative-runtime-promotion
     paths:
       - '.github/workflows/cumulative-runtime-control-plane-probe.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/cumulative-runtime-control-plane-probe.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: cumulative-runtime-control-plane-probe
+  group: cumulative-runtime-control-plane-probe-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
