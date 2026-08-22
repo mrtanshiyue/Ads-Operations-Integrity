@@ -50,6 +50,7 @@ jobs:
           node --check assets/cloudflare-native-csv-local-diagnostics-v1.js
           node --check assets/cloudflare-native-csv-recommendation-inbox-v1.js
           node --check assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js
+          node --check assets/cloudflare-native-csv-root-lifecycle-usability-v1.js
           node --check assets/cloudflare-native-api-v1.js
           node --check assets/generated/inline-script-10.js
           node --check cloudflare/runtime/web-entry.js
@@ -59,6 +60,8 @@ jobs:
           node --check scripts/test-csv-diagnostics-financial-usability.mjs
           node --check scripts/test-csv-recommendation-inbox-contract.mjs
           node --check scripts/test-csv-recommendation-inbox-ui.mjs
+          node --check scripts/test-csv-root-lifecycle-usability-ui.mjs
+          node --check scripts/test-csv-root-lifecycle-accessibility.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
@@ -73,3 +76,7 @@ jobs:
         run: node scripts/test-csv-recommendation-inbox-contract.mjs
       - name: Validate Recommendation Inbox operator UI contract
         run: node scripts/test-csv-recommendation-inbox-ui.mjs
+      - name: Validate Root and Lifecycle operator usability contract
+        run: node scripts/test-csv-root-lifecycle-usability-ui.mjs
+      - name: Validate Root and Lifecycle keyboard accessibility
+        run: node scripts/test-csv-root-lifecycle-accessibility.mjs
