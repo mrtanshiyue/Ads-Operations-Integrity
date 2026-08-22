@@ -94,14 +94,29 @@ export function buildFinalClosureEvidence(input = {}) {
   add(Number(access.nonIdentityPolicyCount) === 0, 'temporary_non_identity_policy_leaked');
   add(Number(access.serviceTokenCount) === 0, 'temporary_service_token_leaked');
 
-  add(r2.bucketName === FINAL_CLOSURE_EXPECTED.r2Bucket, 'production_r2_bucket_missing');
-  add(r2.location === 'APAC', 'production_r2_location_mismatch');
-  add(Number(r2.verifiedObjectCount) === 4, 'four_store_r2_object_verification_required');
+  const r2BucketReadable = r2.bucketStatus === undefined
+    ? Boolean(r2.bucketName)
+    : Number(r2.bucketStatus) === 200;
+  add(r2BucketReadable, 'production_r2_bucket_unreadable');
+  if (r2BucketReadable) {
+    add(r2.bucketName === FINAL_CLOSURE_EXPECTED.r2Bucket, 'production_r2_bucket_missing');
+    add(r2.location === 'APAC', 'production_r2_location_mismatch');
+  }
+  const objectProbeStatuses = Array.isArray(r2.objectProbeStatuses) ? r2.objectProbeStatuses : [];
+  const r2ObjectsReadable = objectProbeStatuses.length
+    ? objectProbeStatuses.length === 4 && objectProbeStatuses.every((probe) => Number(probe?.status) === 200)
+    : Number(r2.verifiedObjectCount) === 4;
+  add(r2ObjectsReadable, 'production_r2_objects_unreadable');
+  if (r2ObjectsReadable) {
+    add(Number(r2.verifiedObjectCount) === 4, 'four_store_r2_object_verification_required');
+  }
 
   add(releaseTrace.development?.verified === true, 'development_release_trace_missing');
   add(releaseTrace.production?.verified === true, 'production_release_trace_missing');
   add(acceptance.verified === true, 'human_review_live_acceptance_missing');
-  add(acceptance.headSha === FINAL_CLOSURE_EXPECTED.acceptanceHeadSha, 'human_review_acceptance_head_mismatch');
+  if (acceptance.verified === true) {
+    add(acceptance.headSha === FINAL_CLOSURE_EXPECTED.acceptanceHeadSha, 'human_review_acceptance_head_mismatch');
+  }
 
   const uniqueBlockers = [...new Set(blockers)].sort();
   const snapshot = {
