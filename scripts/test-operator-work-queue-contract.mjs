@@ -34,7 +34,7 @@ const queue = buildOperatorWorkQueue({
   dateRange: range,
   stores: [
     { ...base, storeId: 'store-04', storeCode: 'STORE04', unreviewedCount: 0, highUnreviewedCount: 0, recommendationCandidateCount: 0, criticalHighCandidateCount: 0 },
-    { ...base, storeId: 'store-03', storeCode: 'STORE03', highUnreviewedCount: 0 },
+    { ...base, storeId: 'store-03', storeCode: 'STORE03', highUnreviewedCount: 5 },
     { ...base, storeId: 'store-02', storeCode: 'STORE02', staleReviewEvidenceCount: 2, unreviewedCount: 10, highUnreviewedCount: 10 },
     { ...base, storeId: 'store-01', storeCode: 'STORE01', needsReviewCount: 2, unreviewedCount: 10, highUnreviewedCount: 10 },
     { storeId: 'store-05', storeCode: 'STORE05', evidenceState: 'unavailable', unavailable: true, error: { code: 'snapshot_failed' } },
@@ -55,7 +55,7 @@ assert.deepEqual(queue.rows.map((row) => row.priority), [1, 2, 2, 3, 5]);
 assert.equal(queue.rows[0].recommendationCandidateCount, null, 'unavailable evidence must remain null');
 assert.equal(queue.rows[1].otherUnreviewedCount, 0);
 assert.equal(queue.rows[2].otherUnreviewedCount, 0);
-assert.equal(queue.rows[3].otherUnreviewedCount, 12, 'other count is authoritative unreviewed minus high unreviewed');
+assert.equal(queue.rows[3].otherUnreviewedCount, 7, 'other count is authoritative unreviewed minus high unreviewed');
 assert.equal(queue.rows[0].authority.executionAuthorized, false);
 assert.equal(queue.rows[0].authority.amazonMutationAuthorized, false);
 
