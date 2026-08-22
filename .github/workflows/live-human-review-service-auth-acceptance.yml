@@ -8,6 +8,7 @@ on:
       - 'scripts/cloudflare-human-review-acceptance-permission-probe.mjs'
       - 'scripts/cloudflare-user-token-bootstrap-probe.mjs'
       - 'scripts/live-human-review-service-auth-acceptance.mjs'
+      - 'scripts/live-human-review-service-auth-acceptance-runner.mjs'
       - 'scripts/live-human-review-service-auth-cleanup.mjs'
       - '.github/workflows/live-human-review-service-auth-acceptance.yml'
   workflow_dispatch:
@@ -180,7 +181,7 @@ jobs:
 
       - name: Run ephemeral service-auth acceptance
         if: env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
-        run: node scripts/live-human-review-service-auth-acceptance.mjs
+        run: node scripts/live-human-review-service-auth-acceptance-runner.mjs
 
       - name: Cleanup and verify ephemeral acceptance identity
         if: always() && env.ACCEPTANCE_CREDENTIAL_PRESENT == 'true'
