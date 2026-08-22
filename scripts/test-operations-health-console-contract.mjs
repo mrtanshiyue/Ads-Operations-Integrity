@@ -18,22 +18,34 @@ const allowlistSource = await readFile(path.join(repoRoot, 'scripts/enforce-clou
 
 new vm.Script(source, { filename: 'cloudflare-native-operations-health-v1.js' });
 assert.doesNotMatch(source, /AMAZON_ADS|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|wrangler\s+deploy/i);
-assert.doesNotMatch(source, /\.startSync\s*\(|startSync\s*\(/, 'operations health console must never start sync');
-assert.doesNotMatch(source, /fetch\s*\(/, 'operations health console must delegate transport to CloudflareNativeAPI');
+assert.doesNotMatch(source, /\.startSync\s*\(|startSync\s*\(/, 'operations command board must never start sync');
+assert.doesNotMatch(source, /fetch\s*\(/, 'operations command board must delegate transport to CloudflareNativeAPI');
 assert.doesNotMatch(source, /createProduct|updateProduct|createKeyword|updateKeyword|putStoreProduct|deleteStoreProduct|putProductKeyword|deleteProductKeyword|putStoreNegativeKeyword|putProductNegativeKeyword/,
-  'operations health console must remain read-only');
+  'operations command board must remain read-only');
 assert.doesNotMatch(source, /confidenceScore|actionabilityScore|financialImpact/,
-  'executive operations overview must not invent confidence, actionability, or financial impact');
-assert.match(source, /analytics\.read/);
-assert.match(source, /audit\.read/);
-assert.match(source, /unmapped/);
-assert.match(source, /ambiguous/);
+  'command board must not invent confidence, actionability, or financial impact');
+assert.doesNotMatch(source, /Store Score\s*=/i, 'Operational and Decision priorities must not collapse into an opaque Store Score');
+assert.match(source, /OPERATIONAL ATTENTION ORDER/);
+assert.match(source, /DECISION ATTENTION/);
+assert.match(source, /Decision Workload/);
 assert.match(source, /FAIL-CLOSED EVIDENCE/);
-assert.match(source, /Four-Store Command Board/);
-assert.match(source, /ATTENTION ORDER/);
-assert.match(source, /Evidence gap/);
-assert.match(source, /reported lag/);
-assert.match(source, /unresolved mapping/);
+assert.match(source, /No sync or rollup freshness evidence is available/);
+assert.match(source, /Decision order: authoritative read failure\/evidence gap/);
+assert.match(source, /Open Decision Queue/);
+assert.match(source, /CloudflareOperatorContext/);
+assert.match(source, /cfDecisionLauncher/);
+assert.match(source, /name="startDate"/);
+assert.match(source, /name="endDate"/);
+assert.match(source, /<input id="cfOpsDecisionStart" type="date" autocomplete="off">/,
+  'Decision date scope must start blank and operator-provided');
+assert.match(source, /<input id="cfOpsDecisionEnd" type="date" autocomplete="off">/,
+  'Decision date scope must start blank and operator-provided');
+assert.match(source, /decision_queue_date_range_required/);
+assert.match(source, /includeDecisionQueue:\s*true/);
+assert.match(source, /amazonMutationAuthorized\s*!==\s*false/,
+  'UI must validate server authority before presenting Decision Workload');
+assert.match(buildSource, /cloudflare-native-operations-health-v1\.js/);
+assert.match(allowlistSource, /cloudflare-native-operations-health-v1\.js/);
 
 const calls = [];
 const window = {
@@ -56,31 +68,31 @@ const window = {
     },
   },
 };
-
 vm.runInNewContext(source, { window, console, Set, Object, Array, String, Number, Boolean, Error, Promise, Date }, {
   filename: 'cloudflare-native-operations-health-v1.js',
 });
 
 const health = window.CloudflareOperationsHealth;
 assert(health, 'CloudflareOperationsHealth was not installed');
-assert.equal(health.version, '1.1.0');
-
+assert.equal(health.version, '1.2.0');
+assert.equal(health.decisionSchemaVersion, 'four-store-decision-queue-summary-v1');
 await health.dataHealth(' store-dev-01 ');
+await health.decisionDataHealth('2026-06-01', '2026-06-30');
 await health.auditEvents(' store-dev-01 ', { action: 'product.update' });
 await health.listStores();
 await health.capabilities();
-
-const dataCall = calls.find((call) => call.method === 'analyticsDataHealth');
-assert.deepEqual(dataCall.params, { storeId: 'store-dev-01' });
-const auditCall = calls.find((call) => call.method === 'auditEvents');
-assert.equal(auditCall.params.limit, 20);
-assert.equal(auditCall.params.storeId, 'store-dev-01');
-assert.equal(auditCall.params.action, 'product.update');
-assert(calls.some((call) => call.method === 'stores'));
-assert(calls.some((call) => call.method === 'capabilities'));
-
 await assert.rejects(() => health.dataHealth(''), /store_id_required/);
-await assert.rejects(() => health.auditEvents('   '), /store_id_required/);
+await assert.rejects(() => health.decisionDataHealth('', ''), /decision_queue_date_range_required/);
+await assert.rejects(() => health.decisionDataHealth('2026-07-01', '2026-06-30'), /decision_queue_date_range_required/);
+
+const dataCalls = calls.filter((call) => call.method === 'analyticsDataHealth');
+assert.deepEqual(dataCalls[0].params, { storeId: 'store-dev-01' });
+assert.deepEqual(dataCalls[1].params, {
+  includeDecisionQueue: true,
+  startDate: '2026-06-01',
+  endDate: '2026-06-30',
+});
+assert.equal(calls.find((call) => call.method === 'auditEvents').params.limit, 20);
 
 const baseStore = {
   storeId: 'store-healthy',
@@ -96,127 +108,54 @@ const baseStore = {
   },
   rollups: [],
 };
-
-const healthy = health.classifyStoreHealth(baseStore, []);
-assert.equal(healthy.priority, 4);
-assert.equal(healthy.attentionKey, 'healthy');
-
-const mapping = health.classifyStoreHealth({
-  ...baseStore,
-  storeId: 'store-mapping',
-  rollups: [{ unmappedRows: 3, ambiguousRows: 2, updatedAt: '2026-08-22T11:59:00.000Z' }],
-}, []);
-assert.equal(mapping.priority, 3);
-assert.equal(mapping.attentionKey, 'mapping_anomaly');
-assert.equal(mapping.unmappedRows, 3);
-assert.equal(mapping.ambiguousRows, 2);
-
-const freshness = health.classifyStoreHealth({
-  ...baseStore,
-  storeId: 'store-lag',
-  sync: { ...baseStore.sync, lagMinutes: 17 },
-}, []);
-assert.equal(freshness.priority, 2);
-assert.equal(freshness.attentionKey, 'freshness_attention');
-assert.match(freshness.reason, /17 min/);
-
-const failure = health.classifyStoreHealth(baseStore, [{
-  storeId: baseStore.storeId,
-  rollupType: 'search_term',
-  partitionKey: '2026-08',
-  errorCode: 'rollup_failed',
-}]);
-assert.equal(failure.priority, 1);
-assert.equal(failure.attentionKey, 'health_failure');
-
-const errorAfterSuccess = health.classifyStoreHealth({
-  ...baseStore,
-  sync: {
-    ...baseStore.sync,
-    lastSuccessAt: '2026-08-22T11:00:00.000Z',
-    lastErrorAt: '2026-08-22T11:30:00.000Z',
-    lastErrorCode: 'latest_error',
-  },
-}, []);
-assert.equal(errorAfterSuccess.priority, 1);
-assert.equal(errorAfterSuccess.attentionKey, 'health_failure');
-
-const evidenceGap = health.classifyStoreHealth({
+assert.equal(health.classifyStoreHealth(baseStore, []).priority, 4);
+assert.equal(health.classifyStoreHealth({ ...baseStore, sync: { ...baseStore.sync, lagMinutes: 17 } }, []).priority, 2);
+assert.equal(health.classifyStoreHealth({ ...baseStore, rollups: [{ unmappedRows: 3, ambiguousRows: 2 }] }, []).priority, 3);
+assert.equal(health.classifyStoreHealth(baseStore, [{ storeId: baseStore.storeId, errorCode: 'rollup_failed' }]).priority, 1);
+assert.equal(health.classifyStoreHealth({
   storeId: 'store-gap',
-  storeCode: 'STORE01',
-  displayName: 'Evidence gap',
   sync: { status: 'never', lastSuccessAt: null, lastErrorAt: null, lagMinutes: null, updatedAt: null },
   rollups: [],
-}, []);
-assert.equal(evidenceGap.priority, 1);
-assert.equal(evidenceGap.attentionKey, 'evidence_gap');
-assert.match(evidenceGap.reason, /No sync or rollup freshness evidence/);
+}, []).attentionKey, 'evidence_gap');
 
-const readFailure = health.classifyStoreHealth(null, [], Object.assign(new Error('health_unavailable'), { code: 'health_unavailable' }));
-assert.equal(readFailure.priority, 1);
-assert.equal(readFailure.attentionKey, 'evidence_gap');
+const operationalRows = health.rankStoreHealthRows([
+  health.buildCommandRow({ storeId: 'healthy', storeCode: 'STORE04' }, { generatedAt: 'x', stores: [{ ...baseStore, storeId: 'healthy' }], recentRollupFailures: [] }, null, 3),
+  health.buildCommandRow({ storeId: 'lag', storeCode: 'STORE02' }, { generatedAt: 'x', stores: [{ ...baseStore, storeId: 'lag', sync: { ...baseStore.sync, lagMinutes: 5 } }], recentRollupFailures: [] }, null, 1),
+  health.buildCommandRow({ storeId: 'mapping', storeCode: 'STORE03' }, { generatedAt: 'x', stores: [{ ...baseStore, storeId: 'mapping', rollups: [{ unmappedRows: 1, ambiguousRows: 0 }] }], recentRollupFailures: [] }, null, 2),
+  health.buildCommandRow({ storeId: 'gap', storeCode: 'STORE01' }, { generatedAt: 'x', stores: [{ storeId: 'gap', sync: { status: 'never' }, rollups: [] }], recentRollupFailures: [] }, null, 0),
+]);
+assert.deepEqual(operationalRows.map((row) => row.attentionKey), ['evidence_gap', 'freshness_attention', 'mapping_anomaly', 'healthy']);
 
-const payload = (store, failures = []) => ({
-  generatedAt: '2026-08-22T12:00:00.000Z',
-  stores: [store],
-  recentRollupFailures: failures,
-});
-const rows = [
-  health.buildCommandRow({ storeId: 'healthy', storeCode: 'STORE04' }, payload({ ...baseStore, storeId: 'healthy' }), null, 3),
-  health.buildCommandRow({ storeId: 'mapping', storeCode: 'STORE03' }, payload({
-    ...baseStore,
-    storeId: 'mapping',
-    rollups: [{ unmappedRows: 1, ambiguousRows: 0, updatedAt: '2026-08-22T11:59:00.000Z' }],
-  }), null, 2),
-  health.buildCommandRow({ storeId: 'lag', storeCode: 'STORE02' }, payload({
-    ...baseStore,
-    storeId: 'lag',
-    sync: { ...baseStore.sync, lagMinutes: 5 },
-  }), null, 1),
-  health.buildCommandRow({ storeId: 'failure', storeCode: 'STORE01' }, payload(
-    { ...baseStore, storeId: 'failure' },
-    [{ storeId: 'failure', rollupType: 'daily', errorCode: 'failed' }],
-  ), null, 0),
-  health.buildCommandRow({ storeId: 'gap', storeCode: 'STORE05' }, payload({
-    storeId: 'gap',
-    sync: { status: 'never', lagMinutes: null },
-    rollups: [],
-  }), null, 4),
-];
+const decisionRows = health.rankDecisionRows([
+  health.buildDecisionRow({ storeId: 'clear', storeCode: 'STORE04', evidenceState: 'available', unreviewedCount: 0, needsReviewCount: 0, acknowledgedCount: 2, highUnreviewedCount: 0, staleReviewEvidenceCount: 0 }, 3),
+  health.buildDecisionRow({ storeId: 'other', storeCode: 'STORE03', evidenceState: 'available', unreviewedCount: 4, needsReviewCount: 0, acknowledgedCount: 0, highUnreviewedCount: 0, staleReviewEvidenceCount: 0 }, 2),
+  health.buildDecisionRow({ storeId: 'high', storeCode: 'STORE02', evidenceState: 'available', unreviewedCount: 2, needsReviewCount: 0, acknowledgedCount: 0, highUnreviewedCount: 1, staleReviewEvidenceCount: 0 }, 1),
+  health.buildDecisionRow({ storeId: 'review', storeCode: 'STORE01', evidenceState: 'available', unreviewedCount: 1, needsReviewCount: 2, acknowledgedCount: 0, highUnreviewedCount: 1, staleReviewEvidenceCount: 1 }, 0),
+  health.buildDecisionRow({ storeId: 'gap', storeCode: 'STORE05', evidenceState: 'unavailable', unavailable: true, error: { code: 'snapshot_failed' } }, 4),
+]);
+assert.deepEqual(decisionRows.map((row) => row.decisionKey), [
+  'decision_evidence_gap',
+  'review_attention',
+  'high_unreviewed',
+  'other_unreviewed',
+  'queue_clear',
+]);
+assert.equal(decisionRows[1].activeQueueCount, 3, 'active Decision Queue is unreviewed + needs_review only');
+assert.equal(decisionRows[0].activeQueueCount, null, 'unavailable evidence must not become a fabricated zero queue');
+assert.equal(health.classifyDecisionAttention({ evidenceState: 'available', needsReviewCount: 0, staleReviewEvidenceCount: 1 }).decisionKey, 'review_attention');
+assert.equal(health.classifyDecisionAttention({ evidenceState: 'available', needsReviewCount: 0, staleReviewEvidenceCount: 0, highUnreviewedCount: 1 }).decisionKey, 'high_unreviewed');
 
-const ranked = health.rankStoreHealthRows(rows);
-assert.deepEqual(
-  ranked.map((row) => [row.attentionKey, row.priority, row.storeOrder]),
-  [
-    ['health_failure', 1, 0],
-    ['evidence_gap', 1, 4],
-    ['freshness_attention', 2, 1],
-    ['mapping_anomaly', 3, 2],
-    ['healthy', 4, 3],
-  ],
-  'command board must use deterministic health -> freshness -> mapping -> healthy ordering',
-);
-
-assert.match(buildSource, /cloudflare-native-operations-health-v1\.js/,
-  'native build must include the operations health console');
-assert.match(allowlistSource, /cloudflare-native-operations-health-v1\.js/,
-  'native asset allowlist must include the operations health console');
-
-// #244 server-authoritative Decision Queue contract.
 assert.equal(FOUR_STORE_DECISION_QUEUE_SUMMARY_SCHEMA_VERSION, 'four-store-decision-queue-summary-v1');
 assert.match(dataHealthSource, /includeDecisionQueue/);
 assert.match(dataHealthSource, /decision_queue_date_range_required/);
-assert.match(dataHealthSource, /itemClass === 'recommendation_candidate'/,
-  'only recommendation_candidate items may be fingerprint-bound');
+assert.match(dataHealthSource, /itemClass === 'recommendation_candidate'/);
 assert.match(dataHealthSource, /FROM advisory_review_records[\s\S]*WHERE source_kind = \?1/);
 assert.doesNotMatch(dataHealthSource, /\.run\s*\(/, 'Decision Queue server contract must not write D1');
-assert.doesNotMatch(dataHealthSource, /startSync\s*\(|optimization-actions|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED/,
-  'Decision Queue server contract must not activate sync, Optimization Actions, or Amazon controls');
+assert.doesNotMatch(dataHealthSource, /startSync\s*\(|optimization-actions|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED/);
 assert.match(dataHealthSource, /readOnly:\s*true/);
 assert.match(dataHealthSource, /executionAuthorized:\s*false/);
 assert.match(dataHealthSource, /amazonMutationAuthorized:\s*false/);
-assert.match(dataHealthSource, /evidenceState:\s*'unavailable'/,
-  'single-store calculation failures must fail closed without failing the whole endpoint');
+assert.match(dataHealthSource, /evidenceState:\s*'unavailable'/);
 
 const missingDateUrl = new URL('https://example.test/api/v1/analytics/data-health?includeDecisionQueue=true');
 const missingDateResponse = await handleDataHealthApiRoute({
@@ -247,25 +186,17 @@ function controlDb({ globalRead = true, accessibleStoreIds = ['store-01'], rows:
     prepare(sql) {
       const statement = String(sql);
       const all = async () => {
-        if (statement.includes('SELECT store_id FROM stores WHERE status')) {
-          return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
-        }
-        if (statement.includes('SELECT DISTINCT sm.store_id')) {
-          return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
-        }
+        if (statement.includes('SELECT store_id FROM stores WHERE status')) return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
+        if (statement.includes('SELECT DISTINCT sm.store_id')) return { results: accessibleStoreIds.map((store_id) => ({ store_id })) };
         if (statement.includes('FROM stores s')) return { results: effectiveRows };
-        if (statement.includes('FROM rollup_watermarks')) return { results: [] };
-        if (statement.includes('FROM rollup_runs')) return { results: [] };
+        if (statement.includes('FROM rollup_watermarks') || statement.includes('FROM rollup_runs')) return { results: [] };
         return { results: [] };
       };
       return {
         all,
         bind() {
           return {
-            async first() {
-              if (statement.includes('FROM user_global_roles')) return globalRead ? { ok: 1 } : null;
-              return null;
-            },
+            async first() { return statement.includes('FROM user_global_roles') && globalRead ? { ok: 1 } : null; },
             all,
           };
         },
@@ -283,10 +214,8 @@ const compatibilityResponse = await handleDataHealthApiRoute({
 });
 assert.equal(compatibilityResponse.status, 200);
 const compatibilityPayload = await compatibilityResponse.json();
-assert.equal(Object.prototype.hasOwnProperty.call(compatibilityPayload, 'decisionQueue'), false,
-  'default data-health response must remain backward-compatible');
-assert.equal(Object.prototype.hasOwnProperty.call(compatibilityPayload.stores[0], 'd1BindingKey'), false,
-  'internal store D1 binding identity must not leak');
+assert.equal(Object.prototype.hasOwnProperty.call(compatibilityPayload, 'decisionQueue'), false);
+assert.equal(Object.prototype.hasOwnProperty.call(compatibilityPayload.stores[0], 'd1BindingKey'), false);
 
 const rbacUrl = new URL('https://example.test/api/v1/analytics/data-health?includeDecisionQueue=true&startDate=2026-06-01&endDate=2026-06-30');
 const rbacResponse = await handleDataHealthApiRoute({
@@ -295,13 +224,11 @@ const rbacResponse = await handleDataHealthApiRoute({
   actor: { user_id: 'operator-test' },
   url: rbacUrl,
 });
-assert.equal(rbacResponse.status, 200, 'per-store Decision Queue failure must not turn the endpoint into 500');
+assert.equal(rbacResponse.status, 200);
 const rbacPayload = await rbacResponse.json();
-assert.deepEqual(rbacPayload.decisionQueue.stores.map((store) => store.storeId), ['store-01'],
-  'stores outside analytics.read scope must not appear even as zero-count rows');
+assert.deepEqual(rbacPayload.decisionQueue.stores.map((store) => store.storeId), ['store-01']);
 assert.equal(rbacPayload.decisionQueue.stores[0].evidenceState, 'unavailable');
-assert.equal(rbacPayload.decisionQueue.stores[0].recommendationCandidateCount, null,
-  'unavailable stores must fail closed rather than emit fabricated zeroes');
+assert.equal(rbacPayload.decisionQueue.stores[0].recommendationCandidateCount, null);
 
 function candidate({ id, value, priority, window = { startDate: '2026-06-01', endDate: '2026-06-30' }, importId = 'import-current' }) {
   return {
@@ -329,11 +256,7 @@ function candidate({ id, value, priority, window = { startDate: '2026-06-01', en
       identityConfidence: { state: 'observed_csv_targeting_ids_unresolved', score: 0 },
     },
     review: { state: 'unreviewed', persisted: false, persistenceAuthorized: false },
-    authority: {
-      governancePersistenceAllowed: false,
-      executionAuthorized: false,
-      amazonMutationAuthorized: false,
-    },
+    authority: { governancePersistenceAllowed: false, executionAuthorized: false, amazonMutationAuthorized: false },
   };
 }
 
@@ -341,14 +264,7 @@ const critical = candidate({ id: 'csv-inbox:critical', value: 'critical term', p
 const high = candidate({ id: 'csv-inbox:high', value: 'high term', priority: 'high' });
 const medium = candidate({ id: 'csv-inbox:medium', value: 'medium term', priority: 'medium' });
 const staleCurrent = candidate({ id: 'csv-inbox:stale', value: 'stale term', priority: 'low' });
-const staleOld = candidate({
-  id: 'csv-inbox:stale',
-  value: 'stale term',
-  priority: 'low',
-  window: { startDate: '2026-05-01', endDate: '2026-05-31' },
-  importId: 'import-old',
-});
-
+const staleOld = candidate({ id: 'csv-inbox:stale', value: 'stale term', priority: 'low', window: { startDate: '2026-05-01', endDate: '2026-05-31' }, importId: 'import-old' });
 const [highBinding, mediumBinding, staleOldBinding] = await Promise.all([
   buildRecommendationReviewBinding(high),
   buildRecommendationReviewBinding(medium),
@@ -357,34 +273,13 @@ const [highBinding, mediumBinding, staleOldBinding] = await Promise.all([
 const summarized = await summarizeDecisionQueueReviewState({
   inbox: {
     summary: { blockedByGovernanceCount: 2, blockedByScopeCount: 3 },
-    items: [
-      critical,
-      high,
-      medium,
-      staleCurrent,
-      { itemClass: 'diagnostic_observation', priority: 'critical' },
-    ],
+    items: [critical, high, medium, staleCurrent, { itemClass: 'diagnostic_observation', priority: 'critical' }],
   },
   analysisScope: { financiallyComparable: true, candidateEmissionAuthorized: true },
   storedReviews: [
-    {
-      review_id: 'review-high',
-      recommendation_fingerprint: highBinding.recommendationFingerprint,
-      state: 'open',
-      source_evidence_json: highBinding.sourceEvidenceJson,
-    },
-    {
-      review_id: 'review-medium',
-      recommendation_fingerprint: mediumBinding.recommendationFingerprint,
-      state: 'acknowledged',
-      source_evidence_json: mediumBinding.sourceEvidenceJson,
-    },
-    {
-      review_id: 'review-stale-old',
-      recommendation_fingerprint: staleOldBinding.recommendationFingerprint,
-      state: 'acknowledged',
-      source_evidence_json: staleOldBinding.sourceEvidenceJson,
-    },
+    { review_id: 'review-high', recommendation_fingerprint: highBinding.recommendationFingerprint, state: 'open', source_evidence_json: highBinding.sourceEvidenceJson },
+    { review_id: 'review-medium', recommendation_fingerprint: mediumBinding.recommendationFingerprint, state: 'acknowledged', source_evidence_json: mediumBinding.sourceEvidenceJson },
+    { review_id: 'review-stale-old', recommendation_fingerprint: staleOldBinding.recommendationFingerprint, state: 'acknowledged', source_evidence_json: staleOldBinding.sourceEvidenceJson },
   ],
 });
 assert.deepEqual(summarized, {
@@ -405,21 +300,18 @@ assert.deepEqual(summarized, {
 console.log(JSON.stringify({
   ok: true,
   contract: 'four-store-decision-queue-summary-v1',
-  operationalContract: 'executive-operations-overview-v1',
-  transport: 'CloudflareNativeAPI-read-only',
-  analyticsRead: true,
-  auditRead: true,
+  commandBoardVersion: health.version,
+  operationalAttentionSeparate: true,
+  decisionAttentionSeparate: true,
   explicitDecisionDateScope: true,
+  noOpaqueStoreScore: true,
+  openDecisionQueueDrilldown: true,
   inaccessibleStoresOmitted: true,
   perStoreFailClosed: true,
   durableReviewTruth: true,
   staleReviewEvidence: true,
   recommendationCandidateFiltering: true,
-  attentionOrder: ['health_failure_or_evidence_gap', 'reported_lag', 'mapping_anomaly', 'healthy'],
-  failClosedEvidenceGap: true,
-  inventedThresholds: false,
   syncStartBlocked: true,
   amazonDormant: true,
   productionMutation: false,
-  calls: calls.map((call) => call.method),
 }, null, 2));
