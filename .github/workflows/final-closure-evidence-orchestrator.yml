@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/final-closure-evidence-contract.mjs'
       - 'scripts/final-closure-control-plane-v2.mjs'
+      - 'scripts/final-closure-control-plane-v3.mjs'
       - 'scripts/final-closure-evidence-orchestrator.mjs'
       - 'scripts/test-final-closure-evidence-orchestrator.mjs'
       - '.github/workflows/final-closure-evidence-orchestrator.yml'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'scripts/final-closure-evidence-contract.mjs'
       - 'scripts/final-closure-control-plane-v2.mjs'
+      - 'scripts/final-closure-control-plane-v3.mjs'
       - 'scripts/final-closure-evidence-orchestrator.mjs'
       - 'scripts/test-final-closure-evidence-orchestrator.mjs'
       - '.github/workflows/final-closure-evidence-orchestrator.yml'
@@ -55,6 +57,7 @@ jobs:
         run: |
           node --check scripts/final-closure-evidence-contract.mjs
           node --check scripts/final-closure-control-plane-v2.mjs
+          node --check scripts/final-closure-control-plane-v3.mjs
           node --check scripts/final-closure-evidence-orchestrator.mjs
           node --check scripts/test-final-closure-evidence-orchestrator.mjs
       - name: Validate fail-close composition contract
