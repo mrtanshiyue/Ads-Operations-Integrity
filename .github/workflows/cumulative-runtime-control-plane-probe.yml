@@ -1,4 +1,4 @@
-name: Cumulative Runtime Development Promotion Acceptance
+name: Cumulative Runtime Development Acceptance
 
 on:
   pull_request:
@@ -11,18 +11,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: cumulative-runtime-development-promotion-acceptance
+  group: cumulative-runtime-development-acceptance
   cancel-in-progress: false
 
 jobs:
-  development-promotion-acceptance:
-    name: Development exact-main promotion and cumulative acceptance
+  development-acceptance:
+    name: Development cumulative runtime acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     env:
       CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
       EXPECTED_MAIN_SHA: 980631da32e88ecf0a31c89f2a41a8bacb430775
+      EXPECTED_BUILD_UUID: 6118e134-5779-4d44-b259-f27613f7eb76
+      EXPECTED_DEV_DEPLOYMENT: 5a5f3299-4de4-422e-bbdd-9d29a6ea12f9
+      EXPECTED_DEV_VERSION: 7aae4c95-9226-4723-9d1f-201091c92423
       DEV_WORKER: ads-operations-web-dev
       PROD_SYNC_WORKER: ads-operations-sync-prod
       DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
@@ -31,71 +34,26 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo 'acceptance credential missing'; exit 1; }
 
-      - name: Promote exact canonical main to Development Web
+      - name: Verify exact-main Development deployment and HARD-OFF
         shell: bash
         run: |
           set -euo pipefail
           api='https://api.cloudflare.com/client/v4'
           auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
-          json=(-H 'Content-Type: application/json')
 
           current_main="$(curl -fsS 'https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main' | jq -r '.commit.sha')"
-          test "$current_main" = "$EXPECTED_MAIN_SHA" || { echo "canonical main drifted: $current_main"; exit 1; }
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
 
-          workers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")"
-          printf '%s' "$workers" | jq -e '.success == true' >/dev/null
-          dev_tag="$(printf '%s' "$workers" | jq -er --arg n "$DEV_WORKER" '.result[] | select(.id == $n) | .tag')"
+          build="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/builds/$EXPECTED_BUILD_UUID")"
+          printf '%s' "$build" | jq -e --arg sha "$EXPECTED_MAIN_SHA" '.success == true and .result.status == "stopped" and .result.build_outcome == "success" and .result.build_trigger_metadata.branch == "main" and .result.build_trigger_metadata.commit_hash == $sha' >/dev/null
 
-          triggers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$dev_tag/triggers")"
-          printf '%s' "$triggers" | jq -e '.success == true and (.result | length) == 1' >/dev/null
-          trigger_uuid="$(printf '%s' "$triggers" | jq -er '.result[0].trigger_uuid')"
-          build_command="$(printf '%s' "$triggers" | jq -r '.result[0].build_command // ""')"
-          deploy_command="$(printf '%s' "$triggers" | jq -r '.result[0].deploy_command // ""')"
-          printf '%s\n%s\n' "$build_command" "$deploy_command" | grep -Eiq 'sync|wrangler\.sync' && { echo 'Refusing trigger containing Sync deployment semantics'; exit 1; } || true
-          test -n "$deploy_command" || { echo 'Development trigger has no deploy command'; exit 1; }
-
-          baseline_deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
-          printf '%s' "$baseline_deployments" | jq -e '.success == true and (.result.deployments | length) > 0' >/dev/null
-          baseline_deployment="$(printf '%s' "$baseline_deployments" | jq -er '.result.deployments[0].id')"
-          baseline_version="$(printf '%s' "$baseline_deployments" | jq -er '.result.deployments[0].versions[0].version_id')"
-
-          body="$(jq -cn --arg branch main --arg sha "$EXPECTED_MAIN_SHA" '{branch:$branch,commit_hash:$sha}')"
-          create="$(curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$body" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/triggers/$trigger_uuid/builds")"
-          printf '%s' "$create" | jq -e '.success == true and (.result.build_uuid | length) > 0' >/dev/null
-          build_uuid="$(printf '%s' "$create" | jq -er '.result.build_uuid')"
-          echo "BUILD_UUID=$build_uuid"
-
-          build=''
-          for _ in $(seq 1 72); do
-            build="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/builds/$build_uuid")"
-            printf '%s' "$build" | jq -e '.success == true' >/dev/null
-            status="$(printf '%s' "$build" | jq -r '.result.status // ""')"
-            outcome="$(printf '%s' "$build" | jq -r '.result.build_outcome // ""')"
-            if [ "$status" = stopped ]; then break; fi
-            sleep 5
-          done
-          printf '%s' "$build" | jq -e --arg sha "$EXPECTED_MAIN_SHA" '.result.status == "stopped" and .result.build_outcome == "success" and .result.build_trigger_metadata.branch == "main" and .result.build_trigger_metadata.commit_hash == $sha' >/dev/null
-
-          latest=''
-          for _ in $(seq 1 36); do
-            latest="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
-            printf '%s' "$latest" | jq -e '.success == true and (.result.deployments | length) > 0' >/dev/null
-            new_deployment="$(printf '%s' "$latest" | jq -er '.result.deployments[0].id')"
-            if [ "$new_deployment" != "$baseline_deployment" ]; then break; fi
-            sleep 5
-          done
-          new_deployment="$(printf '%s' "$latest" | jq -er '.result.deployments[0].id')"
-          new_version="$(printf '%s' "$latest" | jq -er '.result.deployments[0].versions[0].version_id')"
-          test "$new_deployment" != "$baseline_deployment"
-          test "$new_version" != "$baseline_version"
+          deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
+          printf '%s' "$deployments" | jq -e --arg d "$EXPECTED_DEV_DEPLOYMENT" --arg v "$EXPECTED_DEV_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
 
           settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/settings")"
           schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/schedules")"
-          printf '%s' "$settings" | jq -e '.success == true' >/dev/null
+          printf '%s' "$settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "SYNC_TRIGGER_ENABLED" and .text == "false")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_PERMIT_ID" and .text == "")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_REPORT_DATE" and .text == "")) | length == 1)' >/dev/null
           printf '%s' "$schedules" | jq -e '.success == true and (.result.schedules | length) == 0' >/dev/null
-          printf '%s' "$settings" | jq -e '.result.bindings | map(select(.name == "SYNC_TRIGGER_ENABLED" and .text == "false")) | length == 1' >/dev/null
-          printf '%s' "$settings" | jq -e '.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_PERMIT_ID" and .text == "")) | length == 1' >/dev/null
-          printf '%s' "$settings" | jq -e '.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_REPORT_DATE" and .text == "")) | length == 1' >/dev/null
 
           sync_deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
           sync_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
@@ -104,22 +62,7 @@ jobs:
           printf '%s' "$sync_settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
           printf '%s' "$sync_schedules" | jq -e '.success == true and (.result.schedules | length) == 0' >/dev/null
 
-          printf '%s\n' "DEV_TAG=$dev_tag" "DEV_TRIGGER_UUID=$trigger_uuid" "BASELINE_DEPLOYMENT=$baseline_deployment" "BASELINE_VERSION=$baseline_version" "NEW_DEPLOYMENT=$new_deployment" "NEW_VERSION=$new_version" >> "$GITHUB_ENV"
-
-          mkdir -p artifacts/cumulative-runtime-development-acceptance
-          jq -n \
-            --arg schemaVersion cumulative-runtime-development-promotion-v1 \
-            --arg expectedMain "$EXPECTED_MAIN_SHA" \
-            --arg buildUuid "$build_uuid" \
-            --arg triggerUuid "$trigger_uuid" \
-            --arg baselineDeployment "$baseline_deployment" \
-            --arg baselineVersion "$baseline_version" \
-            --arg deployment "$new_deployment" \
-            --arg version "$new_version" \
-            '{schemaVersion:$schemaVersion,expectedMain:$expectedMain,buildUuid:$buildUuid,triggerUuid:$triggerUuid,baselineDeployment:$baselineDeployment,baselineVersion:$baselineVersion,deployment:$deployment,version:$version,buildOutcome:"success",syncTriggerEnabled:false,productionSyncUntouched:true,amazonAdsEnabled:false}' \
-            > artifacts/cumulative-runtime-development-acceptance/promotion.json
-
-      - name: Validate cumulative Development runtime contract
+      - name: Validate cumulative Development runtime contract and D1 differential
         shell: bash
         run: |
           set -euo pipefail
@@ -128,7 +71,7 @@ jobs:
           json=(-H 'Content-Type: application/json')
 
           health="$(curl -fsS "$DEV_BASE_URL/api/health")"
-          printf '%s' "$health" | jq -e --arg v "$NEW_VERSION" '.ok == true and .environment == "development" and .syncTriggerEnabled == false and .deployment.versionId == $v' >/dev/null
+          printf '%s' "$health" | jq -e --arg v "$EXPECTED_DEV_VERSION" '.ok == true and .environment == "development" and .syncTriggerEnabled == false and .deployment.versionId == $v' >/dev/null
 
           settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/settings")"
           control_db="$(printf '%s' "$settings" | jq -er '.result.bindings[] | select(.name == "CONTROL_DB") | .database_id')"
@@ -152,31 +95,20 @@ jobs:
           review_url="$DEV_BASE_URL/api/v1/stores/$store_id/advisory-reviews?reviewContract=csv-recommendation-human-review-v1&startDate=2026-06-01&endDate=2026-06-01&limit=50&sort=cost"
           review="$(curl -fsS -H 'Accept: application/json' "$review_url")"
           printf '%s' "$review" | jq -e --arg sid "$store_id" '
-            .schemaVersion == "csv-recommendation-human-review-v1" and
-            .storeId == $sid and
-            .authority.executionAuthorized == false and
-            .authority.amazonMutationAuthorized == false and
+            .schemaVersion == "csv-recommendation-human-review-v1" and .storeId == $sid and
+            .authority.executionAuthorized == false and .authority.amazonMutationAuthorized == false and
             (.items | type == "array") and
             (all(.items[]; .decisionPacket.schemaVersion == "recommendation-decision-packet-v1" and .decisionPacket.authority.readOnly == true and .decisionPacket.authority.executionAuthorized == false and .decisionPacket.authority.amazonMutationAuthorized == false)) and
-            .candidateLibrary.schemaVersion == "governed-keyword-negative-candidate-library-v1" and
-            .candidateLibrary.authority.readOnly == true and
-            .candidateLibrary.authority.executionAuthorized == false and
-            .candidateLibrary.authority.amazonMutationAuthorized == false and
-            .historicalLearning.schemaVersion == "historical-review-learning-v1" and
-            .historicalLearning.authority.readOnly == true and
-            .historicalLearning.authority.adaptiveLearningAuthorized == false and
-            .historicalLearning.authority.ruleMutationAuthorized == false and
-            .historicalLearning.authority.recommendationMutationAuthorized == false and
-            .historicalLearning.authority.executionAuthorized == false and
-            .historicalLearning.authority.amazonMutationAuthorized == false and
+            .candidateLibrary.schemaVersion == "governed-keyword-negative-candidate-library-v1" and .candidateLibrary.authority.readOnly == true and .candidateLibrary.authority.executionAuthorized == false and .candidateLibrary.authority.amazonMutationAuthorized == false and
+            .historicalLearning.schemaVersion == "historical-review-learning-v1" and .historicalLearning.authority.readOnly == true and .historicalLearning.authority.adaptiveLearningAuthorized == false and .historicalLearning.authority.ruleMutationAuthorized == false and .historicalLearning.authority.recommendationMutationAuthorized == false and .historicalLearning.authority.executionAuthorized == false and .historicalLearning.authority.amazonMutationAuthorized == false and
             (all(.historicalLearning.contexts[]; if .currentCandidateActive == true then (.currentFingerprint != null and .currentReviewState != null and (.currentEvidenceDrift | type) == "boolean") else (.currentFingerprint == null and .currentReviewState == null and .currentMatchedRecordCount == null and .staleEvidenceCount == null and .currentEvidenceDrift == null) end))
           ' >/dev/null
 
           asset="$(curl -fsS "$DEV_BASE_URL/assets/cloudflare-native-csv-recommendation-human-review-v1.js")"
-          printf '%s' "$asset" | grep -Fq "const VERSION = '1.3.0';"
-          printf '%s' "$asset" | grep -Fq "const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';"
-          printf '%s' "$asset" | grep -Fq "const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';"
-          printf '%s' "$asset" | grep -Fq "const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';"
+          grep -Fq "const VERSION = '1.3.0';" <<< "$asset"
+          grep -Fq "const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';" <<< "$asset"
+          grep -Fq "const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';" <<< "$asset"
+          grep -Fq "const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';" <<< "$asset"
 
           after="$(d1_query "$store01_db" "$count_sql")"
           printf '%s' "$after" | jq -e '.success == true' >/dev/null
@@ -184,13 +116,13 @@ jobs:
           test "$before_counts" = "$after_counts" || { echo "Business table counts changed: $before_counts -> $after_counts"; exit 1; }
 
           mkdir -p artifacts/cumulative-runtime-development-acceptance
-          printf '%s' "$review" | jq '{schemaVersion,storeId,authority,itemCount:(.items|length),candidateLibrary:{schemaVersion,status,summary,authority},historicalLearning:{schemaVersion,summary,authority,semantics,currentContextCount:([.contexts[]|select(.currentCandidateActive==true)]|length),historicalOnlyContextCount:([.contexts[]|select(.currentCandidateActive!=true)]|length)}}' > artifacts/cumulative-runtime-development-acceptance/runtime.json
+          jq -n --arg expectedMain "$EXPECTED_MAIN_SHA" --arg buildUuid "$EXPECTED_BUILD_UUID" --arg deployment "$EXPECTED_DEV_DEPLOYMENT" --arg version "$EXPECTED_DEV_VERSION" '{schemaVersion:"cumulative-runtime-development-promotion-v1",expectedMain:$expectedMain,buildUuid:$buildUuid,deployment:$deployment,version:$version,buildOutcome:"success",syncTriggerEnabled:false,productionSyncUntouched:true,amazonAdsEnabled:false}' > artifacts/cumulative-runtime-development-acceptance/promotion.json
+          printf '%s' "$review" | jq '{schemaVersion,storeId,authority,itemCount:(.items|length),candidateLibrary:{schemaVersion,status,summary,authority},historicalLearning:{schemaVersion,summary,authority,semantics,currentContextCount:([.historicalLearning.contexts[]|select(.currentCandidateActive==true)]|length),historicalOnlyContextCount:([.historicalLearning.contexts[]|select(.currentCandidateActive!=true)]|length)}}' > artifacts/cumulative-runtime-development-acceptance/runtime.json
           jq -n --argjson before "$before_counts" --argjson after "$after_counts" '{before:$before,after:$after,unchanged:($before==$after)}' > artifacts/cumulative-runtime-development-acceptance/d1-differential.json
-          echo "DEV_STORE_ID=$store_id" >> "$GITHUB_ENV"
           echo 'DEVELOPMENT_CUMULATIVE_ACCEPTANCE=PASS'
           echo 'AMAZON_REQUESTS=0'
 
-      - name: Upload Development promotion evidence
+      - name: Upload Development acceptance evidence
         uses: actions/upload-artifact@v4
         with:
           name: cumulative-runtime-development-acceptance-${{ github.run_id }}
