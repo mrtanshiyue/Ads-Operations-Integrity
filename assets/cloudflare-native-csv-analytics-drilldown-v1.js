@@ -6,7 +6,7 @@
   const MATCH_TYPES = Object.freeze(['', 'EXACT', 'PHRASE', 'BROAD', 'TARGETING_EXPRESSION', 'TARGETING_EXPRESSION_PREDEFINED']);
   const SORTS = Object.freeze(['spendMicros', 'salesMicros', 'clicks', 'impressions', 'purchases', 'acos', 'roas']);
   const PAGE_LIMIT = 50;
-  const state = { mounted: false, loading: false, requestSeq: 0, page: 1, level: 'campaign', matchType: '', sort: 'spendMicros', direction: 'desc', q: '', path: [], root: null };
+  const state = { mounted: false, loading: false, requestSeq: 0, baseScopeKey: '', page: 1, level: 'campaign', matchType: '', sort: 'spendMicros', direction: 'desc', q: '', path: [], root: null };
 
   const publicApi = Object.freeze({
     version: VERSION,
@@ -60,6 +60,8 @@
     if (qualityCard) qualityCard.insertAdjacentElement('beforebegin', root); else dashboard.appendChild(root);
     state.root = root;
     state.mounted = true;
+    state.baseScopeKey = baseScopeKey(dashboardScope());
+    global.addEventListener?.('cloudflare-csv-analytics-scope-change', handleSharedScopeChange);
 
     root.addEventListener('change', (event) => {
       if (event.target.matches('[data-cfdd-match]')) state.matchType = MATCH_TYPES.includes(event.target.value) ? event.target.value : '';
@@ -114,10 +116,25 @@
     void refresh();
   }
 
+  function handleSharedScopeChange(event) {
+    const nextKey = baseScopeKey(event?.detail || {});
+    if (!nextKey || nextKey === state.baseScopeKey) return;
+    state.baseScopeKey = nextKey;
+    state.requestSeq += 1;
+    state.loading = false;
+    state.page = 1;
+    renderBusy(false);
+    renderScope(null, null);
+    renderTable({ items: [], pagination: { page: 1, totalItems: 0, totalPages: 0 } });
+    renderStatus('Analytics scope changed. Refresh scope to load hierarchy.', 'warn');
+  }
+
   async function refresh() {
     if (!state.root) return;
     const scope = dashboardScope();
-    if (!scope.storeId || !scope.startDate || !scope.endDate) { renderStatus('Store and date range are required before drill-down.', 'warn'); return; }
+    const scopeKey = baseScopeKey(scope);
+    if (!scopeKey) { renderStatus('Store and date range are required before drill-down.', 'warn'); return; }
+    state.baseScopeKey = scopeKey;
     const seq = ++state.requestSeq;
     state.loading = true;
     renderBusy(true);
@@ -162,6 +179,13 @@
       startDate: String(shared.startDate || dashboard?.querySelector('#cfCsvAnalyticsStart')?.value || '').trim(),
       endDate: String(shared.endDate || dashboard?.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim(),
     };
+  }
+  function baseScopeKey(scope = {}) {
+    const storeId = String(scope.storeId || scope.store || '').trim();
+    const startDate = String(scope.startDate || '').trim();
+    const endDate = String(scope.endDate || '').trim();
+    if (!storeId || !startDate || !endDate) return '';
+    return JSON.stringify([storeId, startDate, endDate]);
   }
   function hierarchyFilters() {
     const filters = {};
