@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin main --depth=1
-          test "$(git rev-parse origin/main)" = "68b8ad353289ccb5d7e60284844b99193be44225"
+          test "$(git rev-parse origin/main)" = "fea3005caf7b233870b75787162a580b1d22a28e"
           grep -F '"SYNC_TRIGGER_ENABLED": "false"' cloudflare/runtime/wrangler.native.jsonc >/dev/null
           grep -F '"PHASE5_SINGLE_RUN_PERMIT_ID": ""' cloudflare/runtime/wrangler.native.jsonc >/dev/null
           grep -F '"PHASE5_SINGLE_RUN_REPORT_DATE": ""' cloudflare/runtime/wrangler.native.jsonc >/dev/null
@@ -47,7 +47,10 @@ jobs:
         run: |
           set -euo pipefail
           npx --no-install wrangler d1 migrations list ads-ops-store-dev --remote --env dev --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/dev-migrations.txt
-          grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/dev-migrations.txt
+          if grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/dev-migrations.txt; then
+            echo 'Dev 0025 unexpectedly pending' >&2
+            exit 1
+          fi
       - name: Verify Production Store migration ledgers — read only
         run: |
           set -euo pipefail
@@ -103,7 +106,7 @@ jobs:
           const compact = (w) => ({ name:w.name, deploymentId:w.deploymentId, versionId:w.versionId, createdOn:w.createdOn, scheduleCount:w.scheduleCount });
           console.log(JSON.stringify({
             ok:true,
-            targetMain:'68b8ad353289ccb5d7e60284844b99193be44225',
+            targetMain:'fea3005caf7b233870b75787162a580b1d22a28e',
             dev: compact(dev),
             prod: compact(prod),
             sync: { ...compact(sync), amazonAdsEnabled:false },
