@@ -9,6 +9,7 @@ const apiSource = await readFile(path.join(repoRoot, 'cloudflare/runtime/access-
 const nativeApiSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-api-v1.js'), 'utf8');
 
 function createDb({ permissions = ['users.manage'] } = {}) {
+  const permissionSet = new Set(permissions);
   const users = new Map([
     ['user-owner', {
       user_id: 'user-owner',
@@ -25,60 +26,102 @@ function createDb({ permissions = ['users.manage'] } = {}) {
   ]);
   const state = { users, audits: [] };
 
+  function changed(changes) {
+    return { success: true, meta: { changes }, results: [] };
+  }
+
+  function actorAuthorized(actorUserId) {
+    const actor = users.get(actorUserId);
+    return actor?.status === 'active'
+      && Boolean(actor.global_roles_csv)
+      && permissionSet.has('users.manage');
+  }
+
+  function statement(sql, params) {
+    return {
+      __sql: sql,
+      __params: params,
+      async first() {
+        if (sql.includes('SELECT 1 AS ok') && sql.includes('FROM user_global_roles ugr')) {
+          return permissionSet.has(params[1]) ? { ok: 1 } : null;
+        }
+        if (sql.includes('FROM users u') && sql.includes('WHERE u.user_id=?1')) {
+          const row = users.get(params[0]);
+          return row ? { ...row } : null;
+        }
+        throw new Error(`unexpected provisioning first query: ${sql}`);
+      },
+      async run() {
+        if (sql.includes('INSERT INTO users(')) {
+          const [userId, email, emailNorm, displayName, actorUserId] = params;
+          if (!actorAuthorized(actorUserId)) return changed(0);
+          if ([...users.values()].some((row) => row.email_norm === emailNorm)) {
+            throw new Error('UNIQUE constraint failed: users.email_norm');
+          }
+          users.set(userId, {
+            user_id: userId,
+            cf_access_sub: null,
+            email,
+            email_norm: emailNorm,
+            display_name: displayName,
+            status: 'active',
+            last_seen_at: null,
+            created_at: '2026-08-16 11:10:00',
+            updated_at: '2026-08-16 11:10:00',
+            global_roles_csv: null,
+          });
+          return changed(1);
+        }
+        if (sql.includes('INSERT INTO audit_log')) {
+          state.audits.push({
+            actorUserId: params[1],
+            storeId: params[2],
+            action: params[3],
+            entityType: params[4],
+            entityId: params[5],
+            requestId: params[6],
+            cfRay: params[7],
+            details: JSON.parse(params[8]),
+          });
+          return changed(1);
+        }
+        throw new Error(`unexpected provisioning write query: ${sql}`);
+      },
+    };
+  }
+
   return {
     state,
     prepare(sql) {
       return {
         bind(...params) {
-          return {
-            async first() {
-              if (sql.includes('FROM users u') && sql.includes('WHERE u.user_id=?1')) {
-                const row = users.get(params[0]);
-                return row ? { ...row } : null;
-              }
-              if (sql.includes('FROM user_global_roles ugr')) {
-                return permissions.includes(params[1]) ? { ok: 1 } : null;
-              }
-              throw new Error(`unexpected provisioning first query: ${sql}`);
-            },
-            async run() {
-              if (sql.includes('INSERT INTO users(')) {
-                const [userId, email, emailNorm, displayName] = params;
-                if ([...users.values()].some((row) => row.email_norm === emailNorm)) {
-                  throw new Error('UNIQUE constraint failed: users.email_norm');
-                }
-                users.set(userId, {
-                  user_id: userId,
-                  cf_access_sub: null,
-                  email,
-                  email_norm: emailNorm,
-                  display_name: displayName,
-                  status: 'active',
-                  last_seen_at: null,
-                  created_at: '2026-08-16 11:10:00',
-                  updated_at: '2026-08-16 11:10:00',
-                  global_roles_csv: null,
-                });
-                return { success: true };
-              }
-              if (sql.includes('INSERT INTO audit_log')) {
-                state.audits.push({
-                  actorUserId: params[1],
-                  storeId: params[2],
-                  action: params[3],
-                  entityType: params[4],
-                  entityId: params[5],
-                  requestId: params[6],
-                  cfRay: params[7],
-                  details: JSON.parse(params[8]),
-                });
-                return { success: true };
-              }
-              throw new Error(`unexpected provisioning write query: ${sql}`);
-            },
-          };
+          return statement(sql, params);
         },
       };
+    },
+    async batch(statements) {
+      const usersSnapshot = new Map([...users.entries()].map(([key, value]) => [key, structuredClone(value)]));
+      const auditsSnapshot = state.audits.map((entry) => structuredClone(entry));
+      const results = [];
+      let previousChanges = 0;
+      try {
+        for (const item of statements) {
+          if (item.__sql.includes('INSERT INTO audit_log') && previousChanges !== 1) {
+            results.push(changed(0));
+            previousChanges = 0;
+            continue;
+          }
+          const result = await item.run();
+          previousChanges = Number(result?.meta?.changes || 0);
+          results.push(result);
+        }
+        return results;
+      } catch (error) {
+        users.clear();
+        for (const [key, value] of usersSnapshot) users.set(key, value);
+        state.audits.splice(0, state.audits.length, ...auditsSnapshot);
+        throw error;
+      }
     },
   };
 }
@@ -203,6 +246,7 @@ console.log(JSON.stringify({
     'no-user-lifecycle-mutation',
     'duplicate-email-conflict',
     'audit-user-provision',
+    'atomic-user-provision-audit',
     'native-client-create-user',
     'amazon-sync-isolation',
   ],
