@@ -7,7 +7,7 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.4\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.5\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
 assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
   'Recommendation Decision Packet UI contract version is missing');
@@ -95,6 +95,16 @@ assert.match(ui, /historicalLearningDrawerHtml\(item\.inboxItemId\)/,
   'Existing Recommendation drawer must render the server Historical Learning context');
 assert.ok(ui.includes('Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed.'),
   'Historical Learning semantics copy must reject disposition effectiveness inference');
+assert.match(ui, /const note = String\(context\?\.latestHistoricalReview\?\.note \|\| ''\)\.trim\(\)/,
+  'Historical rationale must come directly from latestHistoricalReview.note');
+assert.match(ui, /if \(!note\) return '';/,
+  'Blank historical rationale must stay hidden');
+assert.match(ui, /data-cfhl-rationale/,
+  'Historical rationale must render inside the existing Historical Learning drawer');
+assert.ok(ui.includes('Prior Human Review rationale'),
+  'Historical rationale must be explicitly labeled as prior Human Review context');
+assert.ok(ui.includes('Historical Human Review context only. This is not current recommendation evidence, effectiveness, execution authority, or Amazon mutation authority.'),
+  'Historical rationale UI must preserve evidence/effectiveness/execution/Amazon boundaries');
 assert.ok(ui.includes("['approved','Approved']") && ui.includes("['rejected','Rejected']"),
   'Candidate Library review filter must expose Approved and Rejected');
 assert.doesNotMatch(ui, /\/historical-learning|\/historical-review-learning/i,
