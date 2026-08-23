@@ -344,7 +344,7 @@
 
   function syncWorkspaceStore(storeId) {
     const id = text(storeId);
-    if (!id) return;
+    if (!id || !global.document) return;
     const select = global.document.querySelector('#cfOperatorStore');
     if (!select || select.value === id) return;
     const option = Array.from(select.options || []).find((entry) => entry.value === id);
