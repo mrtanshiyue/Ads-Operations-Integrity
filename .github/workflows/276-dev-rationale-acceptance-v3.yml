@@ -39,6 +39,18 @@ jobs:
           test "$ACTUAL_SHA" = "$EXPECTED_MAIN_SHA"
       - name: Static harness check
         run: node --check scripts/issue-276-dev-rationale-acceptance-v3.mjs
+      - name: Normalize deployment annotation for Cloudflare API
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/issue-276-dev-rationale-acceptance-v3.mjs')
+          source = path.read_text()
+          marker = ", 'workers/tag': `issue-276-dev-v3-${RUN_ID}`"
+          if marker not in source:
+              raise SystemExit('expected unsupported deployment annotation marker not found')
+          path.write_text(source.replace(marker, ''))
+          PY
+          node --check scripts/issue-276-dev-rationale-acceptance-v3.mjs
       - name: Run Dev rationale acceptance v3
         run: node scripts/issue-276-dev-rationale-acceptance-v3.mjs
       - name: Upload immutable Dev v3 evidence
