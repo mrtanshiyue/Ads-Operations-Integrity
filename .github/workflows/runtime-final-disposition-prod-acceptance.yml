@@ -1,0 +1,80 @@
+name: Human Review Final Disposition Production Runtime Acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.runtime-final-disposition-prod-accept'
+      - '.github/workflows/runtime-final-disposition-prod-acceptance.yml'
+      - 'scripts/live-final-disposition-prod-acceptance.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-final-disposition-prod-acceptance
+  cancel-in-progress: false
+
+jobs:
+  production-final-disposition-acceptance:
+    if: github.head_ref == 'acceptance/259-human-review-final-disposition-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      EXPECTED_MAIN_SHA: fea3005caf7b233870b75787162a580b1d22a28e
+      EXPECTED_DEV_VERSION: 6dad58e5-72a7-4a0c-aab0-283674a93751
+      EXPECTED_PROD_BUILD: c6c0cc1b-12d9-48dc-a0cd-a7e45e0b34fa
+      EXPECTED_PROD_DEPLOYMENT: 25d1adb7-67df-42f5-8d2a-0761f39c9948
+      EXPECTED_PROD_VERSION: 9252b74c-e89e-4e33-97a8-fe2a93fea5fd
+      DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_WORKER: ads-operations-web-prod
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+      PROD_ACCESS_APP_ID: 499b5470-a257-4aec-9ede-7c3a460a42a4
+      PROD_ACCESS_AUD: 4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8
+    steps:
+      - name: Checkout acceptance control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require explicit Production acceptance sentinel
+        run: |
+          set -euo pipefail
+          test -f .runtime-final-disposition-prod-accept
+          test "$(tr -d '\n' < .runtime-final-disposition-prod-accept)" = "ACCEPT_PRODUCTION_FINAL_DISPOSITION=$EXPECTED_MAIN_SHA"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require dedicated acceptance credential and exact protected main
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          git fetch origin main --depth=1
+          test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN_SHA"
+
+      - name: Syntax-check acceptance harness before any live mutation
+        run: |
+          set -euo pipefail
+          node --check scripts/live-final-disposition-prod-acceptance.mjs
+          node --check scripts/cloudflare-d1-rest-adapter.mjs
+
+      - name: Run authenticated Production final-disposition acceptance
+        run: node scripts/live-final-disposition-prod-acceptance.mjs
+
+      - name: Upload immutable Production acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-final-disposition-prod-acceptance-${{ github.run_id }}
+          path: artifacts/final-disposition-production-acceptance/
+          if-no-files-found: warn
+          retention-days: 90
