@@ -1,7 +1,7 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
@@ -321,6 +321,8 @@
         throw new Error('historical_learning_context_authority_invalid');
       }
       if (typeof context?.recurrent !== 'boolean') throw new Error('historical_learning_recurrence_invalid');
+      const historicalNote = context?.latestHistoricalReview?.note;
+      if (historicalNote != null && typeof historicalNote !== 'string') throw new Error('historical_learning_rationale_invalid');
       if (context?.currentCandidateActive === true) {
         const inboxItemId = String(context?.inboxItemId || '');
         const current = reviewById.get(inboxItemId);
@@ -567,7 +569,13 @@
       <div><span>Recurring / Evidence drift</span><strong>${esc(display(context.recurrent))} / ${esc(display(context.currentEvidenceDrift))}</strong></div>
       <div><span>First observed</span><strong>${esc(context.firstObservedAt || 'unavailable')}</strong></div>
       <div><span>Latest observed</span><strong>${esc(context.latestObservedAt || 'unavailable')}</strong></div>
-    </div><div class="cfri-callout warn"><strong>Learning boundary:</strong> Recurrence and evidence drift are historical review context only, not effectiveness. No learning weight, rule mutation, recommendation mutation, execution, or Amazon authority is created.</div></div>`;
+    </div>${historicalRationaleHtml(context)}<div class="cfri-callout warn"><strong>Learning boundary:</strong> Recurrence and evidence drift are historical review context only, not effectiveness. No learning weight, rule mutation, recommendation mutation, execution, or Amazon authority is created.</div></div>`;
+  }
+
+  function historicalRationaleHtml(context) {
+    const note = String(context?.latestHistoricalReview?.note || '').trim();
+    if (!note) return '';
+    return `<div class="cfhl-rationale" data-cfhl-rationale><strong>Prior Human Review rationale</strong><p>${esc(note)}</p><small>Historical Human Review context only. This is not current recommendation evidence, effectiveness, execution authority, or Amazon mutation authority.</small></div>`;
   }
 
   function decisionPacketHtml(packet) {
@@ -780,7 +788,7 @@
       .cfhr-status{display:flex;gap:8px;align-items:center;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--hover-bg);font-size:10px}.cfhr-status span{color:var(--muted)}
       .cfhr-status[data-mode="ready"]{border-color:color-mix(in srgb,#16a34a 35%,var(--line));background:color-mix(in srgb,#16a34a 7%,var(--card))}.cfhr-status[data-mode="failed"]{border-color:color-mix(in srgb,#dc2626 35%,var(--line));background:color-mix(in srgb,#dc2626 7%,var(--card))}
       .cfgl-library{display:flex;flex-direction:column;gap:7px;margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.cfgl-library>span,.cfgl-library small,.cfgl-head span{font-size:9px;color:var(--muted)}.cfgl-head{display:flex;justify-content:space-between;align-items:center;gap:8px}.cfgl-head>div{display:flex;flex-direction:column;gap:2px}.cfgl-head .btn{padding:4px 7px;font-size:9px}.cfgl-filters{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}.cfgl-filters label{display:flex;flex-direction:column;gap:3px}.cfgl-filters label span{font-size:8px;color:var(--muted)}.cfgl-filters select{width:100%;min-width:0;padding:5px 6px;border:1px solid var(--line);border-radius:7px;background:var(--input-bg);color:var(--text);font-size:9px}.cfgl-filtered-out{display:none!important}.cfgl-library[data-mode="blocked"],.cfgl-library[data-mode="unavailable"]{border-color:color-mix(in srgb,var(--warn) 35%,var(--line));background:color-mix(in srgb,var(--warn) 6%,var(--card))}
-      .cfhl-summary{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--hover-bg)}.cfhl-summary>span,.cfhl-summary small,.cfhl-historical-only span{font-size:9px;color:var(--muted)}.cfhl-summary details{margin-top:2px}.cfhl-summary summary{cursor:pointer;font-size:9px;font-weight:700}.cfhl-historical-only{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid var(--line)}.cfhl-historical-only strong{font-size:9px}.cfhl-drawer{margin:10px 0}.cfhl-drawer h4{margin:0 0 7px}
+      .cfhl-summary{display:flex;flex-direction:column;gap:4px;padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--hover-bg)}.cfhl-summary>span,.cfhl-summary small,.cfhl-historical-only span{font-size:9px;color:var(--muted)}.cfhl-summary details{margin-top:2px}.cfhl-summary summary{cursor:pointer;font-size:9px;font-weight:700}.cfhl-historical-only{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid var(--line)}.cfhl-historical-only strong{font-size:9px}.cfhl-drawer{margin:10px 0}.cfhl-drawer h4{margin:0 0 7px}.cfhl-rationale{margin:0 0 8px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--hover-bg)}.cfhl-rationale strong{display:block;font-size:9px}.cfhl-rationale p{margin:5px 0;font-size:10px;white-space:pre-wrap;overflow-wrap:anywhere}.cfhl-rationale small{font-size:9px;color:var(--muted)}
       [data-cfhr-review]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:145px}.cfhr-state{display:inline-flex;padding:3px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfhr-state.acknowledged{color:var(--good);background:var(--softGood)}.cfhr-state.needs_review{color:var(--warn);background:var(--softWarn)}.cfhr-state.unavailable{color:var(--bad);background:var(--softBad)}
       .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy{color:var(--muted)}.cfhr-error{display:block;color:var(--bad);font-size:9px;font-style:normal;overflow-wrap:anywhere}.cfhr-blocked{color:var(--muted)}
       .cfhr-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:8px}.cfhr-drawer-grid>div{padding:7px 8px;border:1px solid var(--line);border-radius:8px}.cfhr-drawer-grid span,.cfhr-drawer-grid strong{display:block}.cfhr-drawer-grid span{font-size:9px;color:var(--muted)}.cfhr-drawer-grid strong{margin-top:2px;font-size:10px;overflow-wrap:anywhere}

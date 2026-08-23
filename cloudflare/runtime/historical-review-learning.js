@@ -134,6 +134,7 @@ function buildContext({ contextKey, reviews, currentItem }) {
       reviewId: text(latest.reviewId) || null,
       recommendationFingerprint: text(latest.recommendationFingerprint) || null,
       state: normalizedState(latest.state),
+      note: text(latest.note) || null,
       reviewedAt: text(latest.reviewedAt) || null,
       updatedAt: text(latest.updatedAt) || null,
       sourceEvidenceSha256: text(latest.sourceEvidenceSha256) || null,

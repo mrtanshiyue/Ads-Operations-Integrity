@@ -24,12 +24,13 @@ function currentItem({ inboxItemId, fingerprint, state = 'unreviewed', persisted
   };
 }
 
-function historicalReview({ id, fingerprint, state, updatedAt, inboxItemId = 'item-1', actionType = 'negative_keyword.review_exact', value = 'waste term' }) {
+function historicalReview({ id, fingerprint, state, updatedAt, note = null, inboxItemId = 'item-1', actionType = 'negative_keyword.review_exact', value = 'waste term' }) {
   return {
     reviewId: id,
     recommendationFingerprint: fingerprint,
     state,
     persisted: true,
+    note,
     reviewedAt: updatedAt,
     updatedAt,
     sourceEvidenceSha256: `sha-${fingerprint}`,
@@ -53,10 +54,10 @@ const learning = buildHistoricalReviewLearning({
     { contextKey: 'context-2', item: currentItem({ inboxItemId: 'item-2', fingerprint: 'fp-new', actionType: 'keyword.review_harvest', value: 'good term' }) },
   ],
   historicalEntries: [
-    { contextKey: 'context-1', review: historicalReview({ id: 'r3', fingerprint: 'fp-current', state: 'open', updatedAt: '2026-06-03T00:00:00.000Z' }) },
-    { contextKey: 'context-1', review: historicalReview({ id: 'r2', fingerprint: 'fp-old', state: 'acknowledged', updatedAt: '2026-06-02T00:00:00.000Z' }) },
+    { contextKey: 'context-1', review: historicalReview({ id: 'r3', fingerprint: 'fp-current', state: 'open', note: '  Prior operator rationale: keep under review.  ', updatedAt: '2026-06-03T00:00:00.000Z' }) },
+    { contextKey: 'context-1', review: historicalReview({ id: 'r2', fingerprint: 'fp-old', state: 'acknowledged', note: 'Older rationale must not replace the latest review rationale.', updatedAt: '2026-06-02T00:00:00.000Z' }) },
     { contextKey: 'context-1', review: historicalReview({ id: 'r1', fingerprint: 'fp-older', state: 'acknowledged', updatedAt: '2026-06-01T00:00:00.000Z' }) },
-    { contextKey: 'context-old', review: historicalReview({ id: 'old-1', fingerprint: 'fp-historical-only', state: 'open', updatedAt: '2026-05-01T00:00:00.000Z', inboxItemId: 'old-item', value: 'old waste term' }) },
+    { contextKey: 'context-old', review: historicalReview({ id: 'old-1', fingerprint: 'fp-historical-only', state: 'open', note: '   ', updatedAt: '2026-05-01T00:00:00.000Z', inboxItemId: 'old-item', value: 'old waste term' }) },
     { contextKey: null, review: { recommendationFingerprint: 'unusable', state: 'acknowledged' } },
   ],
 });
@@ -109,6 +110,8 @@ assert.equal(current.rejectedCount, 0);
 assert.equal(current.recurrent, true);
 assert.equal(current.currentEvidenceDrift, true);
 assert.equal(current.latestHistoricalReview.recommendationFingerprint, 'fp-current');
+assert.equal(Object.hasOwn(current.latestHistoricalReview, 'note'), true);
+assert.equal(current.latestHistoricalReview.note, 'Prior operator rationale: keep under review.');
 
 const historicalOnly = learning.contexts.find((context) => context.contextKey === 'context-old');
 assert.ok(historicalOnly);
@@ -118,6 +121,8 @@ assert.equal(historicalOnly.currentReviewState, null);
 assert.equal(historicalOnly.staleEvidenceCount, null);
 assert.equal(historicalOnly.currentEvidenceDrift, null);
 assert.equal(historicalOnly.value, 'old waste term');
+assert.equal(Object.hasOwn(historicalOnly.latestHistoricalReview, 'note'), true);
+assert.equal(historicalOnly.latestHistoricalReview.note, null);
 
 const neverReviewedCurrent = learning.contexts.find((context) => context.contextKey === 'context-2');
 assert.ok(neverReviewedCurrent);
@@ -125,6 +130,7 @@ assert.equal(neverReviewedCurrent.currentCandidateActive, true);
 assert.equal(neverReviewedCurrent.historicalRecordCount, 0);
 assert.equal(neverReviewedCurrent.recurrent, false);
 assert.equal(neverReviewedCurrent.staleEvidenceCount, 0);
+assert.equal(neverReviewedCurrent.latestHistoricalReview, null);
 
 const dispositionLearning = buildHistoricalReviewLearning({
   storeId: 'STORE01',
@@ -155,6 +161,8 @@ console.log(JSON.stringify({
   recurrentContextCount: learning.summary.recurrentContextCount,
   staleEvidenceRecordCount: learning.summary.staleEvidenceRecordCount,
   historicalOnlyContextCount: learning.summary.historicalOnlyContextCount,
+  latestHistoricalReviewNoteProjected: current.latestHistoricalReview.note,
+  blankHistoricalReviewNoteNormalized: historicalOnly.latestHistoricalReview.note,
   adaptiveLearningAuthorized: learning.authority.adaptiveLearningAuthorized,
   executionAuthorized: learning.authority.executionAuthorized,
   amazonMutationAuthorized: learning.authority.amazonMutationAuthorized,

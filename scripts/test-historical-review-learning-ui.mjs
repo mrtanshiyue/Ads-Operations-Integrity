@@ -63,6 +63,17 @@ assert.match(ui, /historicalLearningDrawerHtml\(item\.inboxItemId\)/,
 assert.match(ui, /state\.historicalCurrentByInboxItem\.get\(String\(inboxItemId \|\| ''\)\)/,
   'Drawer historical context must bind by current Inbox item ID');
 
+assert.match(ui, /const note = String\(context\?\.latestHistoricalReview\?\.note \|\| ''\)\.trim\(\)/,
+  'Historical reviewer rationale must be projected from the server latest historical review');
+assert.match(ui, /if \(!note\) return '';/,
+  'Missing or blank historical rationale must not create visual noise');
+assert.match(ui, /data-cfhl-rationale/,
+  'Historical reviewer rationale must remain inside the existing Historical Learning drawer');
+assert.ok(ui.includes('Prior Human Review rationale'),
+  'Historical reviewer rationale must be labeled as prior Human Review context');
+assert.ok(ui.includes('Historical Human Review context only. This is not current recommendation evidence, effectiveness, execution authority, or Amazon mutation authority.'),
+  'Historical reviewer rationale must not be presented as current evidence/effectiveness/execution/Amazon authority');
+
 for (const fragment of [
   'Historical Review Learning',
   'Recurrence and final disposition are not effectiveness.',
