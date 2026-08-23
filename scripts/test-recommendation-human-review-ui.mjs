@@ -7,7 +7,7 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.5\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.6\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
 assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
   'Recommendation Decision Packet UI contract version is missing');
@@ -78,6 +78,22 @@ assert.match(ui, /packet\?\.authority\?\.executionAuthorized !== false/, 'Decisi
 assert.match(ui, /packet\?\.authority\?\.amazonMutationAuthorized !== false/, 'Decision Packet must reject Amazon mutation authority');
 assert.match(ui, /review\?\.inheritedAsCurrent !== false \|\| review\?\.stale !== true/,
   'Stale evidence must be validated as non-current before rendering');
+assert.match(ui, /const currentRationale = packet\?\.reviewEvidence\?\.currentRationale/,
+  'Decision Packet must validate the server-projected exact-current Human Review rationale');
+assert.match(ui, /data-cfdp-current-rationale/,
+  'Decision Packet must render current Human Review rationale only through the dedicated packet surface');
+assert.match(ui, /const rationale = String\(review\?\.currentRationale \|\| ''\)\.trim\(\)/,
+  'Current Decision Packet rationale must come only from the normalized server field');
+assert.match(ui, /data-cfdp-stale-rationale/,
+  'Decision Packet stale evidence must conditionally render prior Human Review rationale');
+assert.match(ui, /const rationale = String\(row\?\.rationale \|\| ''\)\.trim\(\)/,
+  'Stale Decision Packet rationale must come only from the normalized stale evidence field');
+assert.ok(ui.includes('Current Human Review rationale'),
+  'Decision Packet current rationale label is missing');
+assert.ok(ui.includes('Stale Human Review context only. Never inherited as current; not effectiveness, execution authority, or Amazon mutation authority.'),
+  'Decision Packet stale rationale must preserve stale/effectiveness/execution/Amazon boundaries');
+assert.ok(ui.includes('Human Review rationale only. It is not effectiveness, execution authority, or Amazon mutation authority.'),
+  'Decision Packet current rationale must preserve effectiveness/execution/Amazon boundaries');
 
 assert.match(ui, /state\.library = payload\.candidateLibrary/, 'Candidate Library must come from the Human Review server response');
 assert.match(ui, /validateCandidateLibrary\(payload\?\.candidateLibrary, payload\.items, expectedStoreId\)/,

@@ -1,7 +1,7 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.5.0';
+  const VERSION = '1.6.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
@@ -269,7 +269,14 @@
     if (!String(packet?.reviewEvidence?.currentFingerprint || '')) throw new Error('decision_packet_current_fingerprint_missing');
     const stale = Array.isArray(packet?.reviewEvidence?.staleEvidence) ? packet.reviewEvidence.staleEvidence : [];
     if (Number(packet?.reviewEvidence?.staleEvidenceCount) !== stale.length) throw new Error('decision_packet_stale_count_mismatch');
+    const currentRationale = packet?.reviewEvidence?.currentRationale;
+    if (currentRationale != null && (typeof currentRationale !== 'string' || !currentRationale.length || currentRationale.trim() !== currentRationale)) {
+      throw new Error('decision_packet_current_rationale_invalid');
+    }
     if (stale.some((review) => review?.inheritedAsCurrent !== false || review?.stale !== true)) throw new Error('decision_packet_stale_inheritance_boundary_invalid');
+    if (stale.some((review) => review?.rationale != null && (typeof review.rationale !== 'string' || !review.rationale.length || review.rationale.trim() !== review.rationale))) {
+      throw new Error('decision_packet_stale_rationale_invalid');
+    }
   }
 
   function validateCandidateLibrary(library, reviewItems, expectedStoreId) {
@@ -608,10 +615,16 @@
         <div><span>Financially comparable</span><strong>${esc(display(financial.financiallyComparable))}</strong></div>
         <div><span>Analysis scope complete</span><strong>${esc(display(financial.analysisScopeComplete))}</strong></div>
       </div>${financial.reasons?.length ? `<small>${esc(financial.reasons.join(' · '))}</small>` : ''}</div>
-      <div class="cfdp-section"><h5>5. Fingerprint + review evidence</h5><div class="cfdp-evidence"><span>Current fingerprint</span><code>${esc(review.currentFingerprint || '—')}</code><span>Prior review state</span><strong>${esc(review.priorReviewState || 'unreviewed')}</strong><span>Stale evidence</span><strong>${stale.length}</strong></div>${staleEvidenceHtml(stale)}</div>
+      <div class="cfdp-section"><h5>5. Fingerprint + review evidence</h5><div class="cfdp-evidence"><span>Current fingerprint</span><code>${esc(review.currentFingerprint || '—')}</code><span>Prior review state</span><strong>${esc(review.priorReviewState || 'unreviewed')}</strong><span>Stale evidence</span><strong>${stale.length}</strong></div>${currentDecisionRationaleHtml(review)}${staleEvidenceHtml(stale)}</div>
       <div class="cfdp-section"><h5>6. Source evidence / provenance</h5><div class="cfdp-evidence"><span>Source evidence SHA-256</span><code>${esc(source.sourceEvidenceSha256 || '—')}</code><span>Provenance gate</span><strong>${esc(source.provenanceGate || '—')}</strong><span>Analysis window</span><strong>${esc(source.analysisWindow ? `${source.analysisWindow.startDate} → ${source.analysisWindow.endDate}` : '—')}</strong><span>Source imports</span><strong>${esc(Array.isArray(source.sourceImportIds) && source.sourceImportIds.length ? source.sourceImportIds.join(', ') : '—')}</strong></div><details><summary>Bound source evidence</summary><pre>${esc(source.sourceEvidenceJson || 'null')}</pre></details></div>
       <div class="cfri-callout warn"><strong>Read-only packet:</strong> This is server-authoritative review context only. No auto acknowledge, auto approve, Optimization Action, execution permit, Store Score, or Amazon mutation is authorized.</div>
     </div>`;
+  }
+
+  function currentDecisionRationaleHtml(review) {
+    const rationale = String(review?.currentRationale || '').trim();
+    if (!rationale) return '';
+    return `<div class="cfhl-rationale cfdp-rationale" data-cfdp-current-rationale><strong>Current Human Review rationale</strong><p>${esc(rationale)}</p><small>Human Review rationale only. It is not effectiveness, execution authority, or Amazon mutation authority.</small></div>`;
   }
 
   function contextList(label, rows, line) {
@@ -621,7 +634,10 @@
 
   function staleEvidenceHtml(rows) {
     if (!rows.length) return '<small>No same-context stale review evidence.</small>';
-    return `<details><summary>${rows.length} stale prior evidence record${rows.length === 1 ? '' : 's'}</summary>${rows.map((row) => `<div class="cfdp-stale"><strong>${esc(row.state || 'unsupported')}</strong><code>${esc(row.recommendationFingerprint || '—')}</code><small>${esc(row.updatedAt || row.reviewedAt || '—')} · never inherited as current</small></div>`).join('')}</details>`;
+    return `<details><summary>${rows.length} stale prior evidence record${rows.length === 1 ? '' : 's'}</summary>${rows.map((row) => {
+      const rationale = String(row?.rationale || '').trim();
+      return `<div class="cfdp-stale"><strong>${esc(row.state || 'unsupported')}</strong><code>${esc(row.recommendationFingerprint || '—')}</code>${rationale ? `<div class="cfhl-rationale cfdp-rationale" data-cfdp-stale-rationale><strong>Prior Human Review rationale</strong><p>${esc(rationale)}</p><small>Stale Human Review context only. Never inherited as current; not effectiveness, execution authority, or Amazon mutation authority.</small></div>` : ''}<small>${esc(row.updatedAt || row.reviewedAt || '—')} · never inherited as current</small></div>`;
+    }).join('')}</details>`;
   }
 
   function display(value) {

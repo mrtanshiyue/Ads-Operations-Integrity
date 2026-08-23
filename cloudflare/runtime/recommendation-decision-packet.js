@@ -71,6 +71,7 @@ export function buildRecommendationDecisionPacket({
       contextFingerprint: binding.contextFingerprint,
       sourceEvidenceSha256: binding.sourceEvidenceSha256,
       priorReviewState: currentReview?.persisted === true ? nullableText(currentReview?.state) : 'unreviewed',
+      currentRationale: currentReview?.persisted === true ? nullableText(currentReview?.note) : null,
       currentReview: currentReview?.persisted === true ? Object.freeze({ ...currentReview }) : null,
       staleEvidenceCount: stale.length,
       staleEvidence: Object.freeze(stale),
@@ -95,6 +96,7 @@ function normalizeStaleReview(review, binding) {
   }
   return Object.freeze({
     ...review,
+    rationale: nullableText(review?.note),
     stale: true,
     inheritedAsCurrent: false,
   });
