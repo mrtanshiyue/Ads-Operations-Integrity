@@ -119,6 +119,8 @@ assert.match(uiSource, /function handleDecisionScopeChange\(event\)[\s\S]{0,500}
   'Profile/date/limit/sort changes must remove stale preview and dry-run state before further governance actions');
 assert.match(uiSource, /function handleDecisionScopeChange\(event\)[\s\S]{0,900}if \(name === 'profileId'\) \{[\s\S]{0,180}state\.actionsSerial \+= 1;[\s\S]{0,120}state\.actions = null;[\s\S]{0,180}querySelector\('\[data-actions-results\]'\)\.innerHTML = '';[\s\S]{0,360}state\.open && state\.tab === 'actions'\) void loadActions\(\);/,
   'Profile changes must invalidate, clear, and refresh the profile-filtered Action Inbox');
+assert.match(uiSource, /function setOpen\(open\)[\s\S]{0,260}if \(state\.tab === 'actions' && !state\.actions\) void loadActions\(\);/,
+  'Reopening Decision Intelligence on an invalidated Action Inbox must load the current scope instead of presenting blank state');
 assert.match(uiSource, /const profileId = value\(panel, 'profileId'\);\s*if \(profileId\) params\.set\('profileId', profileId\);/,
   'Action Inbox requests must remain explicitly filtered by the current profile when present');
 assert.match(uiSource, /const serial = \+\+state\.governanceSerial;/,
@@ -150,5 +152,6 @@ console.log(JSON.stringify({
   governanceScopeOwnership: true,
   decisionScopeInvalidation: true,
   actionInboxProfileScopeInvalidation: true,
+  actionInboxReopenRefresh: true,
   amazonMutationAuthorized: false,
 }, null, 2));
