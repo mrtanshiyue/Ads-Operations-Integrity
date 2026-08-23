@@ -1,0 +1,230 @@
+name: Human Review Final Disposition Production D1 Migration
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.runtime-final-disposition-prod-migrate'
+      - '.github/workflows/runtime-final-disposition-prod-d1-migration.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-final-disposition-prod-d1-migration
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  TARGET_MAIN_SHA: fea3005caf7b233870b75787162a580b1d22a28e
+  PROD_WEB_WORKER: ads-operations-web-prod
+  EXPECTED_PROD_WEB_DEPLOYMENT: 6b4b5893-d58c-4830-b3d3-d1a404e830f0
+  EXPECTED_PROD_WEB_VERSION: da655249-54a8-43ac-8948-d3bcd155e510
+  PROD_SYNC_WORKER: ads-operations-sync-prod
+  EXPECTED_SYNC_DEPLOYMENT: cf0b0adf-96dc-437d-8298-15af58f992ce
+  EXPECTED_SYNC_VERSION: 295df84e-2103-4858-9895-49f67d4b10b4
+
+jobs:
+  canary-store01:
+    if: github.head_ref == 'acceptance/259-human-review-final-disposition-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DB_NAME: ads-ops-store-prod-01
+      DB_ID: 2e53bbad-5680-431c-bcf7-68e89b231ea1
+    steps:
+      - name: Checkout acceptance control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require explicit Production migration sentinel
+        run: |
+          set -euo pipefail
+          test -f .runtime-final-disposition-prod-migrate
+          test "$(tr -d '\n' < .runtime-final-disposition-prod-migrate)" = "APPLY_PRODUCTION_0025=$TARGET_MAIN_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install repository-pinned Wrangler
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4.114.0
+      - name: Checkout exact protected main target
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          test "$(git rev-parse origin/main)" = "$TARGET_MAIN_SHA"
+          git checkout --detach "$TARGET_MAIN_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_MAIN_SHA"
+      - name: Require frozen Production Web and Sync baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          web="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_WEB_WORKER/deployments")"
+          sync="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
+          sync_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
+          sync_schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
+          printf '%s' "$web" | jq -e --arg d "$EXPECTED_PROD_WEB_DEPLOYMENT" --arg v "$EXPECTED_PROD_WEB_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+          printf '%s' "$sync" | jq -e --arg d "$EXPECTED_SYNC_DEPLOYMENT" --arg v "$EXPECTED_SYNC_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+          printf '%s' "$sync_settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
+          printf '%s' "$sync_schedules" | jq -e '.success == true and ((.result.schedules // .result // []) | length) == 0' >/dev/null
+      - name: Record Store01 pre-migration invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"); json=(-H 'Content-Type: application/json')
+          query(){ local sql="$1"; curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query"; }
+          counts="$(query "SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records,(SELECT COUNT(*) FROM optimization_actions) AS optimization_actions,(SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts,(SELECT COUNT(*) FROM sync_runs) AS sync_runs")"
+          triggers="$(query "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('trg_advisory_review_binding_immutable','trg_advisory_review_no_delete','trg_advisory_review_csv_authority_guard') ORDER BY name")"
+          indexes="$(query "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('uq_advisory_review_source_recommendation','idx_advisory_review_state_updated','idx_advisory_review_entity') ORDER BY name")"
+          printf '%s' "$triggers" | jq -e '.success == true and (.result[0].results | length) == 3' >/dev/null
+          printf '%s' "$indexes" | jq -e '.success == true and (.result[0].results | length) == 3' >/dev/null
+          printf '%s' "$counts" | jq -c '.result[0].results[0]' > /tmp/store01-pre.json
+      - name: Require Store01 exactly pending 0025
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler d1 migrations list "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/store01-pending.txt
+          grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/store01-pending.txt
+      - name: Apply Store01 canary migration 0025
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler d1 migrations apply "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/store01-apply.txt
+          grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/store01-apply.txt
+      - name: Verify Store01 post-migration invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler d1 migrations list "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/store01-post.txt
+          if grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/store01-post.txt; then exit 1; fi
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"); json=(-H 'Content-Type: application/json')
+          query(){ local sql="$1"; curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query"; }
+          counts="$(query "SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records,(SELECT COUNT(*) FROM optimization_actions) AS optimization_actions,(SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts,(SELECT COUNT(*) FROM sync_runs) AS sync_runs")"
+          after="$(printf '%s' "$counts" | jq -c '.result[0].results[0]')"; before="$(cat /tmp/store01-pre.json)"; test "$after" = "$before"
+          schema="$(query "SELECT sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'")"
+          printf '%s' "$schema" | jq -e '.success == true and (.result[0].results[0].sql | contains("approved")) and (.result[0].results[0].sql | contains("rejected"))' >/dev/null
+          guards="$(query "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('trg_advisory_review_binding_immutable','trg_advisory_review_no_delete','trg_advisory_review_csv_authority_guard') ORDER BY name")"
+          printf '%s' "$guards" | jq -e '.success == true and (.result[0].results | length) == 3 and any(.result[0].results[]; .name == "trg_advisory_review_csv_authority_guard" and (.sql | contains("CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED")))' >/dev/null
+          indexes="$(query "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('uq_advisory_review_source_recommendation','idx_advisory_review_state_updated','idx_advisory_review_entity')")"
+          printf '%s' "$indexes" | jq -e '.success == true and (.result[0].results | length) == 3' >/dev/null
+          ledger="$(query "SELECT name FROM d1_migrations WHERE name='0025_store_advisory_review_final_disposition.sql'")"
+          printf '%s' "$ledger" | jq -e '.success == true and (.result[0].results | length) == 1' >/dev/null
+          mkdir -p artifacts/prod-store01
+          jq -n --arg store "$DB_NAME" --argjson before "$before" --argjson after "$after" '{store:$store,migration:"0025_store_advisory_review_final_disposition.sql",result:"PASS",before:$before,after:$after,countsUnchanged:($before==$after),approvedRejectedSchema:true,guardsPreserved:true}' > artifacts/prod-store01/receipt.json
+      - name: Upload Store01 canary evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-final-disposition-prod-store01-${{ github.run_id }}
+          path: artifacts/prod-store01/
+          retention-days: 90
+
+  migrate-remaining:
+    needs: canary-store01
+    if: needs.canary-store01.result == 'success'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - db_name: ads-ops-store-prod-02
+            db_id: a5d8e5b0-8d29-48a7-b200-6aa14a2fb997
+          - db_name: ads-ops-store-prod-03
+            db_id: d47867d7-f5ca-4ddc-a4af-87bf14325e22
+          - db_name: ads-ops-store-prod-04
+            db_id: c38ac43e-e62d-4387-b84d-2d080ce9a00b
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DB_NAME: ${{ matrix.db_name }}
+      DB_ID: ${{ matrix.db_id }}
+    steps:
+      - name: Checkout acceptance control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require explicit Production migration sentinel
+        run: |
+          set -euo pipefail
+          test "$(tr -d '\n' < .runtime-final-disposition-prod-migrate)" = "APPLY_PRODUCTION_0025=$TARGET_MAIN_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install repository-pinned Wrangler
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4.114.0
+      - name: Checkout exact protected main target
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          test "$(git rev-parse origin/main)" = "$TARGET_MAIN_SHA"
+          git checkout --detach "$TARGET_MAIN_SHA"
+      - name: Record pre-migration counts and require 0025 pending
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"); json=(-H 'Content-Type: application/json')
+          sql="SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records,(SELECT COUNT(*) FROM optimization_actions) AS optimization_actions,(SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts,(SELECT COUNT(*) FROM sync_runs) AS sync_runs"
+          curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query" | jq -c '.result[0].results[0]' > /tmp/pre.json
+          npx --no-install wrangler d1 migrations list "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/pending.txt
+          grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/pending.txt
+      - name: Apply governed migration 0025
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler d1 migrations apply "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/apply.txt
+          grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/apply.txt
+      - name: Verify post-migration counts, schema, guards and ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install wrangler d1 migrations list "$DB_NAME" --remote --env production --config cloudflare/runtime/wrangler.native.jsonc | tee /tmp/post.txt
+          if grep -F '0025_store_advisory_review_final_disposition.sql' /tmp/post.txt; then exit 1; fi
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"); json=(-H 'Content-Type: application/json')
+          query(){ local sql="$1"; curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$DB_ID/query"; }
+          counts="$(query "SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records,(SELECT COUNT(*) FROM optimization_actions) AS optimization_actions,(SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts,(SELECT COUNT(*) FROM sync_runs) AS sync_runs")"
+          after="$(printf '%s' "$counts" | jq -c '.result[0].results[0]')"; before="$(cat /tmp/pre.json)"; test "$after" = "$before"
+          schema="$(query "SELECT sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'")"; printf '%s' "$schema" | jq -e '.result[0].results[0].sql | contains("approved") and contains("rejected")' >/dev/null
+          guards="$(query "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND name IN ('trg_advisory_review_binding_immutable','trg_advisory_review_no_delete','trg_advisory_review_csv_authority_guard') ORDER BY name")"; printf '%s' "$guards" | jq -e '(.result[0].results|length)==3 and any(.result[0].results[]; .name=="trg_advisory_review_csv_authority_guard" and (.sql|contains("CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED")))' >/dev/null
+          ledger="$(query "SELECT name FROM d1_migrations WHERE name='0025_store_advisory_review_final_disposition.sql'")"; printf '%s' "$ledger" | jq -e '(.result[0].results|length)==1' >/dev/null
+          mkdir -p "artifacts/$DB_NAME"
+          jq -n --arg store "$DB_NAME" --argjson before "$before" --argjson after "$after" '{store:$store,migration:"0025_store_advisory_review_final_disposition.sql",result:"PASS",before:$before,after:$after,countsUnchanged:($before==$after),approvedRejectedSchema:true,guardsPreserved:true}' > "artifacts/$DB_NAME/receipt.json"
+      - name: Upload store migration evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-final-disposition-${{ matrix.db_name }}-${{ github.run_id }}
+          path: artifacts/${{ matrix.db_name }}/
+          retention-days: 90
+
+  verify-production-d1:
+    needs: [canary-store01, migrate-remaining]
+    if: needs.canary-store01.result == 'success' && needs.migrate-remaining.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify all four ledgers/schema and Web/Sync remained untouched
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'; auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"); json=(-H 'Content-Type: application/json')
+          for pair in \
+            'ads-ops-store-prod-01:2e53bbad-5680-431c-bcf7-68e89b231ea1' \
+            'ads-ops-store-prod-02:a5d8e5b0-8d29-48a7-b200-6aa14a2fb997' \
+            'ads-ops-store-prod-03:d47867d7-f5ca-4ddc-a4af-87bf14325e22' \
+            'ads-ops-store-prod-04:c38ac43e-e62d-4387-b84d-2d080ce9a00b'; do
+            name="${pair%%:*}"; id="${pair#*:}"
+            q(){ local sql="$1"; curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$(jq -cn --arg sql "$sql" '{sql:$sql}')" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$id/query"; }
+            ledger="$(q "SELECT name FROM d1_migrations WHERE name='0025_store_advisory_review_final_disposition.sql'")"; printf '%s' "$ledger" | jq -e '(.result[0].results|length)==1' >/dev/null
+            schema="$(q "SELECT sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'")"; printf '%s' "$schema" | jq -e '.result[0].results[0].sql | contains("approved") and contains("rejected")' >/dev/null
+            echo "$name:0025=PASS"
+          done
+          web="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_WEB_WORKER/deployments")"
+          sync="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
+          sync_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
+          sync_schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
+          printf '%s' "$web" | jq -e --arg d "$EXPECTED_PROD_WEB_DEPLOYMENT" --arg v "$EXPECTED_PROD_WEB_VERSION" '.result.deployments[0].id==$d and .result.deployments[0].versions[0].version_id==$v' >/dev/null
+          printf '%s' "$sync" | jq -e --arg d "$EXPECTED_SYNC_DEPLOYMENT" --arg v "$EXPECTED_SYNC_VERSION" '.result.deployments[0].id==$d and .result.deployments[0].versions[0].version_id==$v' >/dev/null
+          printf '%s' "$sync_settings" | jq -e '(.result.bindings|map(select(.name=="AMAZON_ADS_ENABLED" and .text=="false"))|length)==1' >/dev/null
+          printf '%s' "$sync_schedules" | jq -e '((.result.schedules // .result // [])|length)==0' >/dev/null
+          echo 'PRODUCTION_D1_0025_ROLLOUT=PASS'
+          echo 'PRODUCTION_WEB_UNTOUCHED=true'
+          echo 'PRODUCTION_SYNC_UNTOUCHED=true'
+          echo 'AMAZON_REQUESTS=0'
