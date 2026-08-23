@@ -22,7 +22,7 @@ jobs:
       WORKER: ads-operations-web-dev
       BASELINE_VERSION: bd3fcb2d-f4a7-4f04-afb3-b6287c17d32a
     steps:
-      - name: SELECT-only trigger, review residue and runtime safety
+      - name: SELECT-only schema, triggers, residue and runtime safety
         shell: bash
         run: |
           set -euo pipefail
@@ -34,73 +34,44 @@ jobs:
           const worker = process.env.WORKER;
           const baselineVersion = process.env.BASELINE_VERSION;
           const api = `https://api.cloudflare.com/client/v4/accounts/${account}`;
-
-          async function cf(path, {method='GET', body}={}) {
-            const r = await fetch(`${api}${path}`, {
-              method,
-              headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...(body ? {'content-type':'application/json'} : {}) },
-              body: body ? JSON.stringify(body) : undefined,
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok || j?.success === false) throw new Error(`${path}:${r.status}:${j?.errors?.[0]?.message || ''}`);
+          async function cf(path,{method='GET',body}={}) {
+            const r=await fetch(`${api}${path}`,{method,headers:{authorization:`Bearer ${token}`,accept:'application/json',...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+            const j=await r.json().catch(()=>({}));
+            if(!r.ok||j?.success===false) throw new Error(`${path}:${r.status}:${j?.errors?.[0]?.message||''}`);
             return j.result;
           }
-
-          async function select(sql, params=[]) {
-            if (!/^\s*(SELECT|PRAGMA)\b/i.test(sql)) throw new Error(`non_readonly_sql_rejected:${sql.slice(0,30)}`);
-            const result = await cf(`/d1/database/${db}/query`, { method: 'POST', body: { sql, params } });
-            const first = Array.isArray(result) ? result[0] : result;
-            return { success: first?.success ?? true, results: first?.results || [], meta: first?.meta || null };
+          async function select(sql,params=[]) {
+            if(!/^\s*(SELECT|PRAGMA)\b/i.test(sql)) throw new Error(`non_readonly_sql_rejected:${sql.slice(0,30)}`);
+            const result=await cf(`/d1/database/${db}/query`,{method:'POST',body:{sql,params}});
+            const first=Array.isArray(result)?result[0]:result;
+            return first?.results||[];
           }
-
-          function binding(value, name) {
-            if (!value || typeof value !== 'object') return null;
-            if (Array.isArray(value)) {
-              for (const x of value) {
-                if (x && typeof x === 'object' && x.name === name) return x.text ?? x.value ?? null;
-                const nested = binding(x, name); if (nested !== null) return nested;
-              }
-              return null;
-            }
-            for (const x of Object.values(value)) { const nested = binding(x, name); if (nested !== null) return nested; }
-            return null;
+          function binding(value,name){
+            if(!value||typeof value!=='object') return null;
+            if(Array.isArray(value)){for(const x of value){if(x&&typeof x==='object'&&x.name===name)return x.text??x.value??null;const n=binding(x,name);if(n!==null)return n;}return null;}
+            for(const x of Object.values(value)){const n=binding(x,name);if(n!==null)return n;}return null;
           }
-
-          const triggerRows = await select("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='advisory_review_records' ORDER BY name");
-          const tableRows = await select("SELECT name, sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'");
-          const reviewRows = await select(`SELECT review_id, recommendation_fingerprint, state, note, reviewer_user_id, reviewed_at, created_at, updated_at, source_evidence_sha256 FROM advisory_review_records WHERE recommendation_fingerprint=?1 ORDER BY updated_at DESC, created_at DESC`, [fingerprint]);
-          const optimization = await select('SELECT COUNT(*) AS count FROM optimization_actions');
-
-          const depResult = await cf(`/workers/scripts/${encodeURIComponent(worker)}/deployments`);
-          const dep = depResult?.deployments?.[0] || (Array.isArray(depResult) ? depResult[0] : null);
-          const activeVersion = dep?.versions?.find(v => Number(v?.percentage)===100)?.version_id || dep?.versions?.[0]?.version_id || null;
-          const baseline = await cf(`/workers/scripts/${encodeURIComponent(worker)}/versions/${encodeURIComponent(baselineVersion)}`);
-          const schedulesResult = await cf(`/workers/scripts/${encodeURIComponent(worker)}/schedules`);
-          const schedules = schedulesResult?.schedules ?? schedulesResult ?? [];
-
-          const output = {
-            triggerRows: triggerRows.results,
-            tableDefinition: tableRows.results,
-            currentReviewRows: reviewRows.results,
-            optimizationActionCount: Number(optimization.results?.[0]?.count || 0),
-            runtime: {
-              activeDeploymentId: dep?.id || null,
-              activeVersion,
-              activePercentage: dep?.versions?.find(v => v.version_id===activeVersion)?.percentage ?? null,
-              baselineVersion,
-              baselineBindings: {
-                accessMode: binding(baseline,'ACCESS_MODE'),
-                syncTriggerEnabled: binding(baseline,'SYNC_TRIGGER_ENABLED'),
-                phase5SingleRunPermitId: binding(baseline,'PHASE5_SINGLE_RUN_PERMIT_ID') ?? '',
-                phase5SingleRunReportDate: binding(baseline,'PHASE5_SINGLE_RUN_REPORT_DATE') ?? '',
-              },
-              schedules: Array.isArray(schedules) ? schedules : [],
-            },
+          const tableInfo=await select('PRAGMA table_info(advisory_review_records)');
+          const tableDefinition=await select("SELECT name, sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'");
+          const triggerRows=await select("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name='advisory_review_records' ORDER BY name");
+          const indexRows=await select("SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='advisory_review_records' ORDER BY name");
+          const currentReviewRows=await select('SELECT * FROM advisory_review_records WHERE recommendation_fingerprint=?1',[fingerprint]);
+          const optimization=await select('SELECT COUNT(*) AS count FROM optimization_actions');
+          const depResult=await cf(`/workers/scripts/${encodeURIComponent(worker)}/deployments`);
+          const dep=depResult?.deployments?.[0]||(Array.isArray(depResult)?depResult[0]:null);
+          const activeVersion=dep?.versions?.find(v=>Number(v?.percentage)===100)?.version_id||dep?.versions?.[0]?.version_id||null;
+          const baseline=await cf(`/workers/scripts/${encodeURIComponent(worker)}/versions/${encodeURIComponent(baselineVersion)}`);
+          const schedulesResult=await cf(`/workers/scripts/${encodeURIComponent(worker)}/schedules`);
+          const schedules=schedulesResult?.schedules??schedulesResult??[];
+          const output={
+            tableInfo,tableDefinition,triggerRows,indexRows,currentReviewRows,
+            optimizationActionCount:Number(optimization?.[0]?.count||0),
+            runtime:{activeDeploymentId:dep?.id||null,activeVersion,activePercentage:dep?.versions?.find(v=>v.version_id===activeVersion)?.percentage??null,baselineVersion,baselineBindings:{accessMode:binding(baseline,'ACCESS_MODE'),syncTriggerEnabled:binding(baseline,'SYNC_TRIGGER_ENABLED'),phase5SingleRunPermitId:binding(baseline,'PHASE5_SINGLE_RUN_PERMIT_ID')??'',phase5SingleRunReportDate:binding(baseline,'PHASE5_SINGLE_RUN_REPORT_DATE')??''},schedules:Array.isArray(schedules)?schedules:[]}
           };
-          console.log(JSON.stringify(output, null, 2));
-          if (activeVersion !== baselineVersion) throw new Error(`dev_active_version_drift:${activeVersion}`);
-          if (output.runtime.baselineBindings.accessMode !== 'off') throw new Error('dev_baseline_access_mode_not_off');
-          if (output.runtime.baselineBindings.syncTriggerEnabled !== 'false') throw new Error('dev_sync_trigger_not_false');
-          if (output.runtime.baselineBindings.phase5SingleRunPermitId !== '' || output.runtime.baselineBindings.phase5SingleRunReportDate !== '') throw new Error('dev_phase5_not_empty');
-          if (output.runtime.schedules.length !== 0) throw new Error('dev_schedules_not_empty');
+          console.log(JSON.stringify(output,null,2));
+          if(activeVersion!==baselineVersion) throw new Error(`dev_active_version_drift:${activeVersion}`);
+          if(output.runtime.baselineBindings.accessMode!=='off') throw new Error('dev_baseline_access_mode_not_off');
+          if(output.runtime.baselineBindings.syncTriggerEnabled!=='false') throw new Error('dev_sync_trigger_not_false');
+          if(output.runtime.baselineBindings.phase5SingleRunPermitId!==''||output.runtime.baselineBindings.phase5SingleRunReportDate!=='') throw new Error('dev_phase5_not_empty');
+          if(output.runtime.schedules.length!==0) throw new Error('dev_schedules_not_empty');
           NODE
