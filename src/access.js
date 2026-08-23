@@ -1,6 +1,5 @@
 const JWKS_TTL_MS = 60 * 60 * 1000;
 const ACCESS_MODES = new Set(['off', 'observe', 'enforce']);
-const OPERATIONAL_UAT_ROUTE = '/api/v1/operational-uat/live-probe';
 const jwksCache = new Map();
 
 export function normalizeAccessMode(env = {}) {
@@ -29,27 +28,8 @@ export function accessRuntimeConfig(env = {}, options = {}) {
   };
 }
 
-export function operationalUatAccessScope(request, env = {}) {
-  let pathname = '';
-  try {
-    pathname = new URL(request?.url || '').pathname;
-  } catch {
-    pathname = '';
-  }
-  const production = String(env.APP_ENV || '').trim().toLowerCase() === 'production';
-  const isOperationalUat = production && pathname === OPERATIONAL_UAT_ROUTE;
-  return {
-    isOperationalUat,
-    audience: isOperationalUat ? String(env.OPERATIONAL_UAT_ACCESS_AUD || '').trim() : null,
-  };
-}
-
 export async function evaluateAccessIdentity(request, env = {}) {
-  const uatScope = operationalUatAccessScope(request, env);
-  const config = accessRuntimeConfig(
-    env,
-    uatScope.isOperationalUat ? { audience: uatScope.audience } : {},
-  );
+  const config = accessRuntimeConfig(env);
   if (config.mode === 'off') {
     return {
       mode: 'off',
@@ -83,9 +63,6 @@ export async function evaluateAccessIdentity(request, env = {}) {
 
   try {
     const identity = await verifyAccessIdentity(request, env, { audience: config.audience });
-    if (uatScope.isOperationalUat && identity.principalType !== 'service_token') {
-      throw new Error('Operational UAT requires a service-token principal');
-    }
     return {
       mode: config.mode,
       configured: true,
