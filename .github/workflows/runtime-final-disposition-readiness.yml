@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install repository-pinned Wrangler
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund wrangler@4.114.0
       - name: Require exact canonical main and safety config
         run: |
           set -euo pipefail
