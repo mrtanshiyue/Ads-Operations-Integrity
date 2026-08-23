@@ -285,7 +285,7 @@
       </label>
       <label class="cfOperatorContextField">
         <span>${escapeHtml(t('关键词', 'Keyword'))}</span>
-        <select id="cfOperatorContextKeyword"${keywordDisabled ? ' disabled'}>${keywordOptions}</select>
+        <select id="cfOperatorContextKeyword"${keywordDisabled ? ' disabled' : ''}>${keywordOptions}</select>
       </label>
       <div class="cfOperatorContextActions">
         <button type="button" id="btnCfOperatorContextAudit" class="btn" ${mode.canRead ? '' : 'disabled'}>${escapeHtml(t('查看当前审计', 'Audit current scope'))}</button>
