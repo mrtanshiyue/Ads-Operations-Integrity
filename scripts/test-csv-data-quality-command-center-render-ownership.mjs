@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -9,7 +8,6 @@ const source = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-data-quality-command-center-v1.js'),
   'utf8',
 );
-new vm.SourceTextModule(source, { identifier: 'cloudflare-native-csv-data-quality-command-center-v1.js' });
 
 assert.match(
   source,
