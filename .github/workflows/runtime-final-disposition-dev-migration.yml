@@ -22,7 +22,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       DEV_STORE_DB_ID: 123b2a32-d78b-4de9-8318-08e35cefb008
-      TARGET_MAIN_SHA: 68b8ad353289ccb5d7e60284844b99193be44225
+      TARGET_MAIN_SHA: fea3005caf7b233870b75787162a580b1d22a28e
     steps:
       - name: Checkout acceptance control plane
         uses: actions/checkout@v4
@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           test -f .runtime-final-disposition-dev-migrate
-          test "$(cat .runtime-final-disposition-dev-migrate)" = "APPLY_DEV_0025=68b8ad353289ccb5d7e60284844b99193be44225"
+          test "$(cat .runtime-final-disposition-dev-migrate)" = "APPLY_DEV_0025=fea3005caf7b233870b75787162a580b1d22a28e"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
