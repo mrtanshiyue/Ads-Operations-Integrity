@@ -1,0 +1,51 @@
+name: '#276 Dev Human Review Rationale Acceptance v2 — NEVER MERGE'
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/issue-276-dev-rationale-acceptance-v2.mjs'
+      - '.github/workflows/276-dev-rationale-acceptance-v2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-276-dev-rationale-acceptance-v2
+  cancel-in-progress: false
+
+jobs:
+  dev-rationale-acceptance:
+    name: '#276 Dev exact-main rationale acceptance v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_MAIN_SHA: 67b1a1daf403b971006bdd8aa66d6336a5e56832
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      ACCEPTANCE_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Require dedicated acceptance credential
+        if: env.ACCEPTANCE_CREDENTIAL_PRESENT != 'true'
+        run: exit 1
+      - name: Pin protected canonical main
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$ACTUAL_SHA" = "$EXPECTED_MAIN_SHA"
+      - name: Static harness check
+        run: node --check scripts/issue-276-dev-rationale-acceptance-v2.mjs
+      - name: Run corrected Dev rationale acceptance
+        run: node scripts/issue-276-dev-rationale-acceptance-v2.mjs
+      - name: Upload immutable Dev evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-276-dev-rationale-acceptance-v2-${{ github.run_id }}
+          path: artifacts/issue-276-dev-rationale-acceptance-v2/receipt.json
+          if-no-files-found: warn
+          retention-days: 90
