@@ -49,24 +49,32 @@ jobs:
 
           ui_test = Path('scripts/test-recommendation-human-review-ui.mjs')
           text = ui_test.read_text()
-          replacements = [
-              (
-                  "assert.match(ui, /Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes./,\n  'Final disposition UI copy must preserve the execution boundary');",
-                  "assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),\n  'Final disposition UI copy must preserve the execution boundary');"
-              ),
-              (
-                  "assert.match(ui, /Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed./,\n  'Historical Learning semantics copy must reject disposition effectiveness inference');",
-                  "assert.ok(ui.includes('Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed.'),\n  'Historical Learning semantics copy must reject disposition effectiveness inference');"
-              ),
-              (
-                  "assert.match(ui, /['approved','Approved'].*['rejected','Rejected']/s,\n  'Candidate Library review filter must expose Approved and Rejected');",
-                  "assert.ok(ui.includes(\"['approved','Approved']\") && ui.includes(\"['rejected','Rejected']\"),\n  'Candidate Library review filter must expose Approved and Rejected');"
-              ),
-          ]
-          for old, new in replacements:
-              if old not in text:
-                  raise SystemExit(f'UI normalization anchor missing: {old[:80]}')
-              text = text.replace(old, new, 1)
+
+          def replace_two_line_assert(text, message, replacement):
+              marker = f"  '{message}');"
+              if text.count(marker) != 1:
+                  raise SystemExit(f'UI assertion message anchor missing or non-unique: {message}')
+              marker_pos = text.index(marker)
+              marker_line_start = text.rfind('\n', 0, marker_pos) + 1
+              previous_line_start = text.rfind('\n', 0, marker_line_start - 1) + 1
+              end = marker_pos + len(marker)
+              return text[:previous_line_start] + replacement + text[end:]
+
+          text = replace_two_line_assert(
+              text,
+              'Final disposition UI copy must preserve the execution boundary',
+              "assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),\n  'Final disposition UI copy must preserve the execution boundary');"
+          )
+          text = replace_two_line_assert(
+              text,
+              'Historical Learning semantics copy must reject disposition effectiveness inference',
+              "assert.ok(ui.includes('Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed.'),\n  'Historical Learning semantics copy must reject disposition effectiveness inference');"
+          )
+          text = replace_two_line_assert(
+              text,
+              'Candidate Library review filter must expose Approved and Rejected',
+              "assert.ok(ui.includes(\"['approved','Approved']\") && ui.includes(\"['rejected','Rejected']\"),\n  'Candidate Library review filter must expose Approved and Rejected');"
+          )
           ui_test.write_text(text)
           PY
           rm .github/workflows/tmp-final-disposition-pr-bootstrap.yml
