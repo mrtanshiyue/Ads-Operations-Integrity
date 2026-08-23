@@ -1,0 +1,306 @@
+name: 270 Production exact-main promotion and Access read-only acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/265-prod-runtime-readonly-acceptance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  promote-and-accept-prod:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ops/270-prod-runtime-readonly-acceptance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TARGET_SHA: 7e01cdff4ff432d323142eefcbcba93302829409
+      EXPECTED_MAIN_SHA: 7e01cdff4ff432d323142eefcbcba93302829409
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
+      PROD_WORKER: ads-operations-web-prod
+      SYNC_WORKER: ads-operations-sync-prod
+      BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      STORE_ID: store-01
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/270-prod-runtime-readonly-acceptance
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify one-shot branch isolation and exact canonical main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$TARGET_SHA"
+          changed="$(git diff --name-only "$TARGET_SHA"...HEAD)"
+          test "$changed" = '.github/workflows/265-prod-runtime-readonly-acceptance.yml'
+
+      - name: Capture pre-promotion HARD-OFF and Sync baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          node scripts/production-closure-observability.mjs --output evidence/pre-observability.json --summary evidence/pre-observability.md
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pre = JSON.parse(fs.readFileSync('evidence/pre-observability.json','utf8'));
+          if (pre.canonicalMainSha !== process.env.TARGET_SHA) throw new Error('pre_main_sha_mismatch');
+          if (pre.amazonHardOff?.status !== 'HARD_OFF') throw new Error(`pre_amazon_hard_off_${pre.amazonHardOff?.status}`);
+          if (pre.amazonHardOff?.syncTriggerEnabled !== false) throw new Error('pre_sync_trigger_enabled');
+          if (pre.amazonHardOff?.amazonAdsEnabled !== false) throw new Error('pre_amazon_ads_enabled');
+          if ((pre.productionSyncSchedules || []).length !== 0) throw new Error('pre_sync_schedules_present');
+          NODE
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const API = 'https://api.cloudflare.com/client/v4';
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const worker = process.env.SYNC_WORKER;
+          async function get(path) {
+            const r = await fetch(`${API}/accounts/${account}${path}`, {headers:{accept:'application/json',authorization:`Bearer ${token}`}});
+            const b = await r.json();
+            if (!r.ok || b?.success !== true) throw new Error(`cf_get_failed:${path}:${r.status}`);
+            return b.result;
+          }
+          const deployments = await get(`/workers/scripts/${encodeURIComponent(worker)}/deployments`);
+          const active = deployments?.deployments?.[0];
+          const versions = active?.versions || [];
+          if (!active?.id || versions.length !== 1 || !versions[0]?.version_id || Number(versions[0]?.percentage) !== 100) throw new Error('sync_baseline_invalid');
+          const schedulesResult = await get(`/workers/scripts/${encodeURIComponent(worker)}/schedules`);
+          const schedules = Array.isArray(schedulesResult?.schedules) ? schedulesResult.schedules : Array.isArray(schedulesResult) ? schedulesResult : null;
+          if (!schedules || schedules.length !== 0) throw new Error('sync_schedules_not_empty');
+          const version = await get(`/workers/scripts/${encodeURIComponent(worker)}/versions/${encodeURIComponent(versions[0].version_id)}`);
+          const bindings = {};
+          if (version?.env && typeof version.env === 'object') for (const [k,v] of Object.entries(version.env)) if (v?.type === 'plain_text') bindings[k] = String(v.text ?? '');
+          for (const set of [version?.resources?.bindings, version?.bindings]) if (Array.isArray(set)) for (const v of set) if (v?.type === 'plain_text' && v?.name) bindings[v.name] = String(v.text ?? '');
+          if (!['false', false].includes(bindings.AMAZON_ADS_ENABLED)) throw new Error('sync_amazon_ads_not_false');
+          const out = {deploymentId:active.id,versionId:versions[0].version_id,traffic:Number(versions[0].percentage),schedules,amazonAdsEnabled:String(bindings.AMAZON_ADS_ENABLED)};
+          fs.writeFileSync('evidence/sync-before.json', JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out));
+          NODE
+
+      - name: Trigger governed exact-main Production Workers Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { discoverWorkerDeploymentTopology } from './scripts/cloudflare-deployment-discovery-client.mjs';
+          const API = 'https://api.cloudflare.com/client/v4';
+          const accountId = String(process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const token = String(process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          const githubToken = String(process.env.GITHUB_TOKEN || '').trim();
+          const expected = process.env.TARGET_SHA.toLowerCase();
+          if (!accountId || !token || !githubToken) throw new Error('required_credential_missing');
+
+          const gh = await fetch('https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main', {headers:{accept:'application/vnd.github+json',authorization:`Bearer ${githubToken}`}});
+          const ghBody = await gh.json();
+          if (!gh.ok || String(ghBody?.commit?.sha || '').toLowerCase() !== expected) throw new Error('main_drift');
+
+          const headers = {accept:'application/json',authorization:`Bearer ${token}`};
+          async function get(path) {
+            const r = await fetch(`${API}/accounts/${accountId}${path}`, {headers});
+            const b = await r.json();
+            if (!r.ok || b?.success !== true) throw new Error(`cf_get_failed:${path}:${r.status}`);
+            return b.result;
+          }
+
+          const beforeTopology = await discoverWorkerDeploymentTopology({accountId,scriptName:process.env.PROD_WORKER,token});
+          const workers = await get('/workers/scripts');
+          const worker = workers.find((row) => row?.id === process.env.PROD_WORKER);
+          if (!worker?.tag) throw new Error('prod_worker_tag_missing');
+          const triggers = await get(`/builds/workers/${worker.tag}/triggers`);
+          const matches = triggers.filter((row) => row?.trigger_name === 'ads-operations-web-prod exact-main');
+          if (matches.length !== 1) throw new Error(`prod_trigger_count_${matches.length}`);
+          const trigger = matches[0];
+          if (JSON.stringify(trigger.branch_includes || []) !== JSON.stringify(['__manual_exact_main_prod__'])) throw new Error('prod_trigger_governance_drift');
+          if (String(trigger.deploy_command || '') !== 'npx wrangler deploy --env production --config cloudflare/runtime/wrangler.native.jsonc') throw new Error('prod_deploy_command_drift');
+
+          const start = await fetch(`${API}/accounts/${accountId}/builds/triggers/${trigger.trigger_uuid}/builds`, {method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({branch:'main',commit_hash:expected})});
+          const startBody = await start.json();
+          if (!start.ok || startBody?.success !== true || !startBody?.result?.build_uuid) throw new Error(`prod_build_start_failed_${start.status}`);
+          const buildUuid = startBody.result.build_uuid;
+
+          let build = null;
+          for (let i=0;i<90;i+=1) {
+            build = await get(`/builds/builds/${buildUuid}`);
+            const outcome = String(build?.build_outcome || '').toLowerCase();
+            if (['success','fail','skipped','cancelled','terminated'].includes(outcome)) break;
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (String(build?.build_outcome || '').toLowerCase() !== 'success') throw new Error(`prod_build_outcome_${build?.build_outcome || 'timeout'}`);
+          if (String(build?.build_trigger_metadata?.commit_hash || '').toLowerCase() !== expected) throw new Error('prod_build_sha_mismatch');
+
+          let topology = null;
+          for (let i=0;i<40;i+=1) {
+            const candidate = await discoverWorkerDeploymentTopology({accountId,scriptName:process.env.PROD_WORKER,token});
+            if (String(candidate?.activeBuild?.commitSha || '').toLowerCase() === expected && Number(candidate?.activeDeployment?.percentage) === 100) { topology = candidate; break; }
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+          }
+          if (!topology) throw new Error('prod_exact_main_not_active');
+          const out = {
+            ok:true,
+            gate:'issue-270-prod-exact-main-promotion',
+            targetSha:expected,
+            triggerUuid:trigger.trigger_uuid,
+            buildUuid,
+            buildOutcome:build.build_outcome,
+            buildCommitHash:build.build_trigger_metadata?.commit_hash || null,
+            priorDeploymentId:beforeTopology?.activeDeployment?.deploymentId || null,
+            priorVersionId:beforeTopology?.activeVersion?.versionId || null,
+            deploymentId:topology.activeDeployment.deploymentId,
+            versionId:topology.activeVersion.versionId,
+            traffic:topology.activeDeployment.percentage,
+            blockers:[],
+          };
+          fs.writeFileSync('evidence/promotion.json', JSON.stringify(out,null,2)+'\n');
+          console.log(JSON.stringify(out));
+          NODE
+
+      - name: Revalidate HARD-OFF and prove Production Sync unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-closure-observability.mjs --output evidence/post-observability.json --summary evidence/post-observability.md
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const post = JSON.parse(fs.readFileSync('evidence/post-observability.json','utf8'));
+          if (post.canonicalMainSha !== process.env.TARGET_SHA) throw new Error('post_main_sha_mismatch');
+          if (post.production?.sourceCommit !== process.env.TARGET_SHA) throw new Error('post_prod_not_exact_main');
+          if (post.production?.traffic !== 100) throw new Error('post_prod_not_100_percent');
+          if (post.amazonHardOff?.status !== 'HARD_OFF') throw new Error(`post_amazon_hard_off_${post.amazonHardOff?.status}`);
+          if (post.amazonHardOff?.syncTriggerEnabled !== false || post.amazonHardOff?.amazonAdsEnabled !== false) throw new Error('post_hard_off_boolean_violation');
+          if ((post.productionSyncSchedules || []).length !== 0) throw new Error('post_sync_schedules_present');
+          NODE
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const API = 'https://api.cloudflare.com/client/v4';
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const worker = process.env.SYNC_WORKER;
+          const before = JSON.parse(fs.readFileSync('evidence/sync-before.json','utf8'));
+          async function get(path) {
+            const r = await fetch(`${API}/accounts/${account}${path}`, {headers:{accept:'application/json',authorization:`Bearer ${token}`}});
+            const b = await r.json();
+            if (!r.ok || b?.success !== true) throw new Error(`cf_get_failed:${path}:${r.status}`);
+            return b.result;
+          }
+          const deployments = await get(`/workers/scripts/${encodeURIComponent(worker)}/deployments`);
+          const active = deployments?.deployments?.[0];
+          const versions = active?.versions || [];
+          if (!active?.id || versions.length !== 1 || !versions[0]?.version_id || Number(versions[0]?.percentage) !== 100) throw new Error('sync_after_invalid');
+          const schedulesResult = await get(`/workers/scripts/${encodeURIComponent(worker)}/schedules`);
+          const schedules = Array.isArray(schedulesResult?.schedules) ? schedulesResult.schedules : Array.isArray(schedulesResult) ? schedulesResult : null;
+          if (!schedules || schedules.length !== 0) throw new Error('sync_after_schedules_not_empty');
+          const after = {deploymentId:active.id,versionId:versions[0].version_id,traffic:Number(versions[0].percentage),schedules};
+          if (after.deploymentId !== before.deploymentId || after.versionId !== before.versionId) throw new Error(`sync_runtime_changed:${before.deploymentId}:${before.versionId}:${after.deploymentId}:${after.versionId}`);
+          fs.writeFileSync('evidence/sync-after.json', JSON.stringify(after,null,2)+'\n');
+          console.log(JSON.stringify({unchanged:true,before,after}));
+          NODE
+
+      - name: Probe Production Access boundary with GET only
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe() {
+            local name="$1"
+            local url="$2"
+            curl --silent --show-error --retry 3 --retry-all-errors --dump-header "evidence/${name}.headers" --output "evidence/${name}.body" --write-out '%{http_code}' "$url" > "evidence/${name}.status"
+          }
+          probe health "$BASE_URL/api/health"
+          probe ui "$BASE_URL/assets/cloudflare-native-csv-recommendation-human-review-v1.js"
+          probe review "$BASE_URL/api/v1/stores/$STORE_ID/advisory-reviews?reviewContract=csv-recommendation-human-review-v1&startDate=2026-06-01&endDate=2026-06-30&limit=1"
+
+      - name: Validate Access intercept and no application-content leak
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          const promotion = JSON.parse(fs.readFileSync('evidence/promotion.json','utf8'));
+          const syncBefore = JSON.parse(fs.readFileSync('evidence/sync-before.json','utf8'));
+          const syncAfter = JSON.parse(fs.readFileSync('evidence/sync-after.json','utf8'));
+          const fail = (m) => { throw new Error(m); };
+          function inspect(name) {
+            const status = Number(fs.readFileSync(`evidence/${name}.status`,'utf8').trim());
+            const headers = fs.readFileSync(`evidence/${name}.headers`,'utf8');
+            const body = fs.readFileSync(`evidence/${name}.body`,'utf8');
+            const location = (headers.match(/^location:\s*(.+)$/im) || [])[1]?.trim() || null;
+            const contentType = (headers.match(/^content-type:\s*(.+)$/im) || [])[1]?.trim() || null;
+            const accessHtml = /<html[\s>]/i.test(body) && /(cloudflare|access|sign[ -]?in|login)/i.test(body);
+            const accessRedirect = [301,302,303,307,308].includes(status) && !!location && /(cloudflareaccess\.com|\/cdn-cgi\/access)/i.test(location);
+            const accessStatus = [401,403].includes(status);
+            if (!(accessHtml || accessRedirect || accessStatus)) fail(`${name}_not_access_intercepted_status_${status}`);
+            return {status,contentType,locationHost:location ? (()=>{try{return new URL(location).host;}catch{return null;}})() : null,accessHtml,accessRedirect,accessStatus,bodySha256:crypto.createHash('sha256').update(body).digest('hex'),body};
+          }
+          const health = inspect('health');
+          const ui = inspect('ui');
+          const review = inspect('review');
+          if (/"environment"\s*:\s*"production"/i.test(health.body)) fail('production_health_payload_leaked_unauthenticated');
+          if (ui.body.includes("const VERSION = '1.6.0';") || ui.body.includes('Current Human Review rationale')) fail('production_ui_asset_leaked_unauthenticated');
+          if (/"schemaVersion"\s*:\s*"csv-recommendation-human-review-v1"/i.test(review.body)) fail('production_human_review_payload_leaked_unauthenticated');
+          if (syncBefore.deploymentId !== syncAfter.deploymentId || syncBefore.versionId !== syncAfter.versionId) fail('sync_changed_during_gate');
+          const compact = ({body,...rest}) => rest;
+          const evidence = {
+            ok:true,
+            gate:'issue-270-prod-access-read-only',
+            targetSha:process.env.TARGET_SHA,
+            buildUuid:promotion.buildUuid,
+            deploymentId:promotion.deploymentId,
+            versionId:promotion.versionId,
+            traffic:promotion.traffic,
+            productionRuntimeIdentitySource:'Cloudflare Workers Builds/deployments exact-main control-plane evidence from this run',
+            accessBoundaryObserved:true,
+            probes:{health:compact(health),uiAsset:compact(ui),humanReview:compact(review)},
+            applicationPayloadExposedUnauthenticated:false,
+            authenticatedHumanReviewGetPerformed:false,
+            temporaryIdentityCreated:false,
+            accessWeakened:false,
+            devReadOnlyContractAlreadyPassed:true,
+            productionSyncUnchanged:true,
+            productionSyncDeploymentId:syncAfter.deploymentId,
+            productionSyncVersionId:syncAfter.versionId,
+            productionSyncSchedules:syncAfter.schedules,
+            syncTriggerEnabled:false,
+            amazonAdsEnabled:false,
+            requestMethods:['GET'],
+            runtimeMutationExecuted:false,
+            productionDataMutationExecuted:false,
+            amazonRequestExecuted:false,
+            blockers:[],
+          };
+          fs.writeFileSync('evidence/acceptance.json', JSON.stringify(evidence,null,2)+'\n');
+          console.log(JSON.stringify(evidence));
+          NODE
+
+      - name: Upload immutable #270 Production evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-270-prod-exact-main-runtime-acceptance
+          path: |
+            evidence/promotion.json
+            evidence/acceptance.json
+            evidence/pre-observability.json
+            evidence/post-observability.json
+            evidence/sync-before.json
+            evidence/sync-after.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove one-shot #270 Production control plane
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/265-prod-runtime-readonly-acceptance.yml
+          git commit -m 'Clean #270 Production runtime acceptance control plane'
+          git push origin HEAD:ops/270-prod-runtime-readonly-acceptance
