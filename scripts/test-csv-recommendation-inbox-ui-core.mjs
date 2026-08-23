@@ -33,6 +33,10 @@ for (const token of required) {
   if (!ui.includes(token)) throw new Error(`Recommendation Inbox UI missing required contract token: ${token}`);
 }
 
+if (!/const profileId = value\(panel, 'profileId'\);[\s\S]*const scopeKey = \[storeId, profileId, startDate, endDate, limit, sort\]\.join\('\|'\);/u.test(ui)) {
+  throw new Error('Recommendation Inbox cache scope must include profileId so cross-profile results cannot reuse stale Inbox state');
+}
+
 const usabilityRequired = [
   'cfri:presentation:v1:',
   'PRESENTATION_FILTER_KEYS',
