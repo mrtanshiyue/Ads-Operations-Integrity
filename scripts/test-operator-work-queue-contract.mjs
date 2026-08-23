@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   OPERATOR_WORK_QUEUE_AUTHORITY,
   OPERATOR_WORK_QUEUE_SCHEMA_VERSION,
@@ -31,6 +32,13 @@ assert.deepEqual(OPERATOR_WORK_QUEUE_AUTHORITY, {
   executionAuthorized: false,
   amazonMutationAuthorized: false,
 });
+
+const operationsHealthSource = await readFile(new URL('../assets/cloudflare-native-operations-health-v1.js', import.meta.url), 'utf8');
+assert.match(
+  operationsHealthSource,
+  /row\.needsReviewCount === 0 && row\.staleReviewEvidenceCount === 0 && row\.highUnreviewedCount === 0 && row\.otherUnreviewedCount === 0/,
+  'stale-review-only work queue rows must keep Open Decision Queue actionable',
+);
 
 const queue = buildOperatorWorkQueue({
   generatedAt: '2026-08-23T00:00:00.000Z',
