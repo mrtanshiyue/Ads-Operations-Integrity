@@ -98,11 +98,18 @@ for (const state of ['approved', 'rejected']) {
     requestedState: state,
     analysisScope: scope,
   });
-  assert.equal(result.persistenceAuthorized, false);
+  assert.equal(result.persistenceAuthorized, true);
+  assert.equal(result.advisoryReviewRecord.state, state);
+  assert.equal(result.execution.optimizationActionApprovalAllowed, false);
+  assert.equal(result.execution.executionAuthorized, false);
+  assert.equal(result.execution.amazonMutationAuthorized, false);
 }
 assert.equal(persistedStateToUiState('acknowledged'), 'acknowledged');
 assert.equal(persistedStateToUiState('open'), 'needs_review');
-assert.equal(persistedStateToUiState('dismissed'), null);
+assert.equal(persistedStateToUiState('approved'), 'approved');
+assert.equal(persistedStateToUiState('rejected'), 'rejected');
+assert.equal(persistedStateToUiState('dismissed'), 'rejected');
+assert.equal(persistedStateToUiState('snoozed'), null);
 
 const binding = await buildRecommendationReviewBinding(authorized);
 const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
@@ -132,11 +139,11 @@ console.log(JSON.stringify({
   ok: true,
   contract: 'csv-recommendation-human-review-persistence-v1',
   existingAdvisoryReviewTableReused: true,
-  migrationRequired: false,
+  migrationRequired: true,
   acknowledgedMapped: true,
   needsReviewMappedToOpen: true,
   rootPersistenceFailsClosed: true,
-  approvedRejectedFailClosed: true,
+  approvedRejectedReviewOnlyPersistence: true,
   evidenceMutationChangesFingerprint: true,
   idempotencyKey: 'source_kind+recommendation_fingerprint',
   optimizationActionMutationAllowed: false,

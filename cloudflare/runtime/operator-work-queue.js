@@ -111,10 +111,14 @@ export function buildOperatorWorkQueueRow(store, requestedDateRange) {
   }
   return row(identity, range, {
     queueClass: 'no_active_queue', priority: 5, evidenceState: 'available',
-    reasonCode: store.candidateEmissionAuthorized === false ? 'candidate_emission_not_authorized' : 'no_active_queue',
+    reasonCode: store.candidateEmissionAuthorized === false
+      ? 'candidate_emission_not_authorized'
+      : counts.resolvedCount > 0 ? 'final_disposition_only' : 'no_active_queue',
     reasonText: store.candidateEmissionAuthorized === false
       ? 'The requested analysis scope does not authorize recommendation candidate emission'
-      : 'No active recommendation review queue exists for the requested date range',
+      : counts.resolvedCount > 0
+        ? 'Only final Human Review dispositions remain; there is no active review queue'
+        : 'No active recommendation review queue exists for the requested date range',
     counts: normalizedCounts, store,
   });
 }
@@ -130,6 +134,9 @@ function row(identity, requestedDateRange, { queueClass, priority, evidenceState
     highUnreviewedCount: counts?.highUnreviewedCount ?? null,
     otherUnreviewedCount: counts?.otherUnreviewedCount ?? null,
     acknowledgedCount: counts?.acknowledgedCount ?? null,
+    approvedCount: counts?.approvedCount ?? null,
+    rejectedCount: counts?.rejectedCount ?? null,
+    resolvedCount: counts?.resolvedCount ?? null,
     recommendationCandidateCount: counts?.recommendationCandidateCount ?? null,
     criticalHighCandidateCount: counts?.criticalHighCandidateCount ?? null,
     financiallyComparable: evidenceState === 'available' ? store?.financiallyComparable === true : null,
@@ -145,12 +152,14 @@ function row(identity, requestedDateRange, { queueClass, priority, evidenceState
 function authoritativeCounts(store) {
   const keys = [
     'needsReviewCount', 'staleReviewEvidenceCount', 'highUnreviewedCount', 'unreviewedCount',
-    'acknowledgedCount', 'recommendationCandidateCount', 'criticalHighCandidateCount',
+    'acknowledgedCount', 'approvedCount', 'rejectedCount', 'resolvedCount',
+    'recommendationCandidateCount', 'criticalHighCandidateCount',
   ];
   const values = Object.fromEntries(keys.map((key) => [key, count(store?.[key])]));
   if (Object.values(values).some((value) => value === null)) return null;
   if (values.highUnreviewedCount > values.unreviewedCount) return null;
-  if (values.needsReviewCount + values.acknowledgedCount + values.unreviewedCount > values.recommendationCandidateCount) return null;
+  if (values.resolvedCount !== values.approvedCount + values.rejectedCount) return null;
+  if (values.needsReviewCount + values.acknowledgedCount + values.resolvedCount + values.unreviewedCount > values.recommendationCandidateCount) return null;
   if (values.criticalHighCandidateCount > values.recommendationCandidateCount) return null;
   return values;
 }
@@ -162,6 +171,9 @@ function nullCounts() {
     highUnreviewedCount: null,
     otherUnreviewedCount: null,
     acknowledgedCount: null,
+    approvedCount: null,
+    rejectedCount: null,
+    resolvedCount: null,
     recommendationCandidateCount: null,
     criticalHighCandidateCount: null,
   };

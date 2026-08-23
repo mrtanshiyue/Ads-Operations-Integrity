@@ -7,7 +7,7 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.3\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.4\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
 assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
   'Recommendation Decision Packet UI contract version is missing');
@@ -19,8 +19,8 @@ assert.match(ui, /candidateLibraryVersion: CANDIDATE_LIBRARY_VERSION/,
   'Human Review UI public contract must expose Candidate Library version');
 assert.match(ui, /historicalLearningVersion: HISTORICAL_LEARNING_VERSION/,
   'Human Review UI public contract must expose Historical Learning version');
-assert.match(ui, /const DURABLE_STATES = new Set\(\['acknowledged', 'needs_review'\]\)/,
-  'Human Review UI must expose only the two schema-backed durable states');
+assert.match(ui, /const DURABLE_STATES = new Set\(\['acknowledged', 'needs_review', 'approved', 'rejected'\]\)/,
+  'Human Review UI must expose the four schema-backed durable review states');
 assert.match(ui, /reviewContract: CONTRACT_VERSION/, 'Human Review requests must select the dedicated persistence route');
 assert.match(ui, /\/api\/v1\/stores\/\$\{encodeURIComponent\(scope\.storeId\)\}\/advisory-reviews\?\$\{params\}/,
   'Human Review requests must remain store-scoped and same-origin');
@@ -31,8 +31,11 @@ assert.doesNotMatch(ui, /method\s*:\s*['"](?:PUT|PATCH|DELETE)['"]/i,
 
 assert.match(ui, /data-cfhr-set="needs_review"/, 'Needs-review durable action is missing');
 assert.match(ui, /data-cfhr-set="acknowledged"/, 'Acknowledgement durable action is missing');
-assert.doesNotMatch(ui, /data-cfhr-set="(?:approved|rejected|execute)"/,
-  'Approved/rejected/execute must remain fail-closed and have no UI action');
+assert.match(ui, /data-cfhr-set="approved"/, 'Approved review-only durable action is missing');
+assert.match(ui, /data-cfhr-set="rejected"/, 'Rejected review-only durable action is missing');
+assert.doesNotMatch(ui, /data-cfhr-set="execute"/, 'Execute action must remain unavailable');
+assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),
+  'Final disposition UI copy must preserve the execution boundary');
 assert.match(ui, /persistenceAuthorized !== true/, 'Client controls must remain gated by server persistence authorization');
 assert.match(ui, /await loadSnapshot\(scope, \{ force: true \}\)/,
   'POST success must be followed by a fresh server read');
@@ -90,8 +93,10 @@ assert.match(ui, /validateHistoricalLearning\(payload\?\.historicalLearning, pay
   'Historical Learning must be validated before presentation');
 assert.match(ui, /historicalLearningDrawerHtml\(item\.inboxItemId\)/,
   'Existing Recommendation drawer must render the server Historical Learning context');
-assert.match(ui, /Recurrence is not effectiveness\. Acknowledged is not approved or executed; needs_review is not rejected or failed\./,
-  'Historical Learning semantics copy must reject outcome inference');
+assert.ok(ui.includes('Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed.'),
+  'Historical Learning semantics copy must reject disposition effectiveness inference');
+assert.ok(ui.includes("['approved','Approved']") && ui.includes("['rejected','Rejected']"),
+  'Candidate Library review filter must expose Approved and Rejected');
 assert.doesNotMatch(ui, /\/historical-learning|\/historical-review-learning/i,
   'Historical Learning must not create an independent endpoint');
 

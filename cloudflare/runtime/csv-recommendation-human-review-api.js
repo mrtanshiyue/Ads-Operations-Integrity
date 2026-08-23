@@ -12,7 +12,7 @@ import { buildHistoricalReviewLearning } from './historical-review-learning.js';
 const STORE_BINDINGS = new Set(['STORE_01_DB', 'STORE_02_DB', 'STORE_03_DB', 'STORE_04_DB']);
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_REVIEW_ROWS = 1000;
-const ALLOWED_REQUEST_STATES = new Set(['acknowledged', 'needs_review']);
+const ALLOWED_REQUEST_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);
 
 export async function handleCsvRecommendationHumanReviewPersistenceRoute({ request, env, actor, url }) {
   const match = url.pathname.match(/^\/api\/v1\/stores\/([^/]+)\/advisory-reviews$/);
@@ -67,6 +67,8 @@ export function authorizeReviewCandidateForPersistence(item, analysisScope) {
 export function persistedStateToUiState(value) {
   if (value === 'acknowledged') return 'acknowledged';
   if (value === 'open') return 'needs_review';
+  if (value === 'approved') return 'approved';
+  if (value === 'rejected' || value === 'dismissed') return 'rejected';
   return null;
 }
 
@@ -411,9 +413,10 @@ function reviewAuthority() {
     sourceKind: RECOMMENDATION_REVIEW_SOURCE_KIND,
     persistencePlane: 'advisory_review_records',
     reviewPersistenceSupported: true,
-    durableStates: ['acknowledged', 'needs_review'],
+    durableStates: ['acknowledged', 'needs_review', 'approved', 'rejected'],
     viewedPersistenceSupported: false,
-    approvedRejectedPersistenceSupported: false,
+    approvedRejectedPersistenceSupported: true,
+    finalDispositionReviewOnly: true,
     rootPersistenceSupported: false,
     optimizationActionPersistenceAuthorized: false,
     executionAuthorized: false,

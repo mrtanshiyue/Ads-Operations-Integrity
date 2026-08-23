@@ -1,13 +1,13 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
   const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';
   const REQUEST_TIMEOUT_MS = 30000;
-  const DURABLE_STATES = new Set(['acknowledged', 'needs_review']);
+  const DURABLE_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);
   const state = {
     mounted: false,
     panel: null,
@@ -252,7 +252,7 @@
     for (const item of payload.items) {
       if (!String(item?.inboxItemId || '')) throw new Error('human_review_inbox_item_id_missing');
       const reviewState = String(item?.review?.state || 'unreviewed');
-      if (!['unreviewed', 'acknowledged', 'needs_review'].includes(reviewState)) throw new Error('human_review_state_unsupported');
+      if (!['unreviewed', 'acknowledged', 'needs_review', 'approved', 'rejected'].includes(reviewState)) throw new Error('human_review_state_unsupported');
       if (item?.review?.persisted === true && !DURABLE_STATES.has(reviewState)) throw new Error('human_review_persisted_state_invalid');
       validateDecisionPacket(item?.decisionPacket, item);
     }
@@ -309,7 +309,7 @@
       if (authority[key] !== false) throw new Error(`historical_learning_${key}_boundary_invalid`);
     }
     const semantics = learning?.semantics || {};
-    for (const key of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {
+    for (const key of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'approvedMeansExecuted', 'approvedMeansSuccessful', 'rejectedMeansFailed', 'finalDispositionIsEffectiveness', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {
       if (semantics[key] !== false) throw new Error(`historical_learning_${key}_semantic_invalid`);
     }
     const contexts = Array.isArray(learning?.contexts) ? learning.contexts : null;
@@ -367,8 +367,11 @@
     if (authority?.executionAuthorized !== false) throw new Error('human_review_execution_boundary_invalid');
     if (authority?.amazonMutationAuthorized !== false) throw new Error('human_review_amazon_boundary_invalid');
     const durableStates = Array.isArray(authority?.durableStates) ? authority.durableStates : [];
-    if (durableStates.length !== 2 || !durableStates.includes('acknowledged') || !durableStates.includes('needs_review')) {
+    if (durableStates.length !== 4 || !['acknowledged', 'needs_review', 'approved', 'rejected'].every((value) => durableStates.includes(value))) {
       throw new Error('human_review_durable_state_contract_invalid');
+    }
+    if (authority?.approvedRejectedPersistenceSupported !== true || authority?.finalDispositionReviewOnly !== true) {
+      throw new Error('human_review_final_disposition_authority_invalid');
     }
   }
 
@@ -455,7 +458,7 @@
         ${librarySelect('family', 'Family', filters.family, [['all','All'],['keyword','Keyword'],['negative','Negative']])}
         ${librarySelect('kind', 'Kind', filters.kind, [['all','All'],['harvest','Harvest'],['scale','Scale'],['exact_negative','Exact negative'],['phrase_negative_review','Phrase negative review']])}
         ${librarySelect('priority', 'Priority', filters.priority, [['all','All'],['critical','Critical'],['high','High'],['medium','Medium'],['low','Low']])}
-        ${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged']])}
+        ${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged'],['approved','Approved'],['rejected','Rejected']])}
         ${librarySelect('stale', 'Evidence', filters.stale, [['all','All'],['has_stale','Has stale evidence'],['no_stale','No stale evidence']])}
         ${librarySelect('history', 'History', filters.history, [['all','All'],['recurring','Recurring'],['no_history','No review history']])}
       </div><small>Server-projected registry and historical review intelligence only. Filters change row visibility; they do not recompute recommendations, fingerprints, review state, evidence, rules, or learning weights.</small>`;
@@ -468,7 +471,7 @@
       <strong>Historical Review Learning</strong>
       <span>${esc(display(summary.historicalRecordCount))} historical reviews · ${esc(display(summary.recurrentContextCount))} recurrent contexts · ${esc(display(summary.staleEvidenceRecordCount))} stale-evidence records · ${esc(display(summary.historicalOnlyContextCount))} historical-only contexts</span>
       ${historicalOnly.length ? `<details data-cfhl-historical-only><summary>${historicalOnly.length} historical-only context${historicalOnly.length === 1 ? '' : 's'}</summary>${historicalOnly.map(historicalOnlyContextHtml).join('')}</details>` : '<small>No historical-only review contexts.</small>'}
-      <small>Recurrence is not effectiveness. Acknowledged is not approved or executed; needs_review is not rejected or failed. Historical Learning never changes recommendation rules or execution authority.</small>
+      <small>Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed. Historical Learning never changes recommendation rules or execution authority.</small>
     </div>`;
   }
 
@@ -517,6 +520,9 @@
       ? `<div class="cfhr-actions" role="group" aria-label="Human review actions">
           <button type="button" class="btn" data-cfhr-set="needs_review" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Needs review</button>
           <button type="button" class="btn" data-cfhr-set="acknowledged" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Acknowledge</button>
+<button type="button" class="btn" data-cfhr-set="approved" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Approve review decision</button>
+<button type="button" class="btn" data-cfhr-set="rejected" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Reject review decision</button>
+<small class="cfhr-boundary">Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.</small>
         </div>`
       : '<small class="cfhr-blocked">Durable review is not authorized for this candidate.</small>';
     return `${status}${controls}${busy ? '<small class="cfhr-busy" role="status">Saving and verifying…</small>' : ''}${error ? `<em class="cfhr-error" role="alert">${esc(error)}</em>` : ''}`;
@@ -541,7 +547,7 @@
           <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
           <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
           <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
-        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`
+        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>`
       : '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Packet unavailable.</strong> No recommendation, review state, financial evidence, historical learning, or provenance is inferred from the presentation layer.</div>';
     if (block.innerHTML !== html) block.innerHTML = html;
   }
@@ -557,6 +563,7 @@
       <div><span>Current fingerprint matches</span><strong>${esc(display(context.currentMatchedRecordCount))}</strong></div>
       <div><span>Stale evidence</span><strong>${esc(display(context.staleEvidenceCount))}</strong></div>
       <div><span>Acknowledged / Needs review</span><strong>${esc(display(context.acknowledgedCount))} / ${esc(display(context.needsReviewCount))}</strong></div>
+      <div><span>Approved / Rejected</span><strong>${esc(display(context.approvedCount))} / ${esc(display(context.rejectedCount))}</strong></div>
       <div><span>Recurring / Evidence drift</span><strong>${esc(display(context.recurrent))} / ${esc(display(context.currentEvidenceDrift))}</strong></div>
       <div><span>First observed</span><strong>${esc(context.firstObservedAt || 'unavailable')}</strong></div>
       <div><span>Latest observed</span><strong>${esc(context.latestObservedAt || 'unavailable')}</strong></div>
