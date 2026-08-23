@@ -1,7 +1,7 @@
 export const CSV_DATA_QUALITY_COMMAND_CENTER_SCHEMA_VERSION = 'csv-data-quality-command-center-v1';
 export const CSV_DATA_QUALITY_COMMAND_CENTER_UI_VERSION = '1.0.0';
 
-const state = { mounted: false, rendering: false, model: null };
+const state = { mounted: false, rendering: false, requestSeq: 0, model: null };
 const NON_AUTHORITY = Object.freeze({
   mode: 'browser_local_decision_gate_only',
   authoritative: false,
@@ -202,24 +202,30 @@ async function refresh(root, joint) {
   if (state.rendering) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return;
+  const seq = ++state.requestSeq;
   state.rendering = true;
   status(root, `Evaluating decision gates locally from ${files.length} file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
+    if (seq !== state.requestSeq) return;
     const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (seq !== state.requestSeq) return;
     state.model = buildCsvDataQualityCommandCenter(result);
     render(root, state.model);
     status(root, `Decision gate state: ${state.model.operatorState}. Fingerprint ${state.model.source.inputSetFingerprint.slice(0, 12)} · receipt/hash set verified.`, state.model.operatorState === 'blocked' ? 'bad' : state.model.operatorState === 'review_with_constraints' ? 'warn' : 'ok');
   } catch (error) {
+    if (seq !== state.requestSeq) return;
     state.model = null;
     root.querySelector('[data-cfdqcc-body]').hidden = true;
     status(root, `Decision gate evaluation failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
-    state.rendering = false;
+    if (seq === state.requestSeq) state.rendering = false;
   }
 }
 
 function clear(root, message, kind = '') {
+  state.requestSeq += 1;
+  state.rendering = false;
   state.model = null;
   const body = root.querySelector('[data-cfdqcc-body]');
   body.hidden = true;
