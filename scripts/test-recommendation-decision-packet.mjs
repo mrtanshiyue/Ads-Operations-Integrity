@@ -54,6 +54,7 @@ const currentReview = Object.freeze({
   recommendationFingerprint: 'fingerprint-current',
   state: 'needs_review',
   persisted: true,
+  note: '  Current operator rationale  ',
   reviewedAt: '2026-08-20T00:00:00.000Z',
 });
 const staleReview = Object.freeze({
@@ -61,6 +62,7 @@ const staleReview = Object.freeze({
   recommendationFingerprint: 'fingerprint-old',
   state: 'acknowledged',
   persisted: true,
+  note: '  Prior operator rationale  ',
   sourceEvidenceSha256: 'sha-old',
   sourceEvidence: { descriptor: sourceSnapshot.descriptor, evidence: { spendMicros: '900000' } },
 });
@@ -95,11 +97,23 @@ assert.equal(packet.lifecycle.items[0].state, 'deteriorating');
 assert.equal(packet.financialComparability.financiallyComparable, true);
 assert.equal(packet.reviewEvidence.currentFingerprint, 'fingerprint-current');
 assert.equal(packet.reviewEvidence.priorReviewState, 'needs_review');
+assert.equal(packet.reviewEvidence.currentRationale, 'Current operator rationale');
 assert.equal(packet.reviewEvidence.staleEvidenceCount, 1);
+assert.equal(packet.reviewEvidence.staleEvidence[0].rationale, 'Prior operator rationale');
 assert.equal(packet.reviewEvidence.staleEvidence[0].stale, true);
 assert.equal(packet.reviewEvidence.staleEvidence[0].inheritedAsCurrent, false);
 assert.equal(packet.sourceEvidence.sourceEvidenceJson, binding.sourceEvidenceJson);
 assert.equal(packet.sourceEvidence.snapshot.descriptor.inboxItemId, item.inboxItemId);
+
+const blankRationale = buildRecommendationDecisionPacket({
+  item,
+  binding,
+  currentReview: { ...currentReview, note: '   ' },
+  staleReviews: [{ ...staleReview, note: '\t  ' }],
+  analysisScope: { complete: true, financiallyComparable: true, candidateEmissionAuthorized: true, reasons: [] },
+});
+assert.equal(blankRationale.reviewEvidence.currentRationale, null);
+assert.equal(blankRationale.reviewEvidence.staleEvidence[0].rationale, null);
 
 const unreviewed = buildRecommendationDecisionPacket({
   item,
@@ -109,6 +123,7 @@ const unreviewed = buildRecommendationDecisionPacket({
   analysisScope: { complete: false, financiallyComparable: false, candidateEmissionAuthorized: false, reasons: ['scope_blocked'] },
 });
 assert.equal(unreviewed.reviewEvidence.priorReviewState, 'unreviewed');
+assert.equal(unreviewed.reviewEvidence.currentRationale, null);
 assert.equal(unreviewed.reviewEvidence.currentReview, null);
 assert.equal(unreviewed.financialComparability.financiallyComparable, false);
 assert.equal(unreviewed.financialComparability.analysisScopeComplete, false);
