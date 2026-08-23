@@ -1,12 +1,13 @@
 (function initCsvRecommendationHumanReviewUi(global) {
   'use strict';
 
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.0';
   const CONTRACT_VERSION = 'csv-recommendation-human-review-v1';
   const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1';
   const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1';
   const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1';
   const REQUEST_TIMEOUT_MS = 30000;
+  const REVIEW_NOTE_MAX_LENGTH = 4000;
   const DURABLE_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);
   const state = {
     mounted: false,
@@ -172,7 +173,7 @@
     }
   }
 
-  async function persistReview(inboxItemId, requestedState) {
+  async function persistReview(inboxItemId, requestedState, { noteProvided = false, note = null } = {}) {
     if (!DURABLE_STATES.has(requestedState)) return;
     const scope = currentScope();
     if (!scopeComplete(scope) || currentSource() !== 'csv') return;
@@ -183,6 +184,18 @@
       applySnapshot(recommendationSection());
       return;
     }
+    let expectedNote = null;
+    let submittedNote = null;
+    if (noteProvided) {
+      submittedNote = String(note ?? '');
+      try {
+        expectedNote = normalizeSubmittedReviewNote(submittedNote);
+      } catch (error) {
+        state.errors.set(inboxItemId, errorCode(error));
+        applySnapshot(recommendationSection());
+        return;
+      }
+    }
     if (state.busy.has(inboxItemId)) return;
     state.busy.add(inboxItemId);
     state.errors.delete(inboxItemId);
@@ -190,9 +203,11 @@
     const controller = new AbortController();
     const timeoutId = global.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
+      const body = { inboxItemId, state: requestedState };
+      if (noteProvided) body.note = submittedNote;
       const payload = await requestReview(scope, {
         method: 'POST',
-        body: { inboxItemId, state: requestedState },
+        body,
         signal: controller.signal,
       });
       validateWriteResponse(payload, scope.storeId);
@@ -202,6 +217,9 @@
       if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
         throw new Error('human_review_read_after_write_mismatch');
       }
+      if (noteProvided && normalizedReviewNote(verified?.review?.note) !== expectedNote) {
+        throw new Error('human_review_rationale_read_after_write_mismatch');
+      }
     } catch (error) {
       state.errors.set(inboxItemId, errorCode(error));
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
@@ -210,6 +228,19 @@
       state.busy.delete(inboxItemId);
       applySnapshot(recommendationSection());
     }
+  }
+
+  function normalizeSubmittedReviewNote(value) {
+    const raw = String(value ?? '');
+    if (raw.length > REVIEW_NOTE_MAX_LENGTH) throw new Error('review_note_too_long');
+    const normalized = raw.trim();
+    return normalized || null;
+  }
+
+  function normalizedReviewNote(value) {
+    if (value === null || value === undefined) return null;
+    const normalized = String(value).trim();
+    return normalized || null;
   }
 
   async function requestReview(scope, { method, body, signal } = {}) {
@@ -254,6 +285,10 @@
       const reviewState = String(item?.review?.state || 'unreviewed');
       if (!['unreviewed', 'acknowledged', 'needs_review', 'approved', 'rejected'].includes(reviewState)) throw new Error('human_review_state_unsupported');
       if (item?.review?.persisted === true && !DURABLE_STATES.has(reviewState)) throw new Error('human_review_persisted_state_invalid');
+      const reviewNote = item?.review?.note;
+      if (reviewNote != null && (typeof reviewNote !== 'string' || reviewNote.length > REVIEW_NOTE_MAX_LENGTH || reviewNote.trim() !== reviewNote || !reviewNote.length)) {
+        throw new Error('human_review_rationale_invalid');
+      }
       validateDecisionPacket(item?.decisionPacket, item);
     }
     validateCandidateLibrary(payload?.candidateLibrary, payload.items, expectedStoreId);
@@ -556,9 +591,30 @@
           <div><span>Persisted</span><strong>${item.review?.persisted === true ? 'yes' : 'no'}</strong></div>
           <div><span>Reviewer</span><strong>${esc(item.review?.reviewerUserId || '—')}</strong></div>
           <div><span>Updated</span><strong>${esc(item.review?.updatedAt || '—')}</strong></div>
-        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>`
+        </div>${rationaleEditorHtml(item)}${drawerReviewActionsHtml(item)}<div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>`
       : '<h4>Recommendation Decision Packet</h4><div class="cfri-callout warn"><strong>Packet unavailable.</strong> No recommendation, review state, financial evidence, historical learning, or provenance is inferred from the presentation layer.</div>';
     if (block.innerHTML !== html) block.innerHTML = html;
+  }
+
+  function rationaleEditorHtml(item) {
+    const inboxItemId = String(item?.inboxItemId || '');
+    const currentNote = item?.review?.note == null ? '' : String(item.review.note);
+    return `<div class="cfhr-rationale-editor" data-cfhr-rationale-editor data-cfhr-item="${esc(inboxItemId)}">
+      <label><span>Human Review rationale (optional)</span><textarea data-cfhr-rationale maxlength="4000" rows="5"${item?.persistenceAuthorized === true ? '' : ' disabled'}>${esc(currentNote)}</textarea></label>
+      <small>Human Review rationale only. Not effectiveness. Not execution authority. Not Amazon mutation authority. Blank submission intentionally clears the current rationale.</small>
+    </div>`;
+  }
+
+  function drawerReviewActionsHtml(item) {
+    const inboxItemId = String(item?.inboxItemId || '');
+    const busy = state.busy.has(inboxItemId);
+    if (item?.persistenceAuthorized !== true) return '<small class="cfhr-blocked">Durable review is not authorized for this candidate.</small>';
+    return `<div class="cfhr-actions cfhr-drawer-actions" role="group" aria-label="Durable Human Review actions">
+      <button type="button" class="btn" data-cfhr-drawer-set="needs_review" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Needs review</button>
+      <button type="button" class="btn" data-cfhr-drawer-set="acknowledged" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Acknowledge</button>
+      <button type="button" class="btn" data-cfhr-drawer-set="approved" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Approve review decision</button>
+      <button type="button" class="btn" data-cfhr-drawer-set="rejected" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Reject review decision</button>
+    </div>`;
   }
 
   function historicalLearningDrawerHtml(inboxItemId) {
@@ -691,6 +747,17 @@
       applySnapshot(recommendationSection());
       return;
     }
+    const drawerButton = event.target.closest?.('[data-cfhr-drawer-set]');
+    if (drawerButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const requestedState = String(drawerButton.dataset.cfhrDrawerSet || '');
+      const inboxItemId = String(drawerButton.dataset.cfhrItem || '');
+      const editor = drawerButton.closest?.('[data-cfhr-drawer]')?.querySelector?.('textarea[data-cfhr-rationale]');
+      if (!DURABLE_STATES.has(requestedState) || !inboxItemId || !editor) return;
+      void persistReview(inboxItemId, requestedState, { noteProvided: true, note: editor.value });
+      return;
+    }
     const button = event.target.closest?.('[data-cfhr-set]');
     if (!button) return;
     event.preventDefault();
@@ -808,6 +875,7 @@
       [data-cfhr-review]{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:145px}.cfhr-state{display:inline-flex;padding:3px 6px;border-radius:6px;background:var(--hover-bg);font-weight:800}.cfhr-state.acknowledged{color:var(--good);background:var(--softGood)}.cfhr-state.needs_review{color:var(--warn);background:var(--softWarn)}.cfhr-state.unavailable{color:var(--bad);background:var(--softBad)}
       .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy{color:var(--muted)}.cfhr-error{display:block;color:var(--bad);font-size:9px;font-style:normal;overflow-wrap:anywhere}.cfhr-blocked{color:var(--muted)}
       .cfhr-drawer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-bottom:8px}.cfhr-drawer-grid>div{padding:7px 8px;border:1px solid var(--line);border-radius:8px}.cfhr-drawer-grid span,.cfhr-drawer-grid strong{display:block}.cfhr-drawer-grid span{font-size:9px;color:var(--muted)}.cfhr-drawer-grid strong{margin-top:2px;font-size:10px;overflow-wrap:anywhere}
+      .cfhr-rationale-editor{display:flex;flex-direction:column;gap:5px;margin:9px 0}.cfhr-rationale-editor label{display:flex;flex-direction:column;gap:5px}.cfhr-rationale-editor label>span{font-size:9px;font-weight:800}.cfhr-rationale-editor textarea{width:100%;min-height:92px;resize:vertical;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);color:var(--text);font:inherit;font-size:10px;line-height:1.4}.cfhr-rationale-editor small{font-size:9px;color:var(--muted)}.cfhr-drawer-actions{margin:7px 0 9px}
       .cfdp{display:flex;flex-direction:column;gap:9px;margin-bottom:12px}.cfdp h4{margin:0}.cfdp-section{padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--card)}.cfdp-section h5{margin:0 0 7px;font-size:10px}.cfdp-section p,.cfdp-section small{margin:5px 0;color:var(--muted);font-size:9px}.cfdp-list{display:grid;gap:4px;margin-top:5px}.cfdp-list>strong{font-size:9px}.cfdp-list>span{font-size:9px;color:var(--muted)}.cfdp-evidence{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:5px 8px;align-items:start}.cfdp-evidence span{font-size:9px;color:var(--muted)}.cfdp-evidence strong,.cfdp-evidence code{font-size:9px;overflow-wrap:anywhere}.cfdp details{margin-top:7px}.cfdp summary{cursor:pointer;font-size:9px;font-weight:700}.cfdp pre{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:7px;border:1px solid var(--line);border-radius:7px;font-size:8px}.cfdp-stale{display:grid;gap:3px;padding:6px 0;border-bottom:1px solid var(--line)}.cfdp-stale code{overflow-wrap:anywhere;font-size:8px}
       @media(max-width:1050px){.cfgl-filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
       @media(max-width:640px){.cfhr-status{align-items:flex-start;flex-direction:column}.cfhr-drawer-grid{grid-template-columns:1fr}.cfdp-evidence{grid-template-columns:1fr}.cfgl-head{align-items:flex-start;flex-direction:column}.cfgl-filters{grid-template-columns:1fr}}
