@@ -146,6 +146,7 @@ async function listProductScopes(request, db, actor, url, storeId, productId) {
 }
 
 async function putStoreScope(request, db, actor, storeId, negativeKeywordId) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -163,21 +164,72 @@ async function putStoreScope(request, db, actor, storeId, negativeKeywordId) {
   }
 
   const existing = await storeScopeByIds(db, storeId, negativeKeywordId);
-  await db.prepare(`
+  const mutation = db.prepare(`
     INSERT INTO negative_store_scope(store_id, negative_keyword_id, status, created_at)
-    VALUES(?1,?2,?3,CURRENT_TIMESTAMP)
+    SELECT ?1, ?2, ?3, CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM stores target_store
+      WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+    )
+      AND EXISTS (
+        SELECT 1 FROM negative_keyword_library target_negative
+        WHERE target_negative.negative_keyword_id=?2
+          AND (?3 <> 'active' OR target_negative.status='active')
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?4
+            AND actor_global_permission.permission_key='negatives.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?4
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='negatives.manage'
+        )
+      )
     ON CONFLICT(store_id, negative_keyword_id) DO UPDATE SET
       status=excluded.status
-  `).bind(storeId, negativeKeywordId, value.status).run();
+  `).bind(storeId, negativeKeywordId, value.status, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, storeId, 'negative_store_scope.upsert', 'negative_store_scope',
+    `${storeId}:${negativeKeywordId}`, { storeId, negativeKeywordId, status: value.status },
+  );
 
-  await audit(db, request, actor.user_id, storeId, 'negative_store_scope.upsert', 'negative_store_scope',
-    `${storeId}:${negativeKeywordId}`, { storeId, negativeKeywordId, status: value.status });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_store_scope_upsert_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    const currentNegative = await negativeKeywordById(db, negativeKeywordId);
+    if (!currentNegative) return json(request, { error: 'negative_keyword_not_found' }, 404);
+    if (value.status === 'active' && currentNegative.status !== 'active') {
+      return json(request, { error: 'negative_keyword_retired' }, 409);
+    }
+    return json(request, { error: 'negative_store_scope_conflict' }, 409);
+  }
 
   const scope = await storeScopeDetailByIds(db, storeId, negativeKeywordId);
+  if (!scope) throw new Error('negative_store_scope_upsert_readback_missing');
   return json(request, { store: publicStore(store), scope: publicScope(scope) }, existing ? 200 : 201);
 }
 
 async function deleteStoreScope(request, db, actor, storeId, negativeKeywordId) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -186,18 +238,62 @@ async function deleteStoreScope(request, db, actor, storeId, negativeKeywordId) 
   const existing = await storeScopeByIds(db, storeId, negativeKeywordId);
   if (!existing) return json(request, { error: 'negative_store_scope_not_found' }, 404);
 
-  await db.prepare(`
+  const mutation = db.prepare(`
     DELETE FROM negative_store_scope
-    WHERE store_id=?1 AND negative_keyword_id=?2
-  `).bind(storeId, negativeKeywordId).run();
+    WHERE store_id=?1
+      AND negative_keyword_id=?2
+      AND EXISTS (
+        SELECT 1 FROM stores target_store
+        WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?3
+            AND actor_global_permission.permission_key='negatives.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?3
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='negatives.manage'
+        )
+      )
+  `).bind(storeId, negativeKeywordId, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, storeId, 'negative_store_scope.delete', 'negative_store_scope',
+    `${storeId}:${negativeKeywordId}`, { storeId, negativeKeywordId },
+  );
 
-  await audit(db, request, actor.user_id, storeId, 'negative_store_scope.delete', 'negative_store_scope',
-    `${storeId}:${negativeKeywordId}`, { storeId, negativeKeywordId });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_store_scope_delete_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    if (!await storeScopeByIds(db, storeId, negativeKeywordId)) {
+      return json(request, { error: 'negative_store_scope_not_found' }, 404);
+    }
+    return json(request, { error: 'negative_store_scope_conflict' }, 409);
+  }
 
   return json(request, { deleted: true, storeId, negativeKeywordId }, 200);
 }
 
 async function putProductScope(request, db, actor, storeId, productId, negativeKeywordId) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -220,21 +316,84 @@ async function putProductScope(request, db, actor, storeId, productId, negativeK
   }
 
   const existing = await productScopeByIds(db, storeId, productId, negativeKeywordId);
-  await db.prepare(`
+  const mutation = db.prepare(`
     INSERT INTO negative_product_scope(store_id, product_id, negative_keyword_id, status, created_at)
-    VALUES(?1,?2,?3,?4,CURRENT_TIMESTAMP)
+    SELECT ?1, ?2, ?3, ?4, CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM stores target_store
+      WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+    )
+      AND EXISTS (
+        SELECT 1 FROM products target_product
+        WHERE target_product.product_id=?2
+      )
+      AND EXISTS (
+        SELECT 1 FROM product_store_map target_mapping
+        WHERE target_mapping.store_id=?1 AND target_mapping.product_id=?2
+      )
+      AND EXISTS (
+        SELECT 1 FROM negative_keyword_library target_negative
+        WHERE target_negative.negative_keyword_id=?3
+          AND (?4 <> 'active' OR target_negative.status='active')
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?5
+            AND actor_global_permission.permission_key='negatives.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?5
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='negatives.manage'
+        )
+      )
     ON CONFLICT(store_id, product_id, negative_keyword_id) DO UPDATE SET
       status=excluded.status
-  `).bind(storeId, productId, negativeKeywordId, value.status).run();
+  `).bind(storeId, productId, negativeKeywordId, value.status, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, storeId, 'negative_product_scope.upsert', 'negative_product_scope',
+    `${storeId}:${productId}:${negativeKeywordId}`, { storeId, productId, negativeKeywordId, status: value.status },
+  );
 
-  await audit(db, request, actor.user_id, storeId, 'negative_product_scope.upsert', 'negative_product_scope',
-    `${storeId}:${productId}:${negativeKeywordId}`, { storeId, productId, negativeKeywordId, status: value.status });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_product_scope_upsert_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    if (!await productInStore(db, storeId, productId)) {
+      return json(request, { error: 'product_not_in_store', storeId, productId }, 409);
+    }
+    const currentNegative = await negativeKeywordById(db, negativeKeywordId);
+    if (!currentNegative) return json(request, { error: 'negative_keyword_not_found' }, 404);
+    if (value.status === 'active' && currentNegative.status !== 'active') {
+      return json(request, { error: 'negative_keyword_retired' }, 409);
+    }
+    return json(request, { error: 'negative_product_scope_conflict' }, 409);
+  }
 
   const scope = await productScopeDetailByIds(db, storeId, productId, negativeKeywordId);
+  if (!scope) throw new Error('negative_product_scope_upsert_readback_missing');
   return json(request, { store: publicStore(store), product: publicProduct(product), scope: publicScope(scope) }, existing ? 200 : 201);
 }
 
 async function deleteProductScope(request, db, actor, storeId, productId, negativeKeywordId) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -248,13 +407,69 @@ async function deleteProductScope(request, db, actor, storeId, productId, negati
   const existing = await productScopeByIds(db, storeId, productId, negativeKeywordId);
   if (!existing) return json(request, { error: 'negative_product_scope_not_found' }, 404);
 
-  await db.prepare(`
+  const mutation = db.prepare(`
     DELETE FROM negative_product_scope
-    WHERE store_id=?1 AND product_id=?2 AND negative_keyword_id=?3
-  `).bind(storeId, productId, negativeKeywordId).run();
+    WHERE store_id=?1
+      AND product_id=?2
+      AND negative_keyword_id=?3
+      AND EXISTS (
+        SELECT 1 FROM stores target_store
+        WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+      )
+      AND EXISTS (
+        SELECT 1 FROM products target_product
+        WHERE target_product.product_id=?2
+      )
+      AND EXISTS (
+        SELECT 1 FROM product_store_map target_mapping
+        WHERE target_mapping.store_id=?1 AND target_mapping.product_id=?2
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?4
+            AND actor_global_permission.permission_key='negatives.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?4
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='negatives.manage'
+        )
+      )
+  `).bind(storeId, productId, negativeKeywordId, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, storeId, 'negative_product_scope.delete', 'negative_product_scope',
+    `${storeId}:${productId}:${negativeKeywordId}`, { storeId, productId, negativeKeywordId },
+  );
 
-  await audit(db, request, actor.user_id, storeId, 'negative_product_scope.delete', 'negative_product_scope',
-    `${storeId}:${productId}:${negativeKeywordId}`, { storeId, productId, negativeKeywordId });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_product_scope_delete_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    if (!await productInStore(db, storeId, productId)) {
+      return json(request, { error: 'product_not_in_store', storeId, productId }, 409);
+    }
+    if (!await productScopeByIds(db, storeId, productId, negativeKeywordId)) {
+      return json(request, { error: 'negative_product_scope_not_found' }, 404);
+    }
+    return json(request, { error: 'negative_product_scope_conflict' }, 409);
+  }
 
   return json(request, { deleted: true, storeId, productId, negativeKeywordId }, 200);
 }
@@ -372,21 +587,53 @@ async function hasStorePermission(db, userId, storeId, permission) {
   `).bind(userId, storeId, permission).first());
 }
 
-async function audit(db, request, actorUserId, storeId, action, entityType, entityId, details) {
-  await db.prepare(`
-    INSERT INTO audit_log(event_id, actor_user_id, store_id, action, entity_type, entity_id, request_id, cf_ray, details_json)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+function auditedMutationStatement(db, request, actorUserId, storeId, action, entityType, entityId, details) {
+  const context = buildAuditContext(request);
+  return db.prepare(`
+    INSERT INTO audit_log(
+      event_id, actor_user_id, store_id, action, entity_type, entity_id,
+      request_id, cf_ray, details_json
+    )
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+    WHERE changes()=1
   `).bind(
-    crypto.randomUUID(),
+    context.eventId,
     actorUserId,
     storeId,
     action,
     entityType,
     entityId,
-    request.headers.get('cf-ray') || crypto.randomUUID(),
-    request.headers.get('cf-ray'),
+    context.requestId,
+    context.cfRay,
     JSON.stringify(details || {}),
-  ).run();
+  );
+}
+
+async function executeAuditedMutation(db, mutation, auditStatement, violationError) {
+  const [mutationResult, auditResult] = await db.batch([mutation, auditStatement]);
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) throw new Error(violationError);
+  if (mutationChanges !== 1 && auditChanges !== 0) throw new Error(violationError);
+  return mutationChanges;
+}
+
+function buildAuditContext(request) {
+  const cfRay = request.headers.get('cf-ray');
+  return {
+    eventId: crypto.randomUUID(),
+    requestId: cfRay || crypto.randomUUID(),
+    cfRay,
+  };
+}
+
+function requireAtomicBatch(db) {
+  if (!db || typeof db.batch !== 'function') throw new Error('control_d1_atomic_batch_required');
+}
+
+function changedRows(result) {
+  const value = result?.meta?.changes ?? result?.changes ?? 0;
+  return Number(value || 0);
 }
 
 async function readJson(request) {
