@@ -162,6 +162,7 @@ async function buildDecisionQueueStoreSummary({ request, env, actor, row, range,
       ...identity, generatedAt, dateRange, evidenceState: 'unavailable', unavailable: true,
       recommendationCandidateCount: null, criticalHighCandidateCount: null, governanceBlockedCount: null,
       scopeBlockedCount: null, unreviewedCount: null, needsReviewCount: null, acknowledgedCount: null,
+      approvedCount: null, rejectedCount: null, resolvedCount: null,
       staleReviewEvidenceCount: null, highUnreviewedCount: null, analysisScopeComplete: null,
       financiallyComparable: null, candidateEmissionAuthorized: null,
       error: { code: error?.code || cleanErrorCode(error?.message) || 'decision_queue_summary_failed' },
@@ -188,6 +189,8 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
   let unreviewedCount = 0;
   let needsReviewCount = 0;
   let acknowledgedCount = 0;
+  let approvedCount = 0;
+  let rejectedCount = 0;
   let highUnreviewedCount = 0;
   const staleReviewIds = new Set();
   for (const item of candidates) {
@@ -201,6 +204,8 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
       if (item?.priority === 'critical' || item?.priority === 'high') highUnreviewedCount += 1;
     } else if (state === 'needs_review') needsReviewCount += 1;
     else if (state === 'acknowledged') acknowledgedCount += 1;
+    else if (state === 'approved') approvedCount += 1;
+    else if (state === 'rejected') rejectedCount += 1;
     const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
     for (const stale of staleByContext.get(contextKey) || []) {
       if (stale?.recommendation_fingerprint !== binding.recommendationFingerprint && stale?.review_id) staleReviewIds.add(stale.review_id);
@@ -212,7 +217,8 @@ export async function summarizeDecisionQueueReviewState({ inbox, analysisScope, 
     criticalHighCandidateCount: candidates.filter((item) => item?.priority === 'critical' || item?.priority === 'high').length,
     governanceBlockedCount: number(inboxSummary.blockedByGovernanceCount),
     scopeBlockedCount: number(inboxSummary.blockedByScopeCount),
-    unreviewedCount, needsReviewCount, acknowledgedCount, staleReviewEvidenceCount: staleReviewIds.size, highUnreviewedCount,
+    unreviewedCount, needsReviewCount, acknowledgedCount, approvedCount, rejectedCount,
+    resolvedCount: approvedCount + rejectedCount, staleReviewEvidenceCount: staleReviewIds.size, highUnreviewedCount,
     analysisScopeComplete: analysisScope?.complete === true,
     financiallyComparable: analysisScope?.financiallyComparable === true,
     candidateEmissionAuthorized: analysisScope?.candidateEmissionAuthorized === true,

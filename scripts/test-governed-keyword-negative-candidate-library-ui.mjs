@@ -25,9 +25,11 @@ assert.match(ui, /candidate_library_blocked_scope_not_null/,
 for (const filter of ['family', 'kind', 'priority', 'review', 'stale', 'history']) {
   assert.match(ui, new RegExp(`librarySelect\\('${filter}'`), `Candidate Library filter missing: ${filter}`);
 }
-for (const value of ['keyword', 'negative', 'harvest', 'scale', 'exact_negative', 'phrase_negative_review', 'critical', 'high', 'medium', 'low', 'unreviewed', 'needs_review', 'acknowledged', 'has_stale', 'no_stale', 'recurring', 'no_history']) {
+for (const value of ['keyword', 'negative', 'harvest', 'scale', 'exact_negative', 'phrase_negative_review', 'critical', 'high', 'medium', 'low', 'unreviewed', 'needs_review', 'acknowledged', 'approved', 'rejected', 'has_stale', 'no_stale', 'recurring', 'no_history']) {
   assert.ok(ui.includes(`'${value}'`), `Candidate Library filter value missing: ${value}`);
 }
+assert.ok(ui.includes("['approved','Approved']") && ui.includes("['rejected','Rejected']"),
+  'Candidate Library review filter must expose Approved and Rejected');
 
 assert.match(ui, /row\.classList\.toggle\('cfgl-filtered-out', !libraryRowVisible\(inboxItemId\)\)/,
   'Library filters must only add an independent visibility class to existing Inbox rows');
@@ -44,9 +46,15 @@ assert.match(ui, /Server-projected registry and historical review intelligence o
 assert.doesNotMatch(ui, /\bstoreScore\b|urgencyMultiplier|financialImpactScore/i,
   'Library UI must not implement an opaque score');
 assert.match(ui, /No auto acknowledge, auto approve, Optimization Action, execution permit, Store Score, or Amazon mutation is authorized\./,
-  'Decision Packet safety copy must continue to prohibit Store Score and execution authority');
-assert.doesNotMatch(ui, /data-cfhr-set="(?:approved|rejected|execute)"/,
-  'Library UI must not expose approve/reject/execute actions');
+  'Decision Packet safety copy must continue to prohibit automatic approval, Store Score, and execution authority');
+assert.match(ui, /data-cfhr-set="approved"/,
+  'Library surface must permit the Human Review approved disposition action');
+assert.match(ui, /data-cfhr-set="rejected"/,
+  'Library surface must permit the Human Review rejected disposition action');
+assert.doesNotMatch(ui, /data-cfhr-set="execute"/,
+  'Library UI must not expose execution actions');
+assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),
+  'Library UI must preserve the final-disposition execution boundary');
 assert.doesNotMatch(ui, /amazon-ads-api|sp-api|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|startSync/i,
   'Library UI must have no Amazon or sync path');
 
@@ -55,6 +63,7 @@ console.log(JSON.stringify({
   contract: 'governed-keyword-negative-candidate-library-ui-v1',
   serverProjectionOnly: true,
   filters: ['family', 'kind', 'priority', 'review', 'stale', 'history'],
+  finalDispositionReviewOnly: true,
   historicalLearningIntegrated: true,
   decisionPacketReused: true,
   storeScoreImplemented: false,

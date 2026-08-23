@@ -62,6 +62,10 @@ export function buildHistoricalReviewLearning({ storeId, historicalEntries, curr
       acknowledgedMeansApproved: false,
       acknowledgedMeansExecuted: false,
       needsReviewMeansRejected: false,
+      approvedMeansExecuted: false,
+      approvedMeansSuccessful: false,
+      rejectedMeansFailed: false,
+      finalDispositionIsEffectiveness: false,
       historicalOutcomeAvailable: false,
       automaticFeedbackIntoRecommendations: false,
     }),
@@ -121,6 +125,8 @@ function buildContext({ contextKey, reviews, currentItem }) {
     staleEvidenceCount: currentItem ? stale.length : null,
     acknowledgedCount: stateCounts.acknowledged,
     needsReviewCount: stateCounts.needs_review,
+    approvedCount: stateCounts.approved,
+    rejectedCount: stateCounts.rejected,
     unsupportedStateCount: stateCounts.unsupported,
     firstObservedAt: timestampOf(earliest),
     latestObservedAt: timestampOf(latest),
@@ -161,12 +167,14 @@ function identityFromHistorical(review) {
 }
 
 function historyStateCounts(entries) {
-  const counts = { acknowledged: 0, needs_review: 0, unsupported: 0 };
+  const counts = { acknowledged: 0, needs_review: 0, approved: 0, rejected: 0, unsupported: 0 };
   for (const entry of entries) {
     const review = entry?.review || entry;
     const state = normalizedState(review?.state);
     if (state === 'acknowledged') counts.acknowledged += 1;
     else if (state === 'needs_review') counts.needs_review += 1;
+    else if (state === 'approved') counts.approved += 1;
+    else if (state === 'rejected') counts.rejected += 1;
     else counts.unsupported += 1;
   }
   return counts;
@@ -176,6 +184,8 @@ function normalizedState(value) {
   const state = text(value);
   if (state === 'acknowledged') return 'acknowledged';
   if (state === 'needs_review' || state === 'open') return 'needs_review';
+  if (state === 'approved') return 'approved';
+  if (state === 'rejected' || state === 'dismissed') return 'rejected';
   return 'unsupported';
 }
 

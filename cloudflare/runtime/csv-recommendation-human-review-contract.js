@@ -9,6 +9,8 @@ export const DURABLE_REVIEW_STATES = Object.freeze(['acknowledged', 'needs_revie
 const ADVISORY_STATE_MAP = Object.freeze({
   acknowledged: 'acknowledged',
   needs_review: 'open',
+  approved: 'approved',
+  rejected: 'rejected',
 });
 
 const EXECUTION_SEPARATION = Object.freeze({
@@ -25,9 +27,9 @@ const EXECUTION_SEPARATION = Object.freeze({
  *
  * This module deliberately does not write D1 and does not mutate optimization_actions.
  * Existing advisory_review_records is the durable review plane. Current schema safely
- * represents acknowledged / needs_review for search-term candidates only. Session states
- * remain presentation-only. approved / rejected and root-level candidates remain fail-closed
- * until an explicit schema contract exists; they must never be coerced into execution state.
+ * represents acknowledged / needs_review / approved / rejected for search-term candidates.
+ * Session states remain presentation-only. Final dispositions are Human Review outcomes only;
+ * they must never be coerced into Optimization Action approval or execution state.
  */
 export async function evaluateRecommendationReviewRequest({
   inboxItem,

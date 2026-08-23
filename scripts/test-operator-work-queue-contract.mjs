@@ -15,6 +15,9 @@ const base = {
   unreviewedCount: 12,
   needsReviewCount: 0,
   acknowledgedCount: 0,
+  approvedCount: 0,
+  rejectedCount: 0,
+  resolvedCount: 0,
   staleReviewEvidenceCount: 0,
   highUnreviewedCount: 12,
   analysisScopeComplete: true,
@@ -84,6 +87,23 @@ const acknowledged = buildOperatorWorkQueueRow({
 }, range);
 assert.equal(acknowledged.queueClass, 'acknowledged_only');
 assert.equal(acknowledged.priority, 5);
+
+const resolved = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-resolved',
+  storeCode: 'STORE07B',
+  recommendationCandidateCount: 2,
+  criticalHighCandidateCount: 0,
+  unreviewedCount: 0,
+  highUnreviewedCount: 0,
+  approvedCount: 1,
+  rejectedCount: 1,
+  resolvedCount: 2,
+}, range);
+assert.equal(resolved.queueClass, 'no_active_queue');
+assert.equal(resolved.reasonCode, 'final_disposition_only');
+assert.equal(resolved.resolvedCount, 2);
+assert.match(resolved.reasonText, /final Human Review dispositions/);
 
 const emissionBlocked = buildOperatorWorkQueueRow({
   ...base,

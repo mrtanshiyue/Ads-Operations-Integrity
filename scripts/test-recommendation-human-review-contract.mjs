@@ -103,10 +103,12 @@ for (const state of ['approved', 'rejected']) {
     requestedState: state,
     analysisScope: { candidateEmissionAuthorized: true },
   });
-  assert.equal(result.persistenceAuthorized, false);
-  assert.equal(result.schemaReusable, false);
-  assert.ok(result.reasons.includes('durable_state_schema_mapping_missing'));
+  assert.equal(result.persistenceAuthorized, true);
+  assert.equal(result.schemaReusable, true);
+  assert.equal(result.advisoryReviewRecord.state, state);
   assert.equal(result.execution.optimizationActionApprovalAllowed, false);
+  assert.equal(result.execution.executionAuthorized, false);
+  assert.equal(result.execution.amazonMutationAuthorized, false);
 }
 
 const suppressed = await evaluateRecommendationReviewRequest({
@@ -174,7 +176,7 @@ console.log(JSON.stringify({
   contract: 'csv-recommendation-human-review-v1',
   sessionStatesRemainNonPersistent: true,
   acknowledgedAndNeedsReviewReuseExistingAdvisorySchema: true,
-  approvedRejectedFailClosedWithoutSchemaMapping: true,
+  approvedRejectedReviewOnlyPersistence: true,
   rootCandidatePersistenceFailsClosed: true,
   staleEvidenceDetectedByStableContext: true,
   sameScopeEvidenceMutationChangesRecommendationFingerprint: true,

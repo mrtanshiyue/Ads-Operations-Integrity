@@ -19,7 +19,18 @@ assert.match(ui, /validateHistoricalLearning\(payload\?\.historicalLearning, pay
 for (const flag of ['adaptiveLearningAuthorized', 'ruleMutationAuthorized', 'recommendationMutationAuthorized', 'executionAuthorized', 'amazonMutationAuthorized']) {
   assert.ok(ui.includes(`'${flag}'`), `Historical Learning authority validation missing: ${flag}`);
 }
-for (const semantic of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {
+for (const semantic of [
+  'recurrenceIsEffectiveness',
+  'acknowledgedMeansApproved',
+  'acknowledgedMeansExecuted',
+  'needsReviewMeansRejected',
+  'approvedMeansExecuted',
+  'approvedMeansSuccessful',
+  'rejectedMeansFailed',
+  'finalDispositionIsEffectiveness',
+  'historicalOutcomeAvailable',
+  'automaticFeedbackIntoRecommendations',
+]) {
   assert.ok(ui.includes(`'${semantic}'`), `Historical Learning semantic validation missing: ${semantic}`);
 }
 
@@ -54,8 +65,8 @@ assert.match(ui, /state\.historicalCurrentByInboxItem\.get\(String\(inboxItemId 
 
 for (const fragment of [
   'Historical Review Learning',
-  'Recurrence is not effectiveness.',
-  'Acknowledged is not approved or executed; needs_review is not rejected or failed.',
+  'Recurrence and final disposition are not effectiveness.',
+  'Approved is not executed or successful; rejected is not failed.',
   'Historical Learning never changes recommendation rules or execution authority.',
   'No learning weight, rule mutation, recommendation mutation, execution, or Amazon authority is created.',
 ]) assert.ok(ui.includes(fragment), `Historical Learning safety copy missing: ${fragment}`);
@@ -66,8 +77,10 @@ assert.equal((ui.match(/const response = await fetch\(url, options\)/g) || []).l
   'Historical Learning must reuse the existing Human Review transport rather than add a second fetch');
 assert.doesNotMatch(ui, /effectivenessScore|learningWeight|ruleWeight|\bstoreScore\b|financialImpactScore/i,
   'Historical Learning UI must not implement an effectiveness/adaptive score');
-assert.doesNotMatch(ui, /data-cfhr-set="(?:approved|rejected|execute)"/,
-  'Historical Learning must not expose approval/rejection/execution actions');
+assert.doesNotMatch(ui, /data-cfhr-set="execute"/,
+  'Historical Learning must not expose execution actions');
+assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),
+  'Historical Learning must preserve the Human Review final-disposition execution boundary');
 assert.doesNotMatch(ui, /amazon-ads-api|sp-api|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|startSync/i,
   'Historical Learning UI must have no Amazon or sync path');
 
@@ -77,6 +90,10 @@ console.log(JSON.stringify({
   sameHumanReviewPayload: true,
   historicalOnlyContextsSeparated: true,
   recurrenceIsEffectiveness: false,
+  finalDispositionIsEffectiveness: false,
+  approvedMeansExecuted: false,
+  approvedMeansSuccessful: false,
+  rejectedMeansFailed: false,
   adaptiveLearningAuthorized: false,
   executionAuthorized: false,
   amazonMutationAuthorized: false,

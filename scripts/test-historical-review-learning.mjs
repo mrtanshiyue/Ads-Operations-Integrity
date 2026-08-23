@@ -75,6 +75,10 @@ assert.deepEqual(learning.semantics, {
   acknowledgedMeansApproved: false,
   acknowledgedMeansExecuted: false,
   needsReviewMeansRejected: false,
+  approvedMeansExecuted: false,
+  approvedMeansSuccessful: false,
+  rejectedMeansFailed: false,
+  finalDispositionIsEffectiveness: false,
   historicalOutcomeAvailable: false,
   automaticFeedbackIntoRecommendations: false,
 });
@@ -87,7 +91,7 @@ assert.equal(learning.summary.recurrentContextCount, 1);
 assert.equal(learning.summary.currentMatchedRecordCount, 1);
 assert.equal(learning.summary.staleEvidenceRecordCount, 2);
 assert.equal(learning.summary.historicalOnlyContextCount, 1);
-assert.deepEqual(learning.summary.stateCounts, { acknowledged: 3, needs_review: 2, unsupported: 0 });
+assert.deepEqual(learning.summary.stateCounts, { acknowledged: 3, needs_review: 2, approved: 0, rejected: 0, unsupported: 0 });
 
 const current = learning.contexts.find((context) => context.contextKey === 'context-1');
 assert.ok(current);
@@ -100,6 +104,8 @@ assert.equal(current.currentMatchedRecordCount, 1);
 assert.equal(current.staleEvidenceCount, 2);
 assert.equal(current.acknowledgedCount, 2);
 assert.equal(current.needsReviewCount, 1);
+assert.equal(current.approvedCount, 0);
+assert.equal(current.rejectedCount, 0);
 assert.equal(current.recurrent, true);
 assert.equal(current.currentEvidenceDrift, true);
 assert.equal(current.latestHistoricalReview.recommendationFingerprint, 'fp-current');
@@ -119,6 +125,21 @@ assert.equal(neverReviewedCurrent.currentCandidateActive, true);
 assert.equal(neverReviewedCurrent.historicalRecordCount, 0);
 assert.equal(neverReviewedCurrent.recurrent, false);
 assert.equal(neverReviewedCurrent.staleEvidenceCount, 0);
+
+const dispositionLearning = buildHistoricalReviewLearning({
+  storeId: 'STORE01',
+  historicalEntries: [
+    { contextKey: 'd1', review: historicalReview({ id: 'approved-1', fingerprint: 'approved-fp', state: 'approved', updatedAt: '2026-07-01T00:00:00.000Z' }) },
+    { contextKey: 'd2', review: historicalReview({ id: 'rejected-1', fingerprint: 'rejected-fp', state: 'rejected', updatedAt: '2026-07-02T00:00:00.000Z' }) },
+    { contextKey: 'd3', review: historicalReview({ id: 'dismissed-1', fingerprint: 'dismissed-fp', state: 'dismissed', updatedAt: '2026-07-03T00:00:00.000Z' }) },
+    { contextKey: 'd4', review: historicalReview({ id: 'snoozed-1', fingerprint: 'snoozed-fp', state: 'snoozed', updatedAt: '2026-07-04T00:00:00.000Z' }) },
+  ],
+});
+assert.deepEqual(dispositionLearning.summary.stateCounts, { acknowledged: 0, needs_review: 0, approved: 1, rejected: 2, unsupported: 1 });
+assert.equal(dispositionLearning.semantics.approvedMeansExecuted, false);
+assert.equal(dispositionLearning.semantics.approvedMeansSuccessful, false);
+assert.equal(dispositionLearning.semantics.rejectedMeansFailed, false);
+assert.equal(dispositionLearning.semantics.finalDispositionIsEffectiveness, false);
 
 assert.throws(() => buildHistoricalReviewLearning({
   currentEntries: [
