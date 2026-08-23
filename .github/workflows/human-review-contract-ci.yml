@@ -89,6 +89,37 @@ jobs:
           end = src.index("\n          NODE\n", start)
           lines = src[start:end].splitlines()
           code = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+
+          # Replace two brittle whole-SQL-block edits with smaller semantic anchors.
+          s = code.index("api = replaceOnce(api,\n`  if (existing) {")
+          marker = "  'api_existing_note');"
+          e = code.index(marker, s) + len(marker)
+          replacement = r'''api = replaceOnce(api,
+`  if (existing) {
+    const sameState = existing.state === record.state;
+    const sameNote = clean(existing.reviewer_note) === clean(note.value);`,
+`  if (existing) {
+    const effectiveNote = effectiveReviewNote(noteRequest, existing.reviewer_note);
+    const sameState = existing.state === record.state;
+    const sameNote = clean(existing.reviewer_note) === clean(effectiveNote);`,
+  'api_existing_note_compare');
+api = api.replace('.bind(reviewId, record.state, actor.user_id, note.value, now).run();', '.bind(reviewId, record.state, actor.user_id, effectiveNote, now).run();');
+if (!api.includes('.bind(reviewId, record.state, actor.user_id, effectiveNote, now).run();')) throw new Error('api_existing_note_bind_missing');'''
+          code = code[:s] + replacement + code[e:]
+
+          s = code.index("api = replaceOnce(api,\n`      reviewId = raced.review_id;")
+          marker = "  'api_race_note');"
+          e = code.index(marker, s) + len(marker)
+          replacement = r'''api = replaceOnce(api,
+`      reviewId = raced.review_id;
+      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(note.value);`,
+`      reviewId = raced.review_id;
+      const racedEffectiveNote = effectiveReviewNote(noteRequest, raced.reviewer_note);
+      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(racedEffectiveNote);`,
+  'api_race_note_compare');
+api = api.replace('.bind(reviewId, record.state, actor.user_id, note.value, now).run();', '.bind(reviewId, record.state, actor.user_id, racedEffectiveNote, now).run();');
+if (!api.includes('.bind(reviewId, record.state, actor.user_id, racedEffectiveNote, now).run();')) throw new Error('api_race_note_bind_missing');'''
+          code = code[:s] + replacement + code[e:]
           Path('/tmp/273-apply-patch.mjs').write_text(code)
           PY
           node /tmp/273-apply-patch.mjs
