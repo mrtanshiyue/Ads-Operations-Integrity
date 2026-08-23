@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - acceptance/259-human-review-final-disposition-runtime
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +19,7 @@ concurrency:
 
 jobs:
   readiness:
+    if: github.event_name != 'pull_request' || github.head_ref == 'acceptance/259-human-review-final-disposition-runtime'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
