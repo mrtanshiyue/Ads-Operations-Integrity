@@ -9,6 +9,33 @@ const migration0019 = readFileSync(new URL('../cloudflare/foundation/migrations/
 const migration0025 = readFileSync(new URL('../cloudflare/foundation/migrations/store/0025_store_advisory_review_final_disposition.sql', import.meta.url), 'utf8');
 const db = new DatabaseSync(':memory:');
 db.exec(migration0019);
+// Model the later 0022 CSV authority dependency and trigger before applying 0025.
+// 0025 rebuilds advisory_review_records, so the guard must be explicitly preserved.
+db.exec(`
+CREATE TABLE csv_import_authority (
+  import_id TEXT PRIMARY KEY,
+  data_class TEXT NOT NULL,
+  provenance_class TEXT NOT NULL
+);
+CREATE TRIGGER trg_advisory_review_csv_authority_guard
+BEFORE INSERT ON advisory_review_records
+WHEN NEW.source_kind = 'csv_import'
+BEGIN
+  SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
+  WHERE json_type(NEW.source_evidence_json, '$.sourceImportIds') IS NOT 'array'
+     OR COALESCE(json_array_length(NEW.source_evidence_json, '$.sourceImportIds'), 0) = 0;
+  SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
+  WHERE EXISTS (
+    SELECT 1
+    FROM json_each(NEW.source_evidence_json, '$.sourceImportIds') j
+    LEFT JOIN csv_import_authority a ON a.import_id = CAST(j.value AS TEXT)
+    WHERE j.type <> 'text'
+       OR a.import_id IS NULL
+       OR a.data_class <> 'business'
+       OR a.provenance_class NOT IN ('exact_source_object','reconciled_exact_source')
+  );
+END;
+`);
 const insert = db.prepare(`INSERT INTO advisory_review_records(
  review_id,source_kind,recommendation_fingerprint,entity_type,entity_id,recommendation_family,recommendation_action_type,state,
  reviewer_user_id,reviewer_note,reviewed_at,snoozed_until,source_evidence_json,source_evidence_sha256,created_by,created_at,updated_at
@@ -28,7 +55,19 @@ assert.throws(() => row('bad-snooze','snoozed','7',null));
 assert.throws(() => db.prepare("UPDATE advisory_review_records SET entity_id='changed' WHERE review_id='approved'").run(), /ADVISORY_REVIEW_BINDING_IMMUTABLE/);
 assert.throws(() => db.prepare("DELETE FROM advisory_review_records WHERE review_id='approved'").run(), /ADVISORY_REVIEW_DELETE_FORBIDDEN/);
 const schemaObjects = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type IN ('index','trigger')").all().map((x)=>x.name));
-for (const name of ['uq_advisory_review_source_recommendation','idx_advisory_review_state_updated','idx_advisory_review_entity','trg_advisory_review_binding_immutable','trg_advisory_review_no_delete']) assert.ok(schemaObjects.has(name), name);
+for (const name of ['uq_advisory_review_source_recommendation','idx_advisory_review_state_updated','idx_advisory_review_entity','trg_advisory_review_binding_immutable','trg_advisory_review_no_delete','trg_advisory_review_csv_authority_guard']) assert.ok(schemaObjects.has(name), name);
+assert.throws(() => insert.run(
+  'csv-blocked','csv_import','8'.repeat(64),'search_term','rk-blocked','waste','negative_keyword','open',
+  'user',null,'2026-06-01T00:00:00.000Z',null,JSON.stringify({sourceImportIds:['missing-import']}),'8'.repeat(64),
+  'user','2026-06-01T00:00:00.000Z','2026-06-01T00:00:00.000Z'
+), /CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED/);
+db.prepare("INSERT INTO csv_import_authority(import_id,data_class,provenance_class) VALUES('import-ok','business','exact_source_object')").run();
+insert.run(
+  'csv-allowed','csv_import','9'.repeat(64),'search_term','rk-allowed','waste','negative_keyword','approved',
+  'user',null,'2026-06-01T00:00:00.000Z',null,JSON.stringify({sourceImportIds:['import-ok']}),'9'.repeat(64),
+  'user','2026-06-01T00:00:00.000Z','2026-06-01T00:00:00.000Z'
+);
+assert.equal(db.prepare("SELECT state FROM advisory_review_records WHERE review_id='csv-allowed'").get().state,'approved');
 assert.equal(persistedStateToUiState('dismissed'),'rejected');
 assert.equal(persistedStateToUiState('snoozed'),null);
 
