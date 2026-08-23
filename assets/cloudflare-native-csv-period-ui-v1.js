@@ -1,5 +1,5 @@
 export const CSV_PERIOD_UI_VERSION = '1.0.0';
-const state = { mounted: false, rendering: false, result: null };
+const state = { mounted: false, rendering: false, requestSeq: 0, result: null };
 
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvPeriodUi', {
@@ -50,27 +50,33 @@ function mount() {
 }
 
 async function refresh(root, joint) {
-  if (state.rendering) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return;
+  const seq = ++state.requestSeq;
   state.rendering = true;
   status(root, `Recomputing period views locally from ${files.length} file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
-    state.result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (seq !== state.requestSeq) return;
+    const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (seq !== state.requestSeq) return;
+    state.result = result;
     render(root);
     const periods = state.result.periods;
     const blocked = periods.summary.blockedTrailingComparisonCount;
     const incomplete = periods.summary.incompleteTrailingComparisonCount;
     status(root, `${periods.summary.trailingComparisonCount} trailing comparisons · ${periods.summary.monthlySnapshotCount} monthly snapshots · ${blocked} blocked · ${incomplete} incomplete. No persistence or execution authority.`, blocked ? 'bad' : incomplete ? 'warn' : 'ok');
   } catch (error) {
+    if (seq !== state.requestSeq) return;
     clear(root, `Period rendering failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
-    state.rendering = false;
+    if (seq === state.requestSeq) state.rendering = false;
   }
 }
 
 function clear(root, message, kind = '') {
+  state.requestSeq += 1;
+  state.rendering = false;
   state.result = null;
   const body = root.querySelector('[data-cfp-body]');
   body.hidden = true;
