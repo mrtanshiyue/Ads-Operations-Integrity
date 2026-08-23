@@ -8,8 +8,6 @@ const assetsRoot = path.join(repoRoot, 'dist-cloudflare-native', 'assets');
 
 const allowedAssets = new Set([
   'bid-governance-parity-audit-v1.js',
-  'cloudflare-gate6-acceptance-v1.js',
-  'cloudflare-gate7-ui-acceptance-v1.js',
   'cloudflare-native-access-console-v1.js',
   'cloudflare-native-api-v1.js',
   'cloudflare-native-audit-console-v1.js',
