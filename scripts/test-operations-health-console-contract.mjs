@@ -34,8 +34,10 @@ assert.match(source, /Decision order: authoritative read failure\/evidence gap/)
 assert.match(source, /Open Decision Queue/);
 assert.match(source, /CloudflareOperatorContext/);
 assert.match(source, /cfDecisionLauncher/);
-assert.match(source, /name="startDate"/);
-assert.match(source, /name="endDate"/);
+assert.match(source, /\['startDate', range\.startDate\], \['endDate', range\.endDate\]/,
+  'Work Queue launcher must map both explicit date fields into Decision Intelligence');
+assert.match(source, /for \(const control of changedControls\) control\.dispatchEvent\(new global\.Event\('change', \{ bubbles: true \}\)\);/,
+  'Work Queue launcher must propagate date scope through bubbling Decision change events');
 assert.match(source, /<input id="cfOpsDecisionStart" type="date" autocomplete="off">/,
   'Decision date scope must start blank and operator-provided');
 assert.match(source, /<input id="cfOpsDecisionEnd" type="date" autocomplete="off">/,
@@ -117,7 +119,6 @@ assert.equal(health.classifyStoreHealth({
   sync: { status: 'never', lastSuccessAt: null, lastErrorAt: null, lagMinutes: null, updatedAt: null },
   rollups: [],
 }, []).attentionKey, 'evidence_gap');
-
 const operationalRows = health.rankStoreHealthRows([
   health.buildCommandRow({ storeId: 'healthy', storeCode: 'STORE04' }, { generatedAt: 'x', stores: [{ ...baseStore, storeId: 'healthy' }], recentRollupFailures: [] }, null, 3),
   health.buildCommandRow({ storeId: 'lag', storeCode: 'STORE02' }, { generatedAt: 'x', stores: [{ ...baseStore, storeId: 'lag', sync: { ...baseStore.sync, lagMinutes: 5 } }], recentRollupFailures: [] }, null, 1),
