@@ -2,8 +2,9 @@
 -- Extends the advisory-review-only state machine with approved / rejected.
 -- These states are review dispositions only: they do not authorize Optimization Action
 -- approval, execution, Amazon mutation, sync, or recommendation/rule adaptation.
-
-BEGIN TRANSACTION;
+--
+-- Do not add SQL BEGIN/COMMIT/SAVEPOINT statements here. Wrangler/D1 migrations apply
+-- owns migration atomicity and rollback; D1 remote rejects explicit transaction control.
 
 DROP TRIGGER trg_advisory_review_binding_immutable;
 DROP TRIGGER trg_advisory_review_no_delete;
@@ -115,7 +116,5 @@ BEGIN
        OR a.provenance_class NOT IN ('exact_source_object','reconciled_exact_source')
   );
 END;
-
-COMMIT;
 
 PRAGMA optimize;
