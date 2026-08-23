@@ -1,85 +1,38 @@
 # Ads Operations Integrity
 
-Amazon Ads Operations OS — Cloudflare Native control plane, governed store data planes, CSV decision intelligence, recommendation approval, and controlled future Amazon execution.
+Amazon Ads Operations OS — Cloudflare Native control plane, governed store data planes, CSV decision intelligence, recommendation review, and controlled future Amazon execution.
 
-> **Current product phase: CSV Decision Intelligence Productization.** The CSV / Cloudflare Non-Amazon Production Foundation is complete and accepted. Operational UAT is `31/31 LIVE PASS`, Failure Recovery including real rollback/restore is PASS, and `blockers=[]`. Amazon remains **HARD-OFF / FROZEN** pending explicit authorization.
+> **Current project stage: Stable Operations / Maintenance Mode.** The Non-Amazon Production foundation and current operator product surfaces are complete. Repository Hygiene v1 is the active maintenance program under Issue `#278`. Historical Formal Closure, Browser Acceptance, Operational UAT, rollback drills, and rationale acceptance are complete/frozen. Amazon remains **HARD-OFF / FROZEN**.
 
-## Product objective
+## Maintenance objective
 
-The active product loop is:
+The repository is no longer in feature-productization mode. Current work should improve operational safety and maintainability without reopening completed product design:
+
+```text
+protect current capability
+→ reduce dead/duplicate control surfaces
+→ preserve data/security invariants
+→ keep operator-facing truth current
+→ prove runtime changes through controlled exact-main evidence
+```
+
+Do not create new features merely to keep development active. New product work requires an explicit new requirement.
+
+## Current operator loop — KEEP
 
 ```text
 trusted CSV / historical reports
 → decision intelligence
 → explainable recommendation
 → human review
-→ keyword / negative library
+→ governed keyword / negative candidate library
 → historical learning
 → operator decision
 ```
 
-The longer-term controlled-action loop remains valid:
-
-```text
-trusted data
-→ decision intelligence
-→ explainable recommendation
-→ human approval
-→ controlled action
-→ verification
-→ learning
-```
-
-Amazon live execution is not the current delivery mainline. While `docs/architecture/CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md` remains active, delivery is CSV-first, analytics-first, local-data-first, and operator-decision-first.
-
-## Final Non-Amazon Production baseline
-
-Canonical accepted baseline:
-
-```text
-GitHub main: a90c9158d8afd224e717218827923d4beab593b1
-Production Worker: ads-operations-web-prod
-Exact-main build: f4ed6b12-5beb-44f8-944c-061b300c7ec1
-Exact-main deployment: 0ccd32ac-0328-4a02-b6f1-7445495a128b
-Final runtime version: 44716995-a894-47ee-a9ed-5d371a771e83
-Restored active deployment: 67feb2ce-cff5-4a79-bbd0-6b9460edd438
-Operational UAT: 31/31 LIVE PASS
-Failure Recovery: PASS
-blockers=[]
-```
-
-The immutable closure record is `docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md`.
-
-Do not reopen completed Runtime / Privacy / RBAC / D1 migration / CSV provenance / CSV dedup / R2 create-only / deployment-governance / Operational-UAT / rollback work unless a real regression, security issue, availability issue, or data-integrity drift is observed.
-
-## Current business priority
-
-Product work should preferentially improve the operator's ability to find profitable terms, waste, negative candidates, scale opportunities, and trend changes:
-
-```text
-CSV
-→ Historical Data
-→ Search Term Intelligence
-→ Profit / Waste / Root Analysis
-→ Recommendation
-→ Human Review
-→ Keyword / Negative Library
-```
-
-Priority product surfaces:
-
-1. Search Term Intelligence
-2. Historical / Monthly Intelligence
-3. Recommendation Inbox
-4. Keyword Library
-5. Negative Keyword Library
-6. Data Quality / Import Health
-
-Product intelligence takes priority over cosmetic UI rewrites.
+Current operator surfaces include Recommendation Inbox, Human Review, Recommendation Decision Packet, Governed Candidate Library, Historical Review Learning, Four-Store Decision Queue Summary, Daily Operator Work Queue, Operator Workspace, Root / Lifecycle usability, Operations Health, and their supporting CSV analytics/provenance/data-quality surfaces.
 
 ## Canonical architecture
-
-Central governance remains shared and store-scoped data isolation remains enforced:
 
 ```text
 Cloudflare Access
@@ -101,49 +54,30 @@ Decision intelligence
 Human review
 ```
 
-Dormant Amazon transport/execution code remains preserved but unauthorized. A future Amazon restart must be explicitly authorized and must re-establish the required per-store execution isolation before multi-store live activation.
+Central governance and store isolation remain mandatory. All D1 migrations and integrity triggers are protected assets unless a dedicated migration/governance change explicitly requires modification.
 
-## Current platform truth
+## Repository authority vs runtime authority
 
-### Control D1
-
-Central governance covers users/RBAC, stores, products and store mappings, keyword library and product-keyword mappings, store keyword policy, negative governance, optimization rules, rollups, audit, and operator governance.
-
-### Store D1
-
-Store-local data covers Amazon-shaped entities where already present, report/sync state, campaign/keyword/target/search-term/product/placement daily facts, CSV ingestion state, R2/source provenance, and the optimization action ledger.
-
-`optimization_actions` and `optimization_action_events` are the canonical action lifecycle. Do not create a second action database. Recommendation, approval, future execution, verification, and revert semantics build around that ledger.
-
-### Decision intelligence
-
-The repository already contains CSV Search Term intelligence, profitability/waste analysis, deterministic recommendation fingerprints, period-over-period analysis, historical CSV primitives, observed CSV identity handling, recommendation governance, and local keyword/negative governance surfaces.
-
-The current productization gap is to consolidate those primitives into operator-facing business semantics: Profit Winners, Scale Opportunities, Waste Terms, Watchlist, root intelligence, evidence-backed candidates, lifecycle/trend states, and review workflow.
-
-## Amazon state — HARD-OFF
-
-Runtime kill switches remain closed:
+Protected `main` is the canonical repository authority. Branch protection requires:
 
 ```text
-SYNC_TRIGGER_ENABLED=false
-AMAZON_ADS_ENABLED=false
+Static site and security invariants
 ```
 
-Until the user explicitly lifts the Amazon freeze, do not perform:
+Repository merge, Cloudflare runtime promotion, and Amazon execution authority are separate events:
 
-- Amazon Ads API live reads or writes
-- SP-API
-- Amazon report acquisition
-- campaign / bid / keyword / negative / budget mutation
-- Amazon workflow execution
-- Amazon credential provisioning or secret mutation
+```text
+repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation
+```
 
-Dormant Amazon code may remain in the repository. Its presence does not authorize execution.
+Direct Cloudflare deployment aliases remain fail-closed. Runtime/build maintenance changes require controlled Development exact-main evidence and then controlled Production exact-main evidence before the batch is considered fully promoted.
+
+See `README_PRODUCTION_STATUS.md` for current deployment/evidence truth. Do not infer that the newest repository SHA is already running in Production without Release Trace or equivalent control-plane evidence.
 
 ## Canonical runtime entrypoints
 
 - Web runtime: `cloudflare/runtime/web-entry.js`
+- Observed runtime wrapper: `cloudflare/runtime/runtime-observed-entry.js`
 - Web Worker config: `cloudflare/runtime/wrangler.native.jsonc`
 - Sync runtime: `cloudflare/runtime/sync-worker.js`
 - Sync config: `cloudflare/runtime/wrangler.sync.jsonc`
@@ -152,27 +86,66 @@ Dormant Amazon code may remain in the repository. Its presence does not authoriz
 - Canonical CI: `.github/workflows/cloudflare-native-canonical-ci.yml`
 - Required context: `Static site and security invariants`
 
-Production Web deployment governance remains manual exact-main only. Repository merge, Cloudflare deployment, and Amazon activation remain separate authority events.
+Maintenance evidence assets include Runtime Observability, Production Drift Receipt, Cloudflare Release Trace, break-glass recovery, provenance/audit, privacy/RBAC/store-isolation guards, and Amazon HARD-OFF regressions.
 
-## Frontend direction
+## Repository Hygiene v1
 
-Modernization uses a TypeScript + React + Vite strangler, not a big-bang rewrite. Start with Search Term Intelligence and Historical Analytics; do not prioritize Settings, landing-page cosmetics, or unrelated page rewrites ahead of decision quality.
+Issue `#278` governs the active repository cleanup.
 
-## Delivery authority
+Every asset should converge to one of:
 
-- `docs/architecture/CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md` controls current operating sequence while active.
-- `docs/architecture/PRODUCT_ROADMAP_V2.md` remains the long-term product direction.
-- `docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md` is the immutable closure baseline for the completed Non-Amazon Production foundation.
-- Historical Gate/UAT/rollback documents remain evidence, not active delivery work.
+```text
+KEEP
+ARCHIVE
+DELETE_SAFE
+NEEDS_REVIEW
+```
 
-## Safety boundaries
+Classification must be based on runtime imports/loaders, build pipeline, package scripts, canonical CI, Workflow invocation, D1 migration dependency, Cloudflare Worker routes, operator UI dependencies, and audit/provenance value — never only on age or naming.
 
-- Canonical CI validates; it does not imply deployment or Amazon activation.
-- Repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation.
-- Production changes remain governed by the exact-main/manual deployment contract.
-- Amazon mutation remains unauthorized while the CSV-first freeze is active.
-- Existing accepted infrastructure closure should not be churned without a real regression.
-- Historical GitHub Pages / TiDB / Warehouse material under `docs/archive/` remains traceability/rollback history only.
-- The repository root intentionally has no implicit `wrangler.jsonc` deployment target; direct deployment aliases remain fail-closed.
+Priority cleanup targets include completed-phase active control planes, historical acceptance harnesses still entering runtime/build output, dead source loaders, duplicate focused CI, stale operator documentation, orphan scripts, and obsolete branches/PRs.
 
-See `README_PRODUCTION_STATUS.md` for current operational truth.
+Historical evidence should be archived or retained through immutable Git/Actions history where appropriate; it should not remain executable merely for traceability.
+
+## Amazon state — HARD-OFF
+
+Required closed state remains:
+
+```text
+SYNC_TRIGGER_ENABLED=false
+AMAZON_ADS_ENABLED=false
+Production Sync schedules=[]
+Production Web schedules=[]
+PHASE5_SINGLE_RUN_PERMIT_ID=""
+PHASE5_SINGLE_RUN_REPORT_DATE=""
+```
+
+Repository Hygiene does not authorize:
+
+- Amazon Ads / Advertising API live reads or writes
+- SP-API
+- Amazon API report acquisition
+- campaign / bid / keyword / negative / budget mutation
+- Optimization Action execution
+- Amazon network requests
+- Amazon credential or secret mutation
+- sync activation
+
+Dormant Amazon integration code may remain when it supports a deliberate future capability or HARD-OFF regression coverage. Code readiness never lifts the freeze.
+
+## Historical authority
+
+The immutable accepted Non-Amazon closure record remains:
+
+`docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md`
+
+Historical Gate/UAT/rollback/closure documents and Actions artifacts are evidence, not active delivery work. Material under `docs/archive/` is traceability/rollback history unless explicitly documented otherwise.
+
+## Operating rules
+
+- Do not reopen completed architecture, Formal Closure, Browser Acceptance, Operational UAT, rollback, rationale acceptance, or release investigations without a concrete regression or incident.
+- Do not bypass protected `main` or the required canonical CI context.
+- Do not replace controlled deployment with direct `wrangler deploy` aliases.
+- Do not weaken privacy, RBAC, store isolation, D1 integrity, provenance, audit, recovery, or Amazon HARD-OFF controls during cleanup.
+- Prefer small logical cleanup PRs so regression sources remain attributable.
+- Repository Hygiene is successful when the repository has less dead/duplicate execution surface and current Production capability remains intact — not when deletion count is maximized.

@@ -1,204 +1,197 @@
 # Ads Operations Integrity — Current Platform Status
 
-> Operational truth after CSV / Cloudflare Non-Amazon Final Closure. Long-term product direction remains in `docs/architecture/PRODUCT_ROADMAP_V2.md`; current delivery sequencing is governed by `docs/architecture/CSV_FIRST_OPERATING_DIRECTIVE_2026-08-18.md` while that directive remains active.
+> Current operator-facing truth. Historical closure, UAT, acceptance, rollback, and release evidence remains immutable history and must not be treated as active delivery work.
 
-## Strategic status
+## Current stage
 
 ```text
-Architecture / Security / Deployment foundation = ACCEPTED
-Production Non-Amazon foundation = ACCEPTED
-Operational UAT = 31/31 LIVE PASS
-Failure Recovery = PASS
-Real rollback / restore = LIVE PASS
-Temporary execution resources = CLEANED UP
-blockers=[]
-Current Product Phase = CSV Decision Intelligence Productization
-Amazon execution = DISABLED / FROZEN
+Project mode = Stable Operations / Maintenance Mode
+Non-Amazon Production foundation = COMPLETE / ACCEPTED
+Current product surfaces = COMPLETE / OPERATING
+Repository Hygiene = ACTIVE under Issue #278
+Formal Final Closure = COMPLETE / FROZEN
+Operational UAT = COMPLETE / FROZEN
+Historical Browser Acceptance = COMPLETE / FROZEN
+Amazon execution = HARD-OFF / FROZEN
 ```
 
-The project is no longer in Production UAT or foundational infrastructure build-out. Do not reopen completed closure work unless a real regression, security issue, availability issue, or data-integrity drift is observed.
+The project is not in a feature-development or productization phase. New work should be limited to maintenance, security, data integrity, observability, recovery, repository hygiene, and concrete defect/regression fixes unless a new product requirement is explicitly authorized.
 
-## Canonical repository baseline
+Do not reopen completed Formal Closure, Browser Acceptance, Operational UAT, rollback drills, rationale acceptance, or historical release investigations unless a real regression, security incident, availability issue, or data-integrity drift requires it.
+
+## Repository authority
+
+Protected `main` is the canonical repository authority.
 
 ```text
-GitHub main: a90c9158d8afd224e717218827923d4beab593b1
-Latest merged change at closure: fix: verify rollback deployment receipts by readback (#211)
-Open PRs at closure: 0
-Branch protection: enabled
-Required context: Static site and security invariants
+Branch protection = enabled
+Required context = Static site and security invariants
+Direct Cloudflare deploy aliases = blocked / fail-closed
 ```
 
-Repository SHA, Workers Build identity, deployment identity, and runtime version remain separate evidence classes. The SHA above is the immutable closure baseline; later CSV productization commits do not change the accepted closure evidence.
+Do not hard-code the current `main` SHA into long-lived operator documentation. Read it from GitHub at execution time.
 
-## Accepted Production Web baseline
+Repository SHA, Workers Build identity, deployment identity, runtime version, and Amazon execution authority are separate evidence classes:
 
 ```text
-Worker: ads-operations-web-prod
-Exact-main build: f4ed6b12-5beb-44f8-944c-061b300c7ec1
-Build outcome: success
-Build commit: a90c9158d8afd224e717218827923d4beab593b1
-Exact-main deployment: 0ccd32ac-0328-4a02-b6f1-7445495a128b
-Final runtime version: 44716995-a894-47ee-a9ed-5d371a771e83
-Restored active deployment: 67feb2ce-cff5-4a79-bbd0-6b9460edd438
-Traffic: 100%
+repository merge ≠ Dev deployment ≠ Production deployment ≠ Amazon activation
 ```
 
-Production deployment governance remains **manual exact-main only**. Do not enable automatic Production deployment or bypass branch protection / required CI.
+## Runtime deployment truth
 
-## Operational UAT / Failure Recovery
+Repository Hygiene can advance `main` without automatically proving that Development or Production is running that new SHA.
 
-Strict closure count:
+The last Production Web runtime explicitly verified before Repository Hygiene v1 began was:
 
 ```text
-Previously accepted LIVE cases: 21
-Service Binding LIVE cases: 9
-Real rollback / restore LIVE case: 1
-Total: 31/31 LIVE PASS
-blockers=[]
+Worker = ads-operations-web-prod
+Source SHA = 67b1a1daf403b971006bdd8aa66d6336a5e56832
+Deployment = 33bf0672-3cef-40f6-9310-cbede556c9fb
+Version = 390403b0-46fe-467d-984a-822e8099f638
+Traffic = 100%
+ACCESS_MODE = enforce
+SYNC_TRIGGER_ENABLED = false
+PHASE5_SINGLE_RUN_PERMIT_ID = ""
+PHASE5_SINGLE_RUN_REPORT_DATE = ""
+Schedules = []
 ```
 
-The real rollback / restore path was:
+The last Development Web runtime explicitly verified before Repository Hygiene v1 began was:
 
 ```text
-44716995-a894-47ee-a9ed-5d371a771e83
-→ rollback runtime 9007b345-6474-4b6b-8e88-cc79c3bf48fb
-→ restore runtime 44716995-a894-47ee-a9ed-5d371a771e83
+Worker = ads-operations-web-dev
+Deployment = 2ca0f620-9054-4118-a9d8-fea7cec12916
+Version = bd3fcb2d-f4a7-4f04-afb3-b6287c17d32a
+Traffic = 100%
+ACCESS_MODE = off
+SYNC_TRIGGER_ENABLED = false
+PHASE5_SINGLE_RUN_PERMIT_ID = ""
+PHASE5_SINGLE_RUN_REPORT_DATE = ""
+Schedules = []
 ```
 
+Repository Hygiene PRs that alter runtime/build surfaces must obtain fresh exact-main Development and Production evidence through the controlled Cloudflare deployment/release path before the maintenance batch is declared fully promoted. Until that evidence exists, do not describe the newer repository SHA as the active Production source.
+
+`Cloudflare Release Trace` remains a Maintenance Mode evidence asset for proving exact-main runtime identity. `Production Drift Receipt` remains a reusable read-only safety asset.
+
+## Production Sync — protected invariant
+
+Repository Hygiene must not modify or activate Production Sync.
+
+Last verified Production Sync baseline before Repository Hygiene v1:
+
 ```text
-Rollback deployment: b48f4ad6-66c6-4286-a591-485cbc3a1983
-Restore deployment: 67feb2ce-cff5-4a79-bbd0-6b9460edd438
+Worker = ads-operations-sync-prod
+Deployment = cf0b0adf-96dc-437d-8298-15af58f992ce
+Version = 295df84e-2103-4858-9895-49f67d4b10b4
+Traffic = 100%
+Schedules = []
+AMAZON_ADS_ENABLED = false
 ```
 
-Canonical rollback verification recorded:
+Any change that enables schedules, turns on Amazon execution, provisions Amazon credentials, or mutates Amazon-facing execution state is outside Repository Hygiene authority.
+
+## Current product surfaces — KEEP
+
+The following operator/product surfaces are current Maintenance Mode capabilities and must not be retired as historical assets:
+
+- Recommendation Inbox
+- Human Review
+- Recommendation Decision Packet
+- Governed Candidate Library
+- Historical Review Learning
+- Four-Store Decision Queue Summary
+- Daily Operator Work Queue
+- Operator Workspace
+- Root / Lifecycle usability
+- Operations Health
+- CSV analytics, history, provenance, data-quality, and import surfaces required by those workflows
+
+Human Review append-only governance and all D1 integrity/migration contracts remain protected.
+
+## Safety / maintenance assets — KEEP by default
+
+Keep unless a complete dependency audit proves a superior replacement:
+
+- direct-deploy blockers
+- Runtime Observability
+- Production Drift Receipt
+- Cloudflare Release Trace
+- break-glass recovery
+- provenance / audit
+- privacy / RBAC / store-isolation guards
+- Amazon HARD-OFF regression tests
+- all D1 migrations and integrity triggers
+
+Production Drift Receipt is evidence computation, not a Production mutation surface.
+
+## Repository Hygiene v1
+
+Issue `#278` governs the current cleanup program.
+
+Cleanup classification:
 
 ```text
-verified=true
-preRollbackRuntimeObserved=true
-rollbackRuntimeObserved=true
-restoreRuntimeObserved=true
-restoredInFinally=true
-deploymentForceApplied=true
-deploymentReceiptVerifiedByReadback=true
-amazonExecutionAttempted=false
-businessFactPersistenceAttempted=false
+KEEP         current runtime/governance/security/recovery/data-integrity/maintenance value
+ARCHIVE      completed but still valuable for audit, incident, or historical evidence
+DELETE_SAFE  no current dependency or governance value and safe to recover through Git history
+NEEDS_REVIEW deletion safety is not yet proven
 ```
 
-Do not rerun the accepted 31-case matrix or rollback drill unless later code changes directly affect those contracts.
+Deletion decisions must be based on actual imports/loaders/build/package/CI/workflow/runtime/deployment/audit dependencies, not filenames or age.
 
-## Service Binding closure
+Repository Hygiene is complete only when dead runtime assets, dead loaders, completed-phase active control planes, temporary acceptance harnesses, stale operator-facing truth, and safely removable workflow noise are gone without current capability regression.
 
-The Cloudflare Service Binding execution path completed the required CSV, permission, failure-recovery, and rollback runtime-observation cases. Final authorization mode was:
+## Amazon state — permanent HARD-OFF for this maintenance program
 
-```text
-cloudflare_service_binding
-```
-
-The permission case used Production `CONTROL_DB` read-only policy simulation. No Production user, temporary membership, permission mutation, or business-fact write was created.
-
-Do not reopen Access Service Token investigation absent a new concrete requirement.
-
-## Cleanup state
-
-Temporary UAT / rollback execution resources have been deleted and verified absent, including temporary controller/build-runner Workers, Queue resources, KV, and temporary rollback build triggers.
-
-The temporary execution branch `ops/operational-uat-service-binding-rollback-20260820` was restored to `main` with:
+Required closed state:
 
 ```text
-ahead=0
-behind=0
-status=identical
-```
-
-Do not revive temporary closure infrastructure.
-
-## Amazon state — HARD-OFF
-
-The CSV-first operating directive remains active. Runtime kill switches remain:
-
-```text
-SYNC_TRIGGER_ENABLED=false
 AMAZON_ADS_ENABLED=false
+SYNC_TRIGGER_ENABLED=false
+Production Sync schedules=[]
+Production Web schedules=[]
+PHASE5_SINGLE_RUN_PERMIT_ID=""
+PHASE5_SINGLE_RUN_REPORT_DATE=""
 ```
 
-No Amazon Ads API live reads/writes, SP-API, Amazon report acquisition, campaign/bid/keyword/negative/budget mutation, Amazon workflow execution, credential provisioning, or Amazon secret mutation is authorized.
+Repository Hygiene does not authorize:
 
-Dormant Amazon integration code remains preserved for a future explicit restart. Code readiness does not lift the freeze.
+- Amazon Ads / Advertising API calls
+- SP-API calls
+- Amazon API report acquisition
+- campaign / bid / keyword / negative / budget mutation
+- Optimization Action execution
+- Amazon network requests
+- Amazon credential or secret mutation
+- sync activation
 
-## Action-control state
+Dormant Amazon code may remain where it is part of intentional future capability or HARD-OFF regression coverage. Its presence never implies execution authority.
 
-Store D1 already owns the canonical lifecycle:
+## Historical closure evidence
 
-```text
-optimization_actions
-optimization_action_events
-```
-
-with statuses:
-
-```text
-proposed / approved / rejected / applying / applied / failed / reverted
-```
-
-Do not create a second action database. During CSV-first productization, advisory output remains non-executable:
-
-```text
-executionAuthorized=false
-amazonMutationAuthorized=false
-```
-
-## Current productization direction
-
-Active sequence:
-
-```text
-CSV
-→ Historical Data
-→ Search Term Intelligence
-→ Profit / Waste / Root Analysis
-→ Evidence-backed Recommendation
-→ Human Review
-→ Keyword / Negative Library
-→ Historical learning
-```
-
-The immediate implementation focus is:
-
-1. consolidate Search Term Intelligence into operator-facing business classifications and evidence-backed candidate types;
-2. consolidate historical/monthly and period-over-period analytics with lifecycle/trend semantics;
-3. connect recommendations into the existing local review / keyword / negative governance flow;
-4. modernize high-value product surfaces incrementally with the TypeScript + React + Vite strangler.
-
-UI cosmetics, more Gate numbering, more Operational UAT cases, Access-token research, rollback infrastructure, and already-accepted provenance/dedup/D1 governance are lower priority unless a real blocker/regression appears.
-
-## Production closure authority
-
-The immutable closure summary is:
+The accepted historical Non-Amazon closure remains preserved at:
 
 ```text
 docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md
 ```
 
-Issue #191 is the mutable release trace and should be closed as completed once this final truth reset is merged.
+Historical UAT, Browser Acceptance, rollback, release, and closure artifacts are evidence, not active operating instructions.
 
-## Historical architecture compatibility markers
+Legacy architecture and loader evidence remains under `docs/archive/`, including `docs/archive/legacy-browser-loaders/`. Current build/runtime code must not depend on obsolete status text merely to preserve compatibility.
 
-The legacy Architecture Convergence contract still checks several historical evidence strings in this file. They are retained here only so historical CI evidence remains traceable; **none of the following statements overrides the current accepted Production status above**.
+## Operating rule
+
+Maintenance changes must remain small, reviewable, CI-gated, recoverable, and evidence-backed.
+
+For runtime/build changes:
 
 ```text
-Architecture Convergence Phase 0 = COMPLETE + MERGED
+canonical CI
+→ controlled Development exact-main evidence
+→ focused runtime/UI/API/RBAC/store-isolation validation
+→ controlled Production exact-main evidence
+→ schedules / Sync / Amazon HARD-OFF re-verification
 ```
 
-Historical statement, now superseded by the 2026-08-20 final closure:
-
-> final Cloudflare Native Production deployment contract is **not established yet**
-
-That sentence described the earlier architecture-convergence period; it is **not** current operational truth. The current Non-Amazon Production foundation is accepted.
-
-Historical / migration traceability markers retained for compatibility:
-
-- `docs/archive/legacy-browser-loaders/`
-- `assets/cloudflare-native-data-panel-v1.js`
-- `cloudflare_native_raw_import_not_migrated`
-
-Repository merge still does not itself authorize a Cloudflare deployment or any Amazon activation.
+For documentation-only or inactive-control-plane cleanup, Production deployment is not required unless the change also affects a runtime/build/deployment contract.

@@ -94,14 +94,21 @@ assert.match(archivedWarehouseProxy, /amazon-warehouse-cloud-v4\.internal/);
 const readme = await text('README.md');
 assert.match(readme, /Cloudflare Native/i);
 assert.match(readme, /Amazon Ads Operations OS/i);
+assert.match(readme, /Stable Operations\s*\/\s*Maintenance Mode/i);
+assert.match(readme, /repository merge\s*≠\s*Dev deployment\s*≠\s*Production deployment\s*≠\s*Amazon activation/i);
+assert.doesNotMatch(readme, /CSV Decision Intelligence Productization/i);
 assert.doesNotMatch(readme, /这是一个部署在 \*\*GitHub Pages\*\*/i);
 
 const status = await text('README_PRODUCTION_STATUS.md');
-assert.match(status, /Architecture Convergence Phase 0/i);
-assert.match(status, /final Cloudflare Native Production deployment contract is \*\*not established yet\*\*/i);
+assert.match(status, /Stable Operations\s*\/\s*Maintenance Mode/i);
+assert.match(status, /Repository Hygiene\s*=\s*ACTIVE/i);
+assert.match(status, /Production Drift Receipt/i);
+assert.match(status, /Cloudflare Release Trace/i);
 assert.match(status, /legacy-browser-loaders/);
-assert.match(status, /cloudflare-native-data-panel-v1\.js/);
-assert.match(status, /cloudflare_native_raw_import_not_migrated/);
+assert.match(status, /AMAZON_ADS_ENABLED=false/);
+assert.match(status, /SYNC_TRIGGER_ENABLED=false/);
+assert.doesNotMatch(status, /final Cloudflare Native Production deployment contract is \*\*not established yet\*\*/i);
+assert.doesNotMatch(status, /Current Product Phase\s*=\s*CSV Decision Intelligence Productization/i);
 
 const packageJson = JSON.parse(await text('package.json'));
 assert.equal(packageJson.scripts?.build, 'node scripts/build-cloudflare.mjs');
@@ -235,7 +242,7 @@ assert.doesNotMatch(canonicalCi, /upload-pages-artifact|deploy-pages/);
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'security-integrity-canonical-v10',
+  contract: 'security-integrity-canonical-v11',
   canonicalRuntime: 'cloudflare-native',
   canonicalWebEntry: 'cloudflare/runtime/web-entry.js',
   runtimeEvidenceWrapper: 'cloudflare/runtime/runtime-observed-entry.js',
@@ -259,4 +266,6 @@ console.log(JSON.stringify({
   legacyArchived: true,
   canonicalCoverageParityLocked: true,
   nativeAssetAllowlistEnforced: true,
+  maintenanceModeTruthLocked: true,
+  staleProductionCompatibilityTruthAbsent: true,
 }, null, 2));
