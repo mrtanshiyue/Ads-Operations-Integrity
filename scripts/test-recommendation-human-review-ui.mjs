@@ -77,14 +77,24 @@ assert.match(ui, /state\.observer\?\.disconnect\(\)/, 'Human Review UI must isol
 assert.match(ui, /function mutatePresentation\(callback\)/, 'Observer-isolated presentation mutation helper is missing');
 assert.match(ui, /clearPresentation\(\)/, 'Human Review UI must clear stale overlay when scope/source changes');
 assert.match(ui, /human_review_scope_changed_during_write/, 'A store/scope change during a write must fail closed in presentation');
-assert.match(ui, /function writeScopeIsCurrent\(writeScopeKey\) \{\s*return currentSource\(\) === 'csv' && scopeKey\(currentScope\(\)\) === writeScopeKey;\s*\}/,
-  'Human Review writes must compare the current full scope identity before presenting a response');
-assert.match(ui, /if \(!writeScopeIsCurrent\(writeScopeKey\)\) return; \/\/ human_review_scope_changed_during_write: stale response suppressed/,
-  'A stale Human Review POST response must be suppressed instead of surfacing an error in the new scope');
-assert.match(ui, /catch \(error\) \{\s*if \(!writeScopeIsCurrent\(writeScopeKey\)\) return;/,
+assert.ok(ui.includes("const REVIEW_SCOPE_CONTROLS = new Set(['profileId', 'startDate', 'endDate', 'limit', 'sort', 'dataSource']);"),
+  'Human Review transient-state invalidation must cover every request-defining scope control plus data source');
+assert.match(ui, /scopeGeneration:\s*0/,
+  'Human Review scope generation counter is missing');
+assert.match(ui, /const writeScopeGeneration = state\.scopeGeneration;/,
+  'Each Human Review write must capture the active scope generation');
+assert.match(ui, /function writeScopeIsCurrent\(writeScopeKey, writeScopeGeneration\) \{[\s\S]*state\.scopeGeneration === writeScopeGeneration[\s\S]*currentSource\(\) === 'csv'[\s\S]*scopeKey\(currentScope\(\)\) === writeScopeKey;/,
+  'Human Review writes must require both generation identity and full current scope identity before presenting a response');
+assert.match(ui, /if \(!writeScopeIsCurrent\(writeScopeKey, writeScopeGeneration\)\) return; \/\/ human_review_scope_changed_during_write: stale response suppressed/,
+  'A stale Human Review POST response must be suppressed even when a prior scope later reappears');
+assert.match(ui, /catch \(error\) \{\s*if \(!writeScopeIsCurrent\(writeScopeKey, writeScopeGeneration\)\) return;/,
   'Late Human Review write failures must not contaminate the current scope UI');
-assert.match(ui, /if \(writeScopeIsCurrent\(writeScopeKey\)\) applySnapshot\(recommendationSection\(\)\);/,
-  'Human Review write cleanup must not repaint a different active scope');
+assert.match(ui, /if \(writeScopeIsCurrent\(writeScopeKey, writeScopeGeneration\)\) \{\s*state\.busy\.delete\(inboxItemId\);\s*applySnapshot\(recommendationSection\(\)\);\s*\}/,
+  'A stale write finally block must not clear a newer same-item busy state or repaint another scope');
+assert.match(ui, /if \(REVIEW_SCOPE_CONTROLS\.has\(controlName\)\) \{\s*state\.scopeGeneration \+= 1;\s*state\.busy\.clear\(\);\s*state\.errors\.clear\(\);/,
+  'Changing Human Review request scope must immediately invalidate transient busy/error state');
+assert.match(ui, /function resetScope\(\) \{\s*state\.scopeGeneration \+= 1;/,
+  'Store changes must advance the Human Review scope generation before clearing presentation state');
 assert.match(ui, /REQUEST_TIMEOUT_MS = 30000/, 'GET/POST requests must have a bounded timeout');
 
 assert.match(ui, /data-cfri-filter="reviewState"/, 'Human Review layer must explicitly handle the legacy session-only review filter');

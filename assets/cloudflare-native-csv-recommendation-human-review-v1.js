@@ -9,12 +9,14 @@
   const REQUEST_TIMEOUT_MS = 30000;
   const REVIEW_NOTE_MAX_LENGTH = 4000;
   const DURABLE_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);
+  const REVIEW_SCOPE_CONTROLS = new Set(['profileId', 'startDate', 'endDate', 'limit', 'sort', 'dataSource']);
   const state = {
     mounted: false,
     panel: null,
     observer: null,
     syncTimer: null,
     scopeKey: '',
+    scopeGeneration: 0,
     requestId: 0,
     requestController: null,
     reviews: new Map(),
@@ -178,6 +180,7 @@
     const scope = currentScope();
     if (!scopeComplete(scope) || currentSource() !== 'csv') return;
     const writeScopeKey = scopeKey(scope);
+    const writeScopeGeneration = state.scopeGeneration;
     const current = state.reviews.get(inboxItemId);
     if (current?.persistenceAuthorized !== true) {
       state.errors.set(inboxItemId, 'review_persistence_not_authorized');
@@ -211,9 +214,9 @@
         signal: controller.signal,
       });
       validateWriteResponse(payload, scope.storeId);
-      if (!writeScopeIsCurrent(writeScopeKey)) return; // human_review_scope_changed_during_write: stale response suppressed
+      if (!writeScopeIsCurrent(writeScopeKey, writeScopeGeneration)) return; // human_review_scope_changed_during_write: stale response suppressed
       await loadSnapshot(scope, { force: true });
-      if (!writeScopeIsCurrent(writeScopeKey)) return;
+      if (!writeScopeIsCurrent(writeScopeKey, writeScopeGeneration)) return;
       const verified = state.reviews.get(inboxItemId);
       if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
         throw new Error('human_review_read_after_write_mismatch');
@@ -222,13 +225,15 @@
         throw new Error('human_review_rationale_read_after_write_mismatch');
       }
     } catch (error) {
-      if (!writeScopeIsCurrent(writeScopeKey)) return;
+      if (!writeScopeIsCurrent(writeScopeKey, writeScopeGeneration)) return;
       state.errors.set(inboxItemId, errorCode(error));
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
     } finally {
       global.clearTimeout(timeoutId);
-      state.busy.delete(inboxItemId);
-      if (writeScopeIsCurrent(writeScopeKey)) applySnapshot(recommendationSection());
+      if (writeScopeIsCurrent(writeScopeKey, writeScopeGeneration)) {
+        state.busy.delete(inboxItemId);
+        applySnapshot(recommendationSection());
+      }
     }
   }
 
@@ -245,8 +250,10 @@
     return normalized || null;
   }
 
-  function writeScopeIsCurrent(writeScopeKey) {
-    return currentSource() === 'csv' && scopeKey(currentScope()) === writeScopeKey;
+  function writeScopeIsCurrent(writeScopeKey, writeScopeGeneration) {
+    return state.scopeGeneration === writeScopeGeneration
+      && currentSource() === 'csv'
+      && scopeKey(currentScope()) === writeScopeKey;
   }
 
   async function requestReview(scope, { method, body, signal } = {}) {
@@ -775,6 +782,14 @@
   }
 
   function handleChange(event) {
+    const controlName = String(event.target?.name || '');
+    if (REVIEW_SCOPE_CONTROLS.has(controlName)) {
+      state.scopeGeneration += 1;
+      state.busy.clear();
+      state.errors.clear();
+      if (controlName === 'dataSource') scheduleSync();
+      return;
+    }
     const control = event.target.closest?.('[data-cfgl-filter]');
     if (!control) return;
     const key = String(control.dataset.cfglFilter || '');
@@ -784,6 +799,7 @@
   }
 
   function resetScope() {
+    state.scopeGeneration += 1;
     state.requestId += 1;
     state.requestController?.abort();
     state.requestController = null;
