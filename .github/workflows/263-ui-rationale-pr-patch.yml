@@ -1,0 +1,38 @@
+name: 263 UI rationale PR patch
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/263-ui-rationale-pr-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/263-historical-review-rationale-context'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/263-historical-review-rationale-context
+          fetch-depth: 0
+      - name: Apply focused UI patch
+        run: python3 scripts/tmp-263-ui-rationale-patch.py
+      - name: Validate focused contracts
+        run: |
+          node scripts/test-historical-review-learning.mjs
+          node scripts/test-historical-review-learning-ui.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-historical-review-learning-integration.mjs
+      - name: Commit product patch and clean temporary helpers
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/263-ui-rationale-pr-patch.yml .github/workflows/263-ui-rationale-branch-patch.yml scripts/tmp-263-ui-rationale-patch.py
+          git add assets/cloudflare-native-csv-recommendation-human-review-v1.js scripts/test-recommendation-human-review-ui.mjs scripts/test-historical-review-learning-ui.mjs
+          git commit -m 'Surface historical reviewer rationale in operator UI'
+          git push origin HEAD:feat/263-historical-review-rationale-context
