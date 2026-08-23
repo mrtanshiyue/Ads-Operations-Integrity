@@ -112,6 +112,7 @@ async function listStoreProducts(request, db, actor, url, storeId) {
 }
 
 async function putStoreProduct(request, db, actor, storeId, productId, sellerSku) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'products.manage')) {
     return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
   }
@@ -131,36 +132,96 @@ async function putStoreProduct(request, db, actor, storeId, productId, sellerSku
     return json(request, { error: 'seller_sku_product_conflict' }, 409);
   }
 
+  const mutation = db.prepare(`
+    INSERT INTO product_store_map(
+      store_id, product_id, seller_sku, asin, parent_asin, listing_status, created_at, updated_at
+    )
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM stores target_store
+      WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+    )
+      AND EXISTS (
+        SELECT 1 FROM products target_product
+        WHERE target_product.product_id=?2
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?7
+            AND actor_global_permission.permission_key='products.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?7
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='products.manage'
+        )
+      )
+    ON CONFLICT(store_id, product_id, seller_sku) DO UPDATE SET
+      asin=excluded.asin,
+      parent_asin=excluded.parent_asin,
+      listing_status=excluded.listing_status,
+      updated_at=CURRENT_TIMESTAMP
+  `).bind(storeId, productId, sellerSku, value.asin, value.parentAsin, value.listingStatus, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db,
+    request,
+    actor.user_id,
+    storeId,
+    'store_product.upsert',
+    'product_store_map',
+    `${storeId}:${productId}:${sellerSku}`,
+    {
+      storeId,
+      productId,
+      sellerSku,
+      asin: value.asin,
+      parentAsin: value.parentAsin,
+      listingStatus: value.listingStatus,
+    },
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      INSERT INTO product_store_map(
-        store_id, product_id, seller_sku, asin, parent_asin, listing_status, created_at, updated_at
-      ) VALUES(?1,?2,?3,?4,?5,?6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-      ON CONFLICT(store_id, product_id, seller_sku) DO UPDATE SET
-        asin=excluded.asin,
-        parent_asin=excluded.parent_asin,
-        listing_status=excluded.listing_status,
-        updated_at=CURRENT_TIMESTAMP
-    `).bind(storeId, productId, sellerSku, value.asin, value.parentAsin, value.listingStatus).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'store_product_upsert_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'seller_sku_product_conflict' }, 409);
     throw error;
   }
 
-  await audit(db, request, actor.user_id, storeId, 'store_product.upsert', 'product_store_map', `${storeId}:${productId}:${sellerSku}`, {
-    storeId,
-    productId,
-    sellerSku,
-    asin: value.asin,
-    parentAsin: value.parentAsin,
-    listingStatus: value.listingStatus,
-  });
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'products.manage')) {
+      return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    const currentSkuOwner = await mappingByStoreSku(db, storeId, sellerSku);
+    if (currentSkuOwner && currentSkuOwner.product_id !== productId) {
+      return json(request, { error: 'seller_sku_product_conflict' }, 409);
+    }
+    return json(request, { error: 'store_product_conflict' }, 409);
+  }
 
   const mapping = await mappingDetailByIds(db, storeId, productId, sellerSku);
+  if (!mapping) throw new Error('store_product_upsert_readback_missing');
   return json(request, { store: publicStore(store), mapping: publicStoreProduct(mapping) }, skuOwner ? 200 : 201);
 }
 
 async function deleteStoreProduct(request, db, actor, storeId, productId, sellerSku) {
+  requireAtomicBatch(db);
   if (!await hasStorePermission(db, actor.user_id, storeId, 'products.manage')) {
     return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
   }
@@ -172,16 +233,68 @@ async function deleteStoreProduct(request, db, actor, storeId, productId, seller
   const existing = await mappingByIds(db, storeId, productId, sellerSku);
   if (!existing) return json(request, { error: 'store_product_mapping_not_found' }, 404);
 
-  await db.prepare(`
+  const mutation = db.prepare(`
     DELETE FROM product_store_map
-    WHERE store_id=?1 AND product_id=?2 AND seller_sku=?3
-  `).bind(storeId, productId, sellerSku).run();
-
-  await audit(db, request, actor.user_id, storeId, 'store_product.delete', 'product_store_map', `${storeId}:${productId}:${sellerSku}`, {
+    WHERE store_id=?1
+      AND product_id=?2
+      AND seller_sku=?3
+      AND EXISTS (
+        SELECT 1 FROM stores target_store
+        WHERE target_store.store_id=?1 AND target_store.status<>'disabled'
+      )
+      AND EXISTS (
+        SELECT 1 FROM products target_product
+        WHERE target_product.product_id=?2
+      )
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM user_global_roles actor_global_role
+          JOIN app_roles actor_global_app_role
+            ON actor_global_app_role.role_key=actor_global_role.role_key
+           AND actor_global_app_role.role_scope='global'
+          JOIN role_permissions actor_global_permission
+            ON actor_global_permission.role_key=actor_global_role.role_key
+          WHERE actor_global_role.user_id=?4
+            AND actor_global_permission.permission_key='products.manage'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM store_members actor_store_member
+          JOIN app_roles actor_store_app_role
+            ON actor_store_app_role.role_key=actor_store_member.role_key
+           AND actor_store_app_role.role_scope='store'
+          JOIN role_permissions actor_store_permission
+            ON actor_store_permission.role_key=actor_store_member.role_key
+          WHERE actor_store_member.user_id=?4
+            AND actor_store_member.store_id=?1
+            AND actor_store_permission.permission_key='products.manage'
+        )
+      )
+  `).bind(storeId, productId, sellerSku, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db,
+    request,
+    actor.user_id,
     storeId,
-    productId,
-    sellerSku,
-  });
+    'store_product.delete',
+    'product_store_map',
+    `${storeId}:${productId}:${sellerSku}`,
+    { storeId, productId, sellerSku },
+  );
+
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'store_product_delete_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    if (!await hasStorePermission(db, actor.user_id, storeId, 'products.manage')) {
+      return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
+    }
+    if (!await storeById(db, storeId)) return json(request, { error: 'store_not_found' }, 404);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    if (!await mappingByIds(db, storeId, productId, sellerSku)) {
+      return json(request, { error: 'store_product_mapping_not_found' }, 404);
+    }
+    return json(request, { error: 'store_product_conflict' }, 409);
+  }
 
   return json(request, { deleted: true, storeId, productId, sellerSku }, 200);
 }
@@ -265,21 +378,55 @@ async function hasStorePermission(db, userId, storeId, permission) {
   `).bind(userId, storeId, permission).first());
 }
 
-async function audit(db, request, actorUserId, storeId, action, entityType, entityId, details) {
-  await db.prepare(`
-    INSERT INTO audit_log(event_id, actor_user_id, store_id, action, entity_type, entity_id, request_id, cf_ray, details_json)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+function auditedMutationStatement(db, request, actorUserId, storeId, action, entityType, entityId, details) {
+  const context = buildAuditContext(request);
+  return db.prepare(`
+    INSERT INTO audit_log(
+      event_id, actor_user_id, store_id, action, entity_type, entity_id,
+      request_id, cf_ray, details_json
+    )
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+    WHERE changes()=1
   `).bind(
-    crypto.randomUUID(),
+    context.eventId,
     actorUserId,
     storeId,
     action,
     entityType,
     entityId,
-    request.headers.get('cf-ray') || crypto.randomUUID(),
-    request.headers.get('cf-ray'),
+    context.requestId,
+    context.cfRay,
     JSON.stringify(details || {}),
-  ).run();
+  );
+}
+
+async function executeAuditedMutation(db, mutation, auditStatement, violationError) {
+  const [mutationResult, auditResult] = await db.batch([mutation, auditStatement]);
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) throw new Error(violationError);
+  if (mutationChanges !== 1 && auditChanges !== 0) throw new Error(violationError);
+  return mutationChanges;
+}
+
+function buildAuditContext(request) {
+  const cfRay = request.headers.get('cf-ray');
+  return {
+    eventId: crypto.randomUUID(),
+    requestId: cfRay || crypto.randomUUID(),
+    cfRay,
+  };
+}
+
+function requireAtomicBatch(db) {
+  if (!db || typeof db.batch !== 'function') {
+    throw new Error('control_d1_atomic_batch_required');
+  }
+}
+
+function changedRows(result) {
+  const value = result?.meta?.changes ?? result?.changes ?? 0;
+  return Number(value || 0);
 }
 
 async function readJson(request) {
