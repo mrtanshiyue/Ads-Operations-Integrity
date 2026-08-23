@@ -305,7 +305,7 @@ async function userById(db, userId) {
       u.display_name,
       u.status,
       EXISTS(
-        SELECT 1 FROM user_global_roles ugr WHERE ugr.user_id=u.user_id
+        SELECT 1 FROM user_global_roles WHERE user_id=u.user_id
       ) AS has_global_role
     FROM users u
     WHERE u.user_id=?1
