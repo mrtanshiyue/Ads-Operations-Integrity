@@ -153,7 +153,7 @@
 
   const state = {
     mounted: false, open: false, loading: false, decisionLoading: false,
-    stores: [], storeId: '', capabilities: null, requestSerial: 0, decisionSerial: 0,
+    stores: [], storeId: '', capabilities: null, requestSerial: 0, decisionSerial: 0, auditSerial: 0,
     health: null, healthByStore: Object.create(null), overview: [], overviewGeneratedAt: '', audits: [],
     decisionRows: [], operatorWorkRows: [], decisionGeneratedAt: '', decisionRange: null, decisionError: null,
   };
@@ -236,12 +236,14 @@
     if (!state.open || !state.storeId || state.loading) return;
     const serial = ++state.requestSerial;
     setBusy(true, '正在读取跨店运营健康证据…');
-    const auditAllowed = canReadAudit(state.storeId);
+    const auditStoreId = state.storeId;
+    const auditSerial = ++state.auditSerial;
+    const auditAllowed = canReadAudit(auditStoreId);
     const healthTasks = state.stores.map(async (store, storeOrder) => {
       try { const payload = await dataHealth(store.storeId); return { store, storeOrder, payload, row: buildCommandRow(store, payload, null, storeOrder) }; }
       catch (error) { return { store, storeOrder, payload: null, row: buildCommandRow(store, null, error, storeOrder) }; }
     });
-    const auditTask = auditAllowed ? auditEvents(state.storeId).then((payload) => ({ payload, error: null })).catch((error) => ({ payload: null, error })) : Promise.resolve({ payload: { items: [] }, error: null });
+    const auditTask = auditAllowed ? auditEvents(auditStoreId).then((payload) => ({ payload, error: null })).catch((error) => ({ payload: null, error })) : Promise.resolve({ payload: { items: [] }, error: null });
     try {
       const [healthResults, auditResult] = await Promise.all([Promise.all(healthTasks), auditTask]);
       if (serial !== state.requestSerial) return;
@@ -250,11 +252,12 @@
       state.overview = rankStoreHealthRows(healthResults.map((result) => result.row));
       state.overviewGeneratedAt = latestGeneratedAt(healthResults.map((result) => result.payload));
       state.health = state.healthByStore[state.storeId] || null;
-      state.audits = Array.isArray(auditResult.payload?.items) ? auditResult.payload.items : [];
-      renderOverview(); renderHealth(); renderAudits(auditAllowed);
+      const auditCurrent = auditSerial === state.auditSerial && auditStoreId === state.storeId;
+      if (auditCurrent) state.audits = Array.isArray(auditResult.payload?.items) ? auditResult.payload.items : [];
+      renderOverview(); renderHealth(); if (auditCurrent) renderAudits(auditAllowed);
       const evidenceGaps = state.overview.filter((row) => row.attentionKey === 'evidence_gap').length;
       if (evidenceGaps) setStatus(`${evidenceGaps} 个店铺缺少可证明的健康证据；已 fail-closed 排到 Operational Attention 最前`, 'bad');
-      else if (auditResult.error) setStatus(`跨店健康已刷新；当前店铺 audit 读取失败 · ${errorText(auditResult.error)}`, 'bad');
+      else if (auditCurrent && auditResult.error) setStatus(`跨店健康已刷新；当前店铺 audit 读取失败 · ${errorText(auditResult.error)}`, 'bad');
       else setStatus('跨店运营健康证据已刷新', 'ok');
       if (decisionRangeFromControls()) void refreshDecisionQueue({ quiet: true });
     } finally { if (serial === state.requestSerial) setBusy(false); }
@@ -303,10 +306,21 @@
   }
   async function refreshAudit() {
     if (!state.open || !state.storeId) return;
-    const allowed = canReadAudit(state.storeId);
+    const storeId = state.storeId;
+    const serial = ++state.auditSerial;
+    const allowed = canReadAudit(storeId);
     if (!allowed) { state.audits = []; renderAudits(false); return; }
-    try { const payload = await auditEvents(state.storeId); state.audits = Array.isArray(payload?.items) ? payload.items : []; renderAudits(true); }
-    catch (error) { state.audits = []; renderAudits(true); setStatus(`当前店铺 audit 读取失败 · ${errorText(error)}`, 'bad'); }
+    try {
+      const payload = await auditEvents(storeId);
+      if (serial !== state.auditSerial || storeId !== state.storeId) return;
+      state.audits = Array.isArray(payload?.items) ? payload.items : [];
+      renderAudits(true);
+    } catch (error) {
+      if (serial !== state.auditSerial || storeId !== state.storeId) return;
+      state.audits = [];
+      renderAudits(true);
+      setStatus(`当前店铺 audit 读取失败 · ${errorText(error)}`, 'bad');
+    }
   }
 
   function openDecisionQueue(row) {
