@@ -11,6 +11,9 @@
     loading: false,
     payload: null,
     actions: null,
+    intelligenceSerial: 0,
+    actionsSerial: 0,
+    detailSerial: 0,
     selectedIntelligenceIndex: null,
     selectedActionId: null,
     dryRuns: new Map(),
@@ -59,8 +62,16 @@
     setDates();
 
     global.addEventListener?.('cloudflare-operator-store-change', () => {
+      state.intelligenceSerial += 1;
+      state.actionsSerial += 1;
+      state.detailSerial += 1;
+      state.loading = false;
       state.payload = null;
       state.actions = null;
+      panel.querySelector('[data-results]').innerHTML = '';
+      panel.querySelector('[data-actions-results]').innerHTML = '';
+      panel.querySelector('[data-actions-status]').textContent = '';
+      setStatus('Store changed. Run preview for the selected store.', 'warn');
       closeDrawer();
       if (state.open && state.tab === 'actions') void loadActions();
       renderContext();
@@ -126,6 +137,7 @@
     if (!profileId) return setStatus('Profile ID is required; unscoped intelligence is forbidden.', 'warn');
     if (!startDate || !endDate) return setStatus('Start and end dates are required.', 'warn');
 
+    const serial = ++state.intelligenceSerial;
     localStorage.setItem(STORAGE_PROFILE, profileId);
     setStatus('Computing deterministic preview, trend context and freshness…', 'loading');
     state.loading = true;
@@ -139,21 +151,24 @@
         sort: value(panel, 'sort') || 'cost',
       });
       const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence?${params}`);
+      if (serial !== state.intelligenceSerial || storeId !== currentStoreId()) return;
       state.payload = payload;
       renderIntelligence(payload);
       const label = payload?.authority?.authoritative ? 'Authoritative' : 'Development preview / non-authoritative';
       setStatus(`${label}. ${payload?.summary?.recommendationCandidateCount || 0} preview candidates from ${payload?.summary?.itemCount || 0} rows. Amazon execution remains disabled.`, payload?.authority?.authoritative ? 'ok' : 'warn');
     } catch (error) {
+      if (serial !== state.intelligenceSerial || storeId !== currentStoreId()) return;
       state.payload = null;
       panel.querySelector('[data-results]').innerHTML = '';
       setStatus(error.message || 'Decision Intelligence request failed.', 'error');
     } finally {
-      state.loading = false;
+      if (serial === state.intelligenceSerial && storeId === currentStoreId()) state.loading = false;
     }
   }
 
   async function loadActions() {
     const storeId = currentStoreId();
+    const serial = ++state.actionsSerial;
     const panel = panelNode();
     const target = panel.querySelector('[data-actions-results]');
     const status = panel.querySelector('[data-actions-status]');
@@ -175,10 +190,12 @@
       const profileId = value(panel, 'profileId');
       if (profileId) params.set('profileId', profileId);
       const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/optimization-actions?${params}`);
+      if (serial !== state.actionsSerial || storeId !== currentStoreId()) return;
       state.actions = payload;
       status.textContent = `${payload.items?.length || 0} actions. Governance only; Amazon execution remains disabled.`;
       target.innerHTML = actionTable(payload.items || []);
     } catch (error) {
+      if (serial !== state.actionsSerial || storeId !== currentStoreId()) return;
       state.actions = null;
       status.textContent = error.message || 'Action Inbox unavailable.';
       target.innerHTML = '';
@@ -368,14 +385,17 @@
   async function openActionDetail(actionId) {
     const storeId = currentStoreId();
     if (!storeId) return;
+    const serial = ++state.detailSerial;
     state.selectedActionId = actionId;
     const drawer = panelNode().querySelector('[data-drawer]');
     drawer.hidden = false;
     drawer.innerHTML = `${drawerHeader('Action Review', actionId)}<div class="cfdi-drawer-body">Loading governance record…</div>`;
     try {
       const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/optimization-actions/${encodeURIComponent(actionId)}`);
+      if (serial !== state.detailSerial || storeId !== currentStoreId()) return;
       renderActionDrawer(payload);
     } catch (error) {
+      if (serial !== state.detailSerial || storeId !== currentStoreId()) return;
       setDrawerError(error.message || 'Action detail unavailable.');
     }
   }
