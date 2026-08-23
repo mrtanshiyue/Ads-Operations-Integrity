@@ -32,6 +32,7 @@ jobs:
           end = text.index("\n          NODE\n", start)
           lines = text[start:end].splitlines()
           script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          script = script.replace('${', r'\${')
           Path('/tmp/final-disposition-patch.js').write_text(script)
           PY
           node /tmp/final-disposition-patch.js
