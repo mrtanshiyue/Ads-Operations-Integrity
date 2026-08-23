@@ -97,6 +97,7 @@ async function listProductKeywords(request, db, actor, url, productId) {
 }
 
 async function putProductKeyword(request, db, actor, productId, keywordId) {
+  requireAtomicBatch(db);
   const permission = await requireGlobalGovernancePermission(db, actor.user_id);
   if (permission) return json(request, { error: 'forbidden', permission }, 403);
 
@@ -111,27 +112,75 @@ async function putProductKeyword(request, db, actor, productId, keywordId) {
   if (value.error) return json(request, { error: value.error }, 400);
 
   const existing = await mappingByIds(db, productId, keywordId);
-  await db.prepare(`
+  const mutation = db.prepare(`
     INSERT INTO keyword_product_map(
       keyword_id, product_id, relevance_score, priority, is_primary, notes, created_at, updated_at
-    ) VALUES(?1,?2,?3,?4,?5,?6,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+    )
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1 FROM products target_product
+      WHERE target_product.product_id=?2
+    )
+      AND EXISTS (
+        SELECT 1 FROM keyword_library target_keyword
+        WHERE target_keyword.keyword_id=?1
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_product_role
+        JOIN app_roles actor_product_app_role
+          ON actor_product_app_role.role_key=actor_product_role.role_key
+         AND actor_product_app_role.role_scope='global'
+        JOIN role_permissions actor_product_permission
+          ON actor_product_permission.role_key=actor_product_role.role_key
+        WHERE actor_product_role.user_id=?7
+          AND actor_product_permission.permission_key='products.manage'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_keyword_role
+        JOIN app_roles actor_keyword_app_role
+          ON actor_keyword_app_role.role_key=actor_keyword_role.role_key
+         AND actor_keyword_app_role.role_scope='global'
+        JOIN role_permissions actor_keyword_permission
+          ON actor_keyword_permission.role_key=actor_keyword_role.role_key
+        WHERE actor_keyword_role.user_id=?7
+          AND actor_keyword_permission.permission_key='keywords.manage'
+      )
     ON CONFLICT(keyword_id, product_id) DO UPDATE SET
       relevance_score=excluded.relevance_score,
       priority=excluded.priority,
       is_primary=excluded.is_primary,
       notes=excluded.notes,
       updated_at=CURRENT_TIMESTAMP
-  `).bind(keywordId, productId, value.relevanceScore, value.priority, value.isPrimary ? 1 : 0, value.notes).run();
+  `).bind(keywordId, productId, value.relevanceScore, value.priority, value.isPrimary ? 1 : 0, value.notes, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db,
+    request,
+    actor.user_id,
+    'product_keyword.upsert',
+    'keyword_product_map',
+    `${productId}:${keywordId}`,
+    {
+      productId,
+      keywordId,
+      relevanceScore: value.relevanceScore,
+      priority: value.priority,
+      isPrimary: value.isPrimary,
+    },
+  );
 
-  await audit(db, request, actor.user_id, 'product_keyword.upsert', 'keyword_product_map', `${productId}:${keywordId}`, {
-    productId,
-    keywordId,
-    relevanceScore: value.relevanceScore,
-    priority: value.priority,
-    isPrimary: value.isPrimary,
-  });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'product_keyword_upsert_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    const currentPermission = await requireGlobalGovernancePermission(db, actor.user_id);
+    if (currentPermission) return json(request, { error: 'forbidden', permission: currentPermission }, 403);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    if (!await keywordById(db, keywordId)) return json(request, { error: 'keyword_not_found' }, 404);
+    return json(request, { error: 'product_keyword_conflict' }, 409);
+  }
 
   const mapping = await mappingDetailByIds(db, productId, keywordId);
+  if (!mapping) throw new Error('product_keyword_upsert_readback_missing');
   return json(request, {
     product: publicProduct(product),
     mapping: publicMapping(mapping),
@@ -139,6 +188,7 @@ async function putProductKeyword(request, db, actor, productId, keywordId) {
 }
 
 async function deleteProductKeyword(request, db, actor, productId, keywordId) {
+  requireAtomicBatch(db);
   const permission = await requireGlobalGovernancePermission(db, actor.user_id);
   if (permission) return json(request, { error: 'forbidden', permission }, 403);
 
@@ -149,15 +199,62 @@ async function deleteProductKeyword(request, db, actor, productId, keywordId) {
   const existing = await mappingByIds(db, productId, keywordId);
   if (!existing) return json(request, { error: 'product_keyword_mapping_not_found' }, 404);
 
-  await db.prepare(`
+  const mutation = db.prepare(`
     DELETE FROM keyword_product_map
-    WHERE product_id=?1 AND keyword_id=?2
-  `).bind(productId, keywordId).run();
+    WHERE product_id=?1
+      AND keyword_id=?2
+      AND EXISTS (
+        SELECT 1 FROM products target_product
+        WHERE target_product.product_id=?1
+      )
+      AND EXISTS (
+        SELECT 1 FROM keyword_library target_keyword
+        WHERE target_keyword.keyword_id=?2
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_product_role
+        JOIN app_roles actor_product_app_role
+          ON actor_product_app_role.role_key=actor_product_role.role_key
+         AND actor_product_app_role.role_scope='global'
+        JOIN role_permissions actor_product_permission
+          ON actor_product_permission.role_key=actor_product_role.role_key
+        WHERE actor_product_role.user_id=?3
+          AND actor_product_permission.permission_key='products.manage'
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_keyword_role
+        JOIN app_roles actor_keyword_app_role
+          ON actor_keyword_app_role.role_key=actor_keyword_role.role_key
+         AND actor_keyword_app_role.role_scope='global'
+        JOIN role_permissions actor_keyword_permission
+          ON actor_keyword_permission.role_key=actor_keyword_role.role_key
+        WHERE actor_keyword_role.user_id=?3
+          AND actor_keyword_permission.permission_key='keywords.manage'
+      )
+  `).bind(productId, keywordId, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db,
+    request,
+    actor.user_id,
+    'product_keyword.delete',
+    'keyword_product_map',
+    `${productId}:${keywordId}`,
+    { productId, keywordId },
+  );
 
-  await audit(db, request, actor.user_id, 'product_keyword.delete', 'keyword_product_map', `${productId}:${keywordId}`, {
-    productId,
-    keywordId,
-  });
+  const mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'product_keyword_delete_audit_atomicity_violation');
+  if (mutationChanges !== 1) {
+    const currentPermission = await requireGlobalGovernancePermission(db, actor.user_id);
+    if (currentPermission) return json(request, { error: 'forbidden', permission: currentPermission }, 403);
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    if (!await keywordById(db, keywordId)) return json(request, { error: 'keyword_not_found' }, 404);
+    if (!await mappingByIds(db, productId, keywordId)) {
+      return json(request, { error: 'product_keyword_mapping_not_found' }, 404);
+    }
+    return json(request, { error: 'product_keyword_conflict' }, 409);
+  }
 
   return json(request, { deleted: true, productId, keywordId }, 200);
 }
@@ -243,20 +340,49 @@ async function mappingDetailByIds(db, productId, keywordId) {
   `).bind(productId, keywordId).first();
 }
 
-async function audit(db, request, actorUserId, action, entityType, entityId, details) {
-  await db.prepare(`
+function auditedMutationStatement(db, request, actorUserId, action, entityType, entityId, details) {
+  const context = buildAuditContext(request);
+  return db.prepare(`
     INSERT INTO audit_log(event_id, actor_user_id, action, entity_type, entity_id, request_id, cf_ray, details_json)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8
+    WHERE changes()=1
   `).bind(
-    crypto.randomUUID(),
+    context.eventId,
     actorUserId,
     action,
     entityType,
     entityId,
-    request.headers.get('cf-ray') || crypto.randomUUID(),
-    request.headers.get('cf-ray'),
+    context.requestId,
+    context.cfRay,
     JSON.stringify(details || {}),
-  ).run();
+  );
+}
+
+async function executeAuditedMutation(db, mutation, auditStatement, violationError) {
+  const [mutationResult, auditResult] = await db.batch([mutation, auditStatement]);
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) throw new Error(violationError);
+  if (mutationChanges !== 1 && auditChanges !== 0) throw new Error(violationError);
+  return mutationChanges;
+}
+
+function buildAuditContext(request) {
+  const cfRay = request.headers.get('cf-ray');
+  return {
+    eventId: crypto.randomUUID(),
+    requestId: cfRay || crypto.randomUUID(),
+    cfRay,
+  };
+}
+
+function requireAtomicBatch(db) {
+  if (!db || typeof db.batch !== 'function') throw new Error('control_d1_atomic_batch_required');
+}
+
+function changedRows(result) {
+  const value = result?.meta?.changes ?? result?.changes ?? 0;
+  return Number(value || 0);
 }
 
 async function readJson(request) {
