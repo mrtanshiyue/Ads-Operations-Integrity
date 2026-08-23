@@ -1,0 +1,132 @@
+name: 268 Decision Packet rationale UI patch
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/268-decision-packet-rationale-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/268-decision-packet-review-rationale'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/268-decision-packet-review-rationale
+          fetch-depth: 0
+
+      - name: Patch existing Decision Packet UI and focused UI test
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          function replaceOnce(source, before, after, label) {
+            const first = source.indexOf(before);
+            if (first < 0) throw new Error(`${label}_marker_missing`);
+            if (source.indexOf(before, first + before.length) >= 0) throw new Error(`${label}_marker_not_unique`);
+            return source.slice(0, first) + after + source.slice(first + before.length);
+          }
+
+          const uiPath = 'assets/cloudflare-native-csv-recommendation-human-review-v1.js';
+          let ui = fs.readFileSync(uiPath, 'utf8');
+          ui = replaceOnce(ui,
+            "  const VERSION = '1.5.0';",
+            "  const VERSION = '1.6.0';",
+            'ui_version');
+
+          ui = replaceOnce(ui,
+`    if (Number(packet?.reviewEvidence?.staleEvidenceCount) !== stale.length) throw new Error('decision_packet_stale_count_mismatch');
+    if (stale.some((review) => review?.inheritedAsCurrent !== false || review?.stale !== true)) throw new Error('decision_packet_stale_inheritance_boundary_invalid');`,
+`    if (Number(packet?.reviewEvidence?.staleEvidenceCount) !== stale.length) throw new Error('decision_packet_stale_count_mismatch');
+    const currentRationale = packet?.reviewEvidence?.currentRationale;
+    if (currentRationale != null && (typeof currentRationale !== 'string' || !currentRationale.length || currentRationale.trim() !== currentRationale)) {
+      throw new Error('decision_packet_current_rationale_invalid');
+    }
+    if (stale.some((review) => review?.inheritedAsCurrent !== false || review?.stale !== true)) throw new Error('decision_packet_stale_inheritance_boundary_invalid');
+    if (stale.some((review) => review?.rationale != null && (typeof review.rationale !== 'string' || !review.rationale.length || review.rationale.trim() !== review.rationale))) {
+      throw new Error('decision_packet_stale_rationale_invalid');
+    }`,
+            'decision_packet_validation');
+
+          ui = replaceOnce(ui,
+`      <div class=\"cfdp-section\"><h5>5. Fingerprint + review evidence</h5><div class=\"cfdp-evidence\"><span>Current fingerprint</span><code>\${esc(review.currentFingerprint || '—')}</code><span>Prior review state</span><strong>\${esc(review.priorReviewState || 'unreviewed')}</strong><span>Stale evidence</span><strong>\${stale.length}</strong></div>\${staleEvidenceHtml(stale)}</div>`,
+`      <div class=\"cfdp-section\"><h5>5. Fingerprint + review evidence</h5><div class=\"cfdp-evidence\"><span>Current fingerprint</span><code>\${esc(review.currentFingerprint || '—')}</code><span>Prior review state</span><strong>\${esc(review.priorReviewState || 'unreviewed')}</strong><span>Stale evidence</span><strong>\${stale.length}</strong></div>\${currentDecisionRationaleHtml(review)}\${staleEvidenceHtml(stale)}</div>`,
+            'decision_packet_section_5');
+
+          ui = replaceOnce(ui,
+`  function contextList(label, rows, line) {`,
+`  function currentDecisionRationaleHtml(review) {
+    const rationale = String(review?.currentRationale || '').trim();
+    if (!rationale) return '';
+    return \`<div class="cfhl-rationale cfdp-rationale" data-cfdp-current-rationale><strong>Current Human Review rationale</strong><p>\${esc(rationale)}</p><small>Human Review rationale only. It is not effectiveness, execution authority, or Amazon mutation authority.</small></div>\`;
+  }
+
+  function contextList(label, rows, line) {`,
+            'current_rationale_helper');
+
+          ui = replaceOnce(ui,
+`  function staleEvidenceHtml(rows) {
+    if (!rows.length) return '<small>No same-context stale review evidence.</small>';
+    return \`<details><summary>\${rows.length} stale prior evidence record\${rows.length === 1 ? '' : 's'}</summary>\${rows.map((row) => \`<div class="cfdp-stale"><strong>\${esc(row.state || 'unsupported')}</strong><code>\${esc(row.recommendationFingerprint || '—')}</code><small>\${esc(row.updatedAt || row.reviewedAt || '—')} · never inherited as current</small></div>\`).join('')}</details>\`;
+  }`,
+`  function staleEvidenceHtml(rows) {
+    if (!rows.length) return '<small>No same-context stale review evidence.</small>';
+    return \`<details><summary>\${rows.length} stale prior evidence record\${rows.length === 1 ? '' : 's'}</summary>\${rows.map((row) => {
+      const rationale = String(row?.rationale || '').trim();
+      return \`<div class="cfdp-stale"><strong>\${esc(row.state || 'unsupported')}</strong><code>\${esc(row.recommendationFingerprint || '—')}</code>\${rationale ? \`<div class="cfhl-rationale cfdp-rationale" data-cfdp-stale-rationale><strong>Prior Human Review rationale</strong><p>\${esc(rationale)}</p><small>Stale Human Review context only. Never inherited as current; not effectiveness, execution authority, or Amazon mutation authority.</small></div>\` : ''}<small>\${esc(row.updatedAt || row.reviewedAt || '—')} · never inherited as current</small></div>\`;
+    }).join('')}</details>\`;
+  }`,
+            'stale_rationale_helper');
+
+          fs.writeFileSync(uiPath, ui);
+
+          const testPath = 'scripts/test-recommendation-human-review-ui.mjs';
+          let test = fs.readFileSync(testPath, 'utf8');
+          test = replaceOnce(test,
+            "assert.match(ui, /const VERSION = '1\\.5\\.0'/, 'Human Review UI version contract is missing');",
+            "assert.match(ui, /const VERSION = '1\\.6\\.0'/, 'Human Review UI version contract is missing');",
+            'test_ui_version');
+
+          const anchor = `assert.match(ui, /review\\?\\.inheritedAsCurrent !== false \\|\\| review\\?\\.stale !== true/,
+  'Stale evidence must be validated as non-current before rendering');`;
+          const expanded = `${anchor}
+assert.match(ui, /const currentRationale = packet\\?\\.reviewEvidence\\?\\.currentRationale/,
+  'Decision Packet must validate the server-projected exact-current Human Review rationale');
+assert.match(ui, /data-cfdp-current-rationale/,
+  'Decision Packet must render current Human Review rationale only through the dedicated packet surface');
+assert.match(ui, /const rationale = String\\(review\\?\\.currentRationale \\|\\| ''\\)\\.trim\\(\\)/,
+  'Current Decision Packet rationale must come only from the normalized server field');
+assert.match(ui, /data-cfdp-stale-rationale/,
+  'Decision Packet stale evidence must conditionally render prior Human Review rationale');
+assert.match(ui, /const rationale = String\\(row\\?\\.rationale \\|\\| ''\\)\\.trim\\(\\)/,
+  'Stale Decision Packet rationale must come only from the normalized stale evidence field');
+assert.ok(ui.includes('Current Human Review rationale'),
+  'Decision Packet current rationale label is missing');
+assert.ok(ui.includes('Stale Human Review context only. Never inherited as current; not effectiveness, execution authority, or Amazon mutation authority.'),
+  'Decision Packet stale rationale must preserve stale/effectiveness/execution/Amazon boundaries');
+assert.ok(ui.includes('Human Review rationale only. It is not effectiveness, execution authority, or Amazon mutation authority.'),
+  'Decision Packet current rationale must preserve effectiveness/execution/Amazon boundaries');`;
+          test = replaceOnce(test, anchor, expanded, 'test_rationale_contract');
+          fs.writeFileSync(testPath, test);
+          NODE
+
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node scripts/test-recommendation-decision-packet.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
+
+      - name: Commit product changes and remove one-shot helper
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets/cloudflare-native-csv-recommendation-human-review-v1.js scripts/test-recommendation-human-review-ui.mjs
+          git rm .github/workflows/268-decision-packet-rationale-patch.yml
+          git commit -m 'Complete #268 Decision Packet rationale UI'
+          git push origin HEAD:feat/268-decision-packet-review-rationale
