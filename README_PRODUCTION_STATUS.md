@@ -178,7 +178,7 @@ docs/architecture/FINAL_NON_AMAZON_PRODUCTION_CLOSURE_2026-08-20.md
 
 Historical UAT, Browser Acceptance, rollback, release, and closure artifacts are evidence, not active operating instructions.
 
-Legacy architecture and loader evidence remains under `docs/archive/`, including the historical browser-loader archive. Current build/runtime code must not depend on obsolete status text merely to preserve compatibility.
+Legacy architecture and loader evidence remains under `docs/archive/`, including `docs/archive/legacy-browser-loaders/`. Current build/runtime code must not depend on obsolete status text merely to preserve compatibility.
 
 ## Operating rule
 
