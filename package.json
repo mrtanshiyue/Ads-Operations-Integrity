@@ -29,7 +29,7 @@
     "test:cf-gate21-r2-object-metadata-sha256": "node scripts/test-search-term-r2-object-metadata-sha256-contract.mjs",
     "test:cf-gate22-r2-object-native-sha256": "node scripts/test-search-term-r2-object-native-sha256-contract.mjs",
     "test:cf-gate23-r2-object-operational-metadata": "node scripts/test-search-term-r2-object-operational-metadata-contract.mjs",
-    "test:cf-negative-scope": "node scripts/test-negative-keyword-scope-governance-contract.mjs",
+    "test:cf-negative-scope": "node scripts/test-negative-keyword-scope-governance-contract.mjs && node scripts/test-negative-governance-ui-contract.mjs",
     "test:cf-phase5-sync-build": "node scripts/test-phase5-sync-build-trigger-contract.mjs",
     "test:cf-phase8-control-plane": "node scripts/test-decision-intelligence-contract.mjs && node scripts/test-phase8-action-control-plane.mjs && python3 scripts/test-phase8-action-lifecycle.py",
     "test:cf-phase9-recommendation-quality": "node --check cloudflare/runtime/recommendation-quality-policy.js && node --check scripts/test-phase9-recommendation-quality.mjs && node scripts/test-phase9-recommendation-quality.mjs",

@@ -80,6 +80,7 @@
     rows: [],
     loading: false,
     requestSerial: 0,
+    productLoadSerial: 0,
   };
 
   function mount() {
@@ -205,25 +206,31 @@
   }
 
   async function loadProducts() {
+    const storeId = state.storeId;
+    const serial = ++state.productLoadSerial;
     state.products = [];
     state.productId = '';
-    if (!state.storeId) {
-      renderProducts();
-      return;
-    }
+    renderProducts();
+    if (!storeId) return;
     try {
-      const payload = await api().storeProducts(state.storeId, { limit: PAGE_LIMIT });
+      const payload = await api().storeProducts(storeId, { limit: PAGE_LIMIT });
+      if (serial !== state.productLoadSerial || storeId !== state.storeId) return;
       state.products = normalizeProducts(payload?.items);
       state.productId = state.products[0]?.productId || '';
     } catch (error) {
+      if (serial !== state.productLoadSerial || storeId !== state.storeId) return;
       setStatus(`产品列表不可用：${errorText(error)}`, 'warn');
     }
+    if (serial !== state.productLoadSerial || storeId !== state.storeId) return;
     renderProducts();
   }
 
   async function onStoreChange(event) {
-    state.storeId = String(event.target.value || '');
+    const storeId = String(event.target.value || '');
+    state.storeId = storeId;
+    state.requestSerial += 1;
     await loadProducts();
+    if (storeId !== state.storeId) return;
     renderAccess();
     await refresh();
   }
