@@ -65,33 +65,48 @@ jobs:
           if (!token || !account) throw new Error('cloudflare_credentials_required');
           const headers = { authorization: `Bearer ${token}`, accept: 'application/json' };
           async function cf(path) {
-            const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}${path}`, { headers });
-            const b = await r.json();
-            if (!r.ok || !b.success) throw new Error(`cloudflare_read_failed:${path}:${r.status}`);
-            return b.result;
+            const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}${path}`, { headers });
+            const b = await r.json().catch(() => ({}));
+            if (!r.ok || b?.success === false) throw new Error(`cloudflare_read_failed:${path}:${b?.errors?.[0]?.code || r.status}`);
+            return b;
+          }
+          function deploymentHead(payload) {
+            const rows = Array.isArray(payload?.result?.deployments) ? payload.result.deployments : [];
+            if (!rows.length) throw new Error('deployment_list_empty');
+            return { deploymentId: rows[0].id, versionId: rows[0]?.versions?.[0]?.version_id || null, createdOn: rows[0].created_on || null };
+          }
+          function bindings(payload) { return Array.isArray(payload?.result?.bindings) ? payload.result.bindings : []; }
+          function textBinding(rows, name) { return rows.find((row) => row?.name === name)?.text ?? null; }
+          function scheduleCount(payload) {
+            const rows = Array.isArray(payload?.result) ? payload.result : Array.isArray(payload?.result?.schedules) ? payload.result.schedules : [];
+            return rows.length;
           }
           async function worker(name) {
             const deployments = await cf(`/workers/scripts/${encodeURIComponent(name)}/deployments`);
-            const active = deployments?.[0];
-            if (!active?.id || !active?.versions?.[0]?.version_id) throw new Error(`active_deployment_missing:${name}`);
-            const versionId = active.versions[0].version_id;
-            const version = await cf(`/workers/scripts/${encodeURIComponent(name)}/versions/${encodeURIComponent(versionId)}`);
+            const head = deploymentHead(deployments);
+            if (!head.versionId) throw new Error(`active_version_missing:${name}`);
+            const settings = await cf(`/workers/scripts/${encodeURIComponent(name)}/settings`);
             const schedules = await cf(`/workers/scripts/${encodeURIComponent(name)}/schedules`);
-            return { name, deploymentId: active.id, versionId, metadata: version?.metadata || {}, schedules };
+            return { name, ...head, bindings: bindings(settings), scheduleCount: scheduleCount(schedules) };
           }
           const dev = await worker('ads-operations-web-dev');
           const prod = await worker('ads-operations-web-prod');
           const sync = await worker('ads-operations-sync-prod');
-          if ((dev.schedules || []).length) throw new Error('dev_web_schedule_not_empty');
-          if ((prod.schedules || []).length) throw new Error('prod_web_schedule_not_empty');
-          if ((sync.schedules || []).length) throw new Error('prod_sync_schedule_not_empty');
-          const prodVars = prod.metadata?.bindings || [];
-          const syncVars = sync.metadata?.bindings || [];
-          const binding = (arr, name) => arr.find((x) => x?.name === name)?.text;
-          if (binding(prodVars, 'SYNC_TRIGGER_ENABLED') !== 'false') throw new Error('prod_sync_trigger_not_false');
-          if ((binding(prodVars, 'PHASE5_SINGLE_RUN_PERMIT_ID') || '') !== '') throw new Error('prod_permit_not_blank');
-          if ((binding(prodVars, 'PHASE5_SINGLE_RUN_REPORT_DATE') || '') !== '') throw new Error('prod_report_date_not_blank');
-          if (binding(prodVars, 'ACCESS_MODE') !== 'enforce') throw new Error('prod_access_mode_not_enforce');
-          if (binding(syncVars, 'AMAZON_ADS_ENABLED') !== 'false') throw new Error('amazon_ads_not_hard_off');
-          console.log(JSON.stringify({ ok:true, targetMain:'68b8ad353289ccb5d7e60284844b99193be44225', dev, prod, sync }, null, 2));
+          if (dev.scheduleCount !== 0) throw new Error('dev_web_schedule_not_empty');
+          if (prod.scheduleCount !== 0) throw new Error('prod_web_schedule_not_empty');
+          if (sync.scheduleCount !== 0) throw new Error('prod_sync_schedule_not_empty');
+          if (textBinding(prod.bindings, 'SYNC_TRIGGER_ENABLED') !== 'false') throw new Error('prod_sync_trigger_not_false');
+          if ((textBinding(prod.bindings, 'PHASE5_SINGLE_RUN_PERMIT_ID') || '') !== '') throw new Error('prod_permit_not_blank');
+          if ((textBinding(prod.bindings, 'PHASE5_SINGLE_RUN_REPORT_DATE') || '') !== '') throw new Error('prod_report_date_not_blank');
+          if (textBinding(prod.bindings, 'ACCESS_MODE') !== 'enforce') throw new Error('prod_access_mode_not_enforce');
+          if (textBinding(sync.bindings, 'AMAZON_ADS_ENABLED') !== 'false') throw new Error('amazon_ads_not_hard_off');
+          const compact = (w) => ({ name:w.name, deploymentId:w.deploymentId, versionId:w.versionId, createdOn:w.createdOn, scheduleCount:w.scheduleCount });
+          console.log(JSON.stringify({
+            ok:true,
+            targetMain:'68b8ad353289ccb5d7e60284844b99193be44225',
+            dev: compact(dev),
+            prod: compact(prod),
+            sync: { ...compact(sync), amazonAdsEnabled:false },
+            productionSafety:{ accessMode:'enforce', syncTriggerEnabled:false, permitBlank:true, reportDateBlank:true }
+          }, null, 2));
           NODE
