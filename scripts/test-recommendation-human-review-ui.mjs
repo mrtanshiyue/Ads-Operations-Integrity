@@ -77,6 +77,14 @@ assert.match(ui, /state\.observer\?\.disconnect\(\)/, 'Human Review UI must isol
 assert.match(ui, /function mutatePresentation\(callback\)/, 'Observer-isolated presentation mutation helper is missing');
 assert.match(ui, /clearPresentation\(\)/, 'Human Review UI must clear stale overlay when scope/source changes');
 assert.match(ui, /human_review_scope_changed_during_write/, 'A store/scope change during a write must fail closed in presentation');
+assert.match(ui, /function writeScopeIsCurrent\(writeScopeKey\) \{\s*return currentSource\(\) === 'csv' && scopeKey\(currentScope\(\)\) === writeScopeKey;\s*\}/,
+  'Human Review writes must compare the current full scope identity before presenting a response');
+assert.match(ui, /if \(!writeScopeIsCurrent\(writeScopeKey\)\) return; \/\/ human_review_scope_changed_during_write: stale response suppressed/,
+  'A stale Human Review POST response must be suppressed instead of surfacing an error in the new scope');
+assert.match(ui, /catch \(error\) \{\s*if \(!writeScopeIsCurrent\(writeScopeKey\)\) return;/,
+  'Late Human Review write failures must not contaminate the current scope UI');
+assert.match(ui, /if \(writeScopeIsCurrent\(writeScopeKey\)\) applySnapshot\(recommendationSection\(\)\);/,
+  'Human Review write cleanup must not repaint a different active scope');
 assert.match(ui, /REQUEST_TIMEOUT_MS = 30000/, 'GET/POST requests must have a bounded timeout');
 
 assert.match(ui, /data-cfri-filter="reviewState"/, 'Human Review layer must explicitly handle the legacy session-only review filter');
