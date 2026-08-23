@@ -297,22 +297,25 @@ async function rejectAction(request, env, db, actor, actionId, storeId) {
 
   const existing = await findAction(db, actionId);
   if (!existing) return json(request, { error: 'action_not_found' }, 404);
-  const result = await db.prepare(`
-    UPDATE optimization_actions
-    SET status='rejected', updated_at=CURRENT_TIMESTAMP
-    WHERE action_id=?1 AND status='proposed'
-  `).bind(actionId).run();
-  if (changedRows(result) !== 1) return transitionConflict(request, db, actionId, 'reject', storeId);
-
-  await db.prepare(`
-    INSERT INTO optimization_action_events(event_id, action_id, event_type, actor_id, details_json, occurred_at)
-    VALUES(?1,?2,'action.rejected',?3,?4,CURRENT_TIMESTAMP)
-  `).bind(crypto.randomUUID(), actionId, actor.user_id, JSON.stringify({
-    reason,
-    fromStatus: 'proposed',
-    toStatus: 'rejected',
-    amazonMutationAttempted: false,
-  })).run();
+  const [transitionResult, eventResult] = await executeStoreBatch(db, [
+    db.prepare(`
+      UPDATE optimization_actions
+      SET status='rejected', updated_at=CURRENT_TIMESTAMP
+      WHERE action_id=?1 AND status='proposed'
+    `).bind(actionId),
+    db.prepare(`
+      INSERT INTO optimization_action_events(event_id, action_id, event_type, actor_id, details_json, occurred_at)
+      SELECT ?1,?2,'action.rejected',?3,?4,CURRENT_TIMESTAMP
+      WHERE changes()=1
+    `).bind(crypto.randomUUID(), actionId, actor.user_id, JSON.stringify({
+      reason,
+      fromStatus: 'proposed',
+      toStatus: 'rejected',
+      amazonMutationAttempted: false,
+    })),
+  ]);
+  if (changedRows(transitionResult) !== 1) return transitionConflict(request, db, actionId, 'reject', storeId);
+  if (changedRows(eventResult) !== 1) throw new Error('optimization_action_reject_event_atomicity_violation');
 
   await auditControl(env.CONTROL_DB, request, actor.user_id, storeId, 'optimization_action.rejected', actionId, {
     profileId: existing.profile_id,
@@ -347,24 +350,27 @@ async function approveAction(request, env, db, actor, actionId, storeId) {
 
   const existing = await findAction(db, actionId);
   if (!existing) return json(request, { error: 'action_not_found' }, 404);
-  const result = await db.prepare(`
-    UPDATE optimization_actions
-    SET status='approved', approved_by=?2, updated_at=CURRENT_TIMESTAMP
-    WHERE action_id=?1 AND status='proposed'
-  `).bind(actionId, actor.user_id).run();
-  if (changedRows(result) !== 1) return transitionConflict(request, db, actionId, 'approve', storeId);
-
-  await db.prepare(`
-    INSERT INTO optimization_action_events(event_id, action_id, event_type, actor_id, details_json, occurred_at)
-    VALUES(?1,?2,'action.approved',?3,?4,CURRENT_TIMESTAMP)
-  `).bind(crypto.randomUUID(), actionId, actor.user_id, JSON.stringify({
-    note,
-    fromStatus: 'proposed',
-    toStatus: 'approved',
-    governanceOnly: true,
-    executionAuthorized: false,
-    amazonMutationAttempted: false,
-  })).run();
+  const [transitionResult, eventResult] = await executeStoreBatch(db, [
+    db.prepare(`
+      UPDATE optimization_actions
+      SET status='approved', approved_by=?2, updated_at=CURRENT_TIMESTAMP
+      WHERE action_id=?1 AND status='proposed'
+    `).bind(actionId, actor.user_id),
+    db.prepare(`
+      INSERT INTO optimization_action_events(event_id, action_id, event_type, actor_id, details_json, occurred_at)
+      SELECT ?1,?2,'action.approved',?3,?4,CURRENT_TIMESTAMP
+      WHERE changes()=1
+    `).bind(crypto.randomUUID(), actionId, actor.user_id, JSON.stringify({
+      note,
+      fromStatus: 'proposed',
+      toStatus: 'approved',
+      governanceOnly: true,
+      executionAuthorized: false,
+      amazonMutationAttempted: false,
+    })),
+  ]);
+  if (changedRows(transitionResult) !== 1) return transitionConflict(request, db, actionId, 'approve', storeId);
+  if (changedRows(eventResult) !== 1) throw new Error('optimization_action_approve_event_atomicity_violation');
 
   await auditControl(env.CONTROL_DB, request, actor.user_id, storeId, 'optimization_action.approved', actionId, {
     profileId: existing.profile_id,
@@ -771,10 +777,8 @@ function governanceFromRationale(value) {
 }
 
 async function executeStoreBatch(db, statements) {
-  if (typeof db.batch === 'function') return db.batch(statements);
-  const results = [];
-  for (const statement of statements) results.push(await statement.run());
-  return results;
+  if (!db || typeof db.batch !== 'function') throw new Error('store_d1_atomic_batch_required');
+  return db.batch(statements);
 }
 
 async function auditControl(db, request, actorUserId, storeId, action, entityId, details) {
