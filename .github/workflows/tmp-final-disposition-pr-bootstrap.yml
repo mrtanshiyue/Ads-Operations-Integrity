@@ -36,6 +36,16 @@ jobs:
           Path('/tmp/final-disposition-patch.js').write_text(script)
           PY
           node /tmp/final-disposition-patch.js
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/test-human-review-final-disposition.mjs')
+          text = path.read_text()
+          old = "assert.deepEqual(db.prepare('SELECT review_id,state FROM advisory_review_records ORDER BY review_id').all(), ["
+          new = "assert.deepEqual(db.prepare('SELECT review_id,state FROM advisory_review_records ORDER BY review_id').all().map((row) => ({ ...row })), ["
+          if text.count(old) != 1:
+              raise SystemExit('sqlite row normalization anchor missing or non-unique')
+          path.write_text(text.replace(old, new))
+          PY
           rm .github/workflows/tmp-final-disposition-pr-bootstrap.yml
       - name: Run focused regression suite
         run: |
