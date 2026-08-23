@@ -14,6 +14,11 @@
     settlementUploading: false,
     settlementClassifying: false,
     storeId: '',
+    scopeGeneration: 0,
+    refreshSerial: 0,
+    permissionSerial: 0,
+    detailSerial: 0,
+    settlementDetailSerial: 0,
     canRead: false,
     canWrite: false,
     items: [],
@@ -76,8 +81,8 @@
     state.open = true;
     state.root.hidden = false;
     render();
-    await refreshPermissions();
-    await refresh();
+    const permissionCurrent = await refreshPermissions();
+    if (permissionCurrent) await refresh();
     return true;
   }
 
@@ -88,14 +93,17 @@
 
   async function refresh(options = {}) {
     if (!state.storeId || !state.canRead || state.loading) return;
+    const scope = currentScope();
+    const serial = ++state.refreshSerial;
     state.loading = true;
     if (options.preserveMessage !== true) state.message = null;
     render();
     try {
       const [searchPayload, settlementPayload] = await Promise.all([
-        requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports?limit=50`),
-        requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/settlements?limit=50`),
+        requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports?limit=50`),
+        requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/settlements?limit=50`),
       ]);
+      if (serial !== state.refreshSerial || !scopeIsCurrent(scope)) return;
       state.items = Array.isArray(searchPayload?.items) ? searchPayload.items : [];
       state.settlements = Array.isArray(settlementPayload?.items) ? settlementPayload.items : [];
       if (state.selectedImportId && !state.items.some((item) => item.importId === state.selectedImportId)) {
@@ -108,30 +116,41 @@
         state.settlementDetail = null;
       }
     } catch (error) {
+      if (serial !== state.refreshSerial || !scopeIsCurrent(scope)) return;
       state.message = errorMessage(error);
     } finally {
-      state.loading = false;
-      render();
+      if (serial === state.refreshSerial && scopeIsCurrent(scope)) {
+        state.loading = false;
+        render();
+      }
     }
   }
 
   async function refreshPermissions() {
     syncStore();
+    const scope = currentScope();
+    const serial = ++state.permissionSerial;
     state.canRead = false;
     state.canWrite = false;
+    ensureNavigation();
+    render();
     try {
-      if (!state.storeId || !global.CloudflareNativeAPI?.capabilities) throw new Error('permission_context_unavailable');
+      if (!scope.storeId || !global.CloudflareNativeAPI?.capabilities) throw new Error('permission_context_unavailable');
       const capabilities = await global.CloudflareNativeAPI.capabilities();
+      if (serial !== state.permissionSerial || !scopeIsCurrent(scope)) return false;
       const globalPermissions = new Set(Array.isArray(capabilities?.globalPermissions) ? capabilities.globalPermissions : []);
-      const scoped = new Set(Array.isArray(capabilities?.storePermissions?.[state.storeId]) ? capabilities.storePermissions[state.storeId] : []);
+      const scoped = new Set(Array.isArray(capabilities?.storePermissions?.[scope.storeId]) ? capabilities.storePermissions[scope.storeId] : []);
       state.canWrite = globalPermissions.has('ads.write') || scoped.has('ads.write');
       state.canRead = state.canWrite || globalPermissions.has('ads.read') || scoped.has('ads.read');
     } catch {
+      if (serial !== state.permissionSerial || !scopeIsCurrent(scope)) return false;
       state.canRead = false;
       state.canWrite = false;
     }
+    if (serial !== state.permissionSerial || !scopeIsCurrent(scope)) return false;
     ensureNavigation();
     render();
+    return true;
   }
 
   function ensureNavigation() {
@@ -153,11 +172,35 @@
     host.appendChild(button);
   }
 
+  function currentScope() {
+    return Object.freeze({ storeId: state.storeId, generation: state.scopeGeneration });
+  }
+
+  function scopeIsCurrent(scope) {
+    return Boolean(scope && scope.storeId === state.storeId && scope.generation === state.scopeGeneration);
+  }
+
+  function transitionStore(storeId) {
+    const next = String(storeId || '').trim();
+    if (!next || next === state.storeId) return false;
+    state.storeId = next;
+    state.scopeGeneration += 1;
+    state.refreshSerial += 1;
+    state.permissionSerial += 1;
+    state.detailSerial += 1;
+    state.settlementDetailSerial += 1;
+    state.loading = false;
+    state.canRead = false;
+    state.canWrite = false;
+    resetSelection();
+    state.message = null;
+    render();
+    return true;
+  }
+
   function syncStore() {
     const next = String(global.CloudflareOperatorWorkspace?.currentStoreId?.() || state.storeId || '').trim();
-    if (next === state.storeId) return;
-    state.storeId = next;
-    resetSelection();
+    transitionStore(next);
   }
 
   function resetSelection() {
@@ -172,11 +215,8 @@
 
   function onStoreChange(event) {
     const storeId = String(event?.detail?.storeId || '').trim();
-    if (!storeId || storeId === state.storeId) return;
-    state.storeId = storeId;
-    resetSelection();
-    state.message = null;
-    void refreshPermissions().then(() => state.open ? refresh() : null);
+    if (!transitionStore(storeId)) return;
+    void refreshPermissions().then((current) => current && state.open ? refresh() : null);
   }
 
   function onClick(event) {
@@ -222,6 +262,7 @@
 
   async function submitSearchTermImport() {
     if (!state.canWrite || state.uploading || !state.storeId) return;
+    const scope = currentScope();
     const file = state.root?.querySelector('#cfImportFile')?.files?.[0];
     if (!file) return setMessage('warn', t('请选择 Amazon Ads Search Term CSV。', 'Choose an Amazon Ads Search Term CSV.'));
     if (file.size <= 0 || file.size > MAX_BYTES) return setMessage('bad', t('Search Term CSV 必须大于 0 且不超过 10 MB。', 'Search Term CSV must be larger than 0 and no more than 10 MB.'));
@@ -236,7 +277,7 @@
     state.uploading = true;
     setMessage('loading', t('正在校验并写入真实 Search Term 数据…', 'Validating and publishing real Search Term data…'));
     try {
-      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/search-terms${query}`, {
+      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/search-terms${query}`, {
         method: 'POST',
         headers: {
           'content-type': 'text/csv; charset=utf-8',
@@ -244,6 +285,7 @@
         },
         body: file,
       });
+      if (!scopeIsCurrent(scope)) return;
       state.selectedImportId = payload?.importId || '';
       if (payload?.duplicate) {
         setMessage('warn', t(`检测到重复报告，已复用 ${payload.importId}，未重复写入。`, `Duplicate report detected. Reused ${payload.importId}; no duplicate write.`));
@@ -253,8 +295,10 @@
         setMessage('bad', t(`校验未通过：${payload.validation?.rejectedRows || 0} 行被拒绝。`, `Validation failed: ${payload.validation?.rejectedRows || 0} rows rejected.`));
       }
       await refresh({ preserveMessage: true });
+      if (!scopeIsCurrent(scope)) return;
       if (state.selectedImportId) await selectImport(state.selectedImportId, { preserveMessage: true });
     } catch (error) {
+      if (!scopeIsCurrent(scope)) return;
       const payload = error?.payload;
       if (payload?.validation) {
         setMessage('bad', t(`校验未通过：${payload.validation.rejectedRows || 0} 行被拒绝。`, `Validation failed: ${payload.validation.rejectedRows || 0} rows rejected.`));
@@ -265,6 +309,7 @@
       if (payload?.importId) {
         state.selectedImportId = payload.importId;
         await refresh({ preserveMessage: true });
+        if (!scopeIsCurrent(scope)) return;
         await selectImport(payload.importId, { preserveMessage: true });
       }
     } finally {
@@ -275,6 +320,7 @@
 
   async function submitSettlementImport() {
     if (!state.canWrite || state.settlementUploading || !state.storeId) return;
+    const scope = currentScope();
     const file = state.root?.querySelector('#cfSettlementFile')?.files?.[0];
     if (!file) return setMessage('warn', t('请选择 Amazon Settlement Financial CSV。', 'Choose an Amazon Settlement Financial CSV.'));
     if (file.size <= 0 || file.size > MAX_SETTLEMENT_BYTES) return setMessage('bad', t('Settlement CSV 必须大于 0 且不超过 16 MB。', 'Settlement CSV must be larger than 0 and no more than 16 MB.'));
@@ -289,7 +335,7 @@
     state.settlementUploading = true;
     setMessage('loading', t('正在校验、对账并写入真实 Settlement 数据…', 'Validating, reconciling, and publishing real Settlement data…'));
     try {
-      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/settlements${query}`, {
+      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/settlements${query}`, {
         method: 'POST',
         headers: {
           'content-type': 'text/csv; charset=utf-8',
@@ -297,6 +343,7 @@
         },
         body: file,
       });
+      if (!scopeIsCurrent(scope)) return;
       const importId = payload?.batch?.importId || '';
       state.selectedSettlementImportId = importId;
       if (payload?.duplicate) {
@@ -305,8 +352,10 @@
         setMessage('ok', t(`Settlement 导入成功：${payload?.validation?.acceptedRows ?? payload?.batch?.acceptedRows ?? 0} 行已发布并完成对账。`, `Settlement import complete: ${payload?.validation?.acceptedRows ?? payload?.batch?.acceptedRows ?? 0} rows published and reconciled.`));
       }
       await refresh({ preserveMessage: true });
+      if (!scopeIsCurrent(scope)) return;
       if (importId) await selectSettlement(importId, { preserveMessage: true });
     } catch (error) {
+      if (!scopeIsCurrent(scope)) return;
       const payload = error?.payload;
       if (payload?.validation) {
         setMessage('bad', t(`Settlement 校验未通过：${payload.validation.rejectedRows || 0} 行被拒绝。`, `Settlement validation failed: ${payload.validation.rejectedRows || 0} rows rejected.`));
@@ -323,10 +372,11 @@
   async function classifySearchTermImport(importId) {
     const id = String(importId || '').trim();
     if (!id || !state.storeId || !state.canWrite || state.classifying) return;
+    const scope = currentScope();
     state.classifying = true;
     setMessage('loading', t('正在通过正式 authority workflow 标记为 Business…', 'Classifying as Business through the formal authority workflow…'));
     try {
-      await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/${encodeURIComponent(id)}`, {
+      await requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -335,10 +385,13 @@
           evidence: { workflow: 'imports_console_v1', action: 'classify_business' },
         }),
       });
+      if (!scopeIsCurrent(scope)) return;
       setMessage('ok', t('Search Term authority 已正式标记为 Business。', 'Search Term authority formally classified as Business.'));
       await refresh({ preserveMessage: true });
+      if (!scopeIsCurrent(scope)) return;
       await selectImport(id, { preserveMessage: true });
     } catch (error) {
+      if (!scopeIsCurrent(scope)) return;
       state.message = errorMessage(error);
       render();
     } finally {
@@ -350,10 +403,11 @@
   async function classifySettlementImport(importId) {
     const id = String(importId || '').trim();
     if (!id || !state.storeId || !state.canWrite || state.settlementClassifying) return;
+    const scope = currentScope();
     state.settlementClassifying = true;
     setMessage('loading', t('正在通过正式 Settlement authority workflow 标记为 Business…', 'Classifying Settlement as Business through the formal authority workflow…'));
     try {
-      await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/settlements?importId=${encodeURIComponent(id)}`, {
+      await requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/settlements?importId=${encodeURIComponent(id)}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -362,10 +416,13 @@
           evidence: { workflow: 'imports_console_v1', action: 'classify_business' },
         }),
       });
+      if (!scopeIsCurrent(scope)) return;
       setMessage('ok', t('Settlement authority 已正式标记为 Business。', 'Settlement authority formally classified as Business.'));
       await refresh({ preserveMessage: true });
+      if (!scopeIsCurrent(scope)) return;
       await selectSettlement(id, { preserveMessage: true });
     } catch (error) {
+      if (!scopeIsCurrent(scope)) return;
       state.message = errorMessage(error);
       render();
     } finally {
@@ -377,6 +434,8 @@
   async function selectImport(importId, options = {}) {
     const id = String(importId || '').trim();
     if (!id || !state.storeId || !state.canRead) return;
+    const scope = currentScope();
+    const serial = ++state.detailSerial;
     if (options.preserveMessage !== true) state.message = null;
     state.selectedImportId = id;
     state.detail = null;
@@ -384,30 +443,37 @@
     render();
     try {
       const [detail, errors] = await Promise.all([
-        requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/${encodeURIComponent(id)}`),
-        requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/${encodeURIComponent(id)}/errors?limit=100`),
+        requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/${encodeURIComponent(id)}`),
+        requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/${encodeURIComponent(id)}/errors?limit=100`),
       ]);
+      if (serial !== state.detailSerial || !scopeIsCurrent(scope) || state.selectedImportId !== id) return;
       state.detail = detail;
       state.errors = Array.isArray(errors?.items) ? errors.items : [];
     } catch (error) {
+      if (serial !== state.detailSerial || !scopeIsCurrent(scope) || state.selectedImportId !== id) return;
       state.message = errorMessage(error);
     }
-    render();
+    if (serial === state.detailSerial && scopeIsCurrent(scope) && state.selectedImportId === id) render();
   }
 
   async function selectSettlement(importId, options = {}) {
     const id = String(importId || '').trim();
     if (!id || !state.storeId || !state.canRead) return;
+    const scope = currentScope();
+    const serial = ++state.settlementDetailSerial;
     if (options.preserveMessage !== true) state.message = null;
     state.selectedSettlementImportId = id;
     state.settlementDetail = null;
     render();
     try {
-      state.settlementDetail = await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/imports/settlements?importId=${encodeURIComponent(id)}`);
+      const detail = await requestJson(`/api/v1/stores/${encodeURIComponent(scope.storeId)}/imports/settlements?importId=${encodeURIComponent(id)}`);
+      if (serial !== state.settlementDetailSerial || !scopeIsCurrent(scope) || state.selectedSettlementImportId !== id) return;
+      state.settlementDetail = detail;
     } catch (error) {
+      if (serial !== state.settlementDetailSerial || !scopeIsCurrent(scope) || state.selectedSettlementImportId !== id) return;
       state.message = errorMessage(error);
     }
-    render();
+    if (serial === state.settlementDetailSerial && scopeIsCurrent(scope) && state.selectedSettlementImportId === id) render();
   }
 
   function setMessage(kind, text) {
