@@ -7,6 +7,9 @@ import { summarizeDecisionQueueReviewState } from '../cloudflare/runtime/data-he
 
 const migration0019 = readFileSync(new URL('../cloudflare/foundation/migrations/store/0019_store_advisory_review_workflow.sql', import.meta.url), 'utf8');
 const migration0025 = readFileSync(new URL('../cloudflare/foundation/migrations/store/0025_store_advisory_review_final_disposition.sql', import.meta.url), 'utf8');
+const executable0025 = migration0025.replace(/^\s*--.*$/gm, '');
+assert.doesNotMatch(executable0025, /\bBEGIN\s+TRANSACTION\b|\bSAVEPOINT\b|\bCOMMIT\b/i,
+  '0025 must not contain explicit SQL transaction control because D1 remote migrations reject it');
 const db = new DatabaseSync(':memory:');
 db.exec(migration0019);
 // Model the later 0022 CSV authority dependency and trigger before applying 0025.
