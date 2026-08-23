@@ -1,0 +1,254 @@
+name: 270 Dev exact-main promotion and read-only acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/265-dev-runtime-readonly-acceptance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  promote-and-accept-dev:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'ops/270-dev-runtime-readonly-acceptance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TARGET_SHA: 7e01cdff4ff432d323142eefcbcba93302829409
+      CF_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      DEV_TRIGGER_UUID: 33a47d45-4103-43d7-bca4-7d9096c4abfb
+      DEV_SCRIPT_NAME: ads-operations-web-dev
+      BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      STORE_ID: store-dev-01
+      CF_BUILDS_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/270-dev-runtime-readonly-acceptance
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Trigger exact canonical-main Development Workers Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          node <<'NODE'
+          const fs = require('fs');
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const account = process.env.CF_ACCOUNT_ID;
+          const targetSha = process.env.TARGET_SHA;
+          const trigger = process.env.DEV_TRIGGER_UUID;
+          const script = process.env.DEV_SCRIPT_NAME;
+          const tokens = [...new Set([process.env.CF_BUILDS_TOKEN, process.env.CF_API_TOKEN].filter(Boolean))];
+          if (!tokens.length) throw new Error('cloudflare_token_missing');
+
+          async function cf(path, init = {}) {
+            let last = null;
+            for (const token of tokens) {
+              const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+                ...init,
+                headers: {
+                  accept: 'application/json',
+                  ...(init.body ? {'content-type':'application/json'} : {}),
+                  ...(init.headers || {}),
+                  authorization: `Bearer ${token}`,
+                },
+              });
+              const text = await response.text();
+              let json = null;
+              try { json = JSON.parse(text); } catch { json = { success: false, errors: [{ message: text.slice(0, 300) }] }; }
+              if (response.ok && json?.success === true) return json;
+              last = { status: response.status, errors: json?.errors || [] };
+              if (![401,403].includes(response.status)) break;
+            }
+            throw new Error(`cloudflare_api_failed:${path}:${JSON.stringify(last)}`);
+          }
+
+          const before = await cf(`/accounts/${account}/workers/scripts/${script}/deployments`);
+          const beforeDeployment = before.result?.deployments?.[0] || null;
+
+          const created = await cf(`/accounts/${account}/builds/triggers/${trigger}/builds`, {
+            method: 'POST',
+            body: JSON.stringify({ branch: 'main', commit_hash: targetSha }),
+          });
+          const buildUuid = created.result?.build_uuid;
+          if (!buildUuid) throw new Error('dev_build_uuid_missing');
+
+          let build = created.result;
+          for (let attempt = 0; attempt < 90; attempt += 1) {
+            const current = await cf(`/accounts/${account}/builds/builds/${buildUuid}`);
+            build = current.result;
+            if (build?.status === 'stopped') break;
+            await sleep(4000);
+          }
+          if (build?.status !== 'stopped' || build?.build_outcome !== 'success') {
+            throw new Error(`dev_exact_main_build_not_success:${build?.status}:${build?.build_outcome}`);
+          }
+          if (build?.build_trigger_metadata?.commit_hash !== targetSha) throw new Error('dev_build_target_sha_mismatch');
+
+          let deployment = null;
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            const list = await cf(`/accounts/${account}/workers/scripts/${script}/deployments`);
+            const candidate = list.result?.deployments?.[0] || null;
+            if (candidate?.id && candidate.id !== beforeDeployment?.id) {
+              deployment = candidate;
+              break;
+            }
+            await sleep(2000);
+          }
+          if (!deployment) throw new Error('dev_new_deployment_not_observed');
+          const version = deployment.versions?.find((entry) => Number(entry?.percentage) === 100) || deployment.versions?.[0];
+          if (!version?.version_id) throw new Error('dev_deployment_version_missing');
+
+          const evidence = {
+            ok: true,
+            gate: 'issue-270-dev-exact-main-promotion',
+            targetSha,
+            triggerUuid: trigger,
+            buildUuid,
+            buildStatus: build.status,
+            buildOutcome: build.build_outcome,
+            buildCommitHash: build.build_trigger_metadata?.commit_hash || null,
+            priorDeploymentId: beforeDeployment?.id || null,
+            deploymentId: deployment.id,
+            versionId: version.version_id,
+            deploymentCreatedOn: deployment.created_on || null,
+            blockers: [],
+          };
+          fs.writeFileSync('evidence/promotion.json', JSON.stringify(evidence, null, 2) + '\n');
+          console.log(JSON.stringify(evidence));
+          NODE
+
+      - name: Probe deployed Development runtime with GET only
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-all-errors "$BASE_URL/api/health" > evidence/health.json
+          curl --fail --silent --show-error --retry 3 --retry-all-errors "$BASE_URL/assets/cloudflare-native-csv-recommendation-human-review-v1.js" > evidence/human-review-ui.js
+          curl --fail --silent --show-error --retry 3 --retry-all-errors "$BASE_URL/api/v1/stores/$STORE_ID/advisory-reviews?reviewContract=csv-recommendation-human-review-v1&startDate=2026-06-01&endDate=2026-06-30&limit=100" > evidence/human-review.json
+
+      - name: Validate #268 Decision Packet rationale runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const promotion = JSON.parse(fs.readFileSync('evidence/promotion.json','utf8'));
+          const health = JSON.parse(fs.readFileSync('evidence/health.json','utf8'));
+          const ui = fs.readFileSync('evidence/human-review-ui.js','utf8');
+          const review = JSON.parse(fs.readFileSync('evidence/human-review.json','utf8'));
+          const fail = (m) => { throw new Error(m); };
+
+          if (promotion.targetSha !== process.env.TARGET_SHA) fail('promotion_target_sha_mismatch');
+          if (health.ok !== true) fail('dev_health_not_ok');
+          if (health.environment !== 'development') fail('dev_environment_mismatch');
+          if (health.deployment?.versionId !== promotion.versionId) fail('dev_live_version_mismatch');
+          if (health.syncTriggerEnabled !== false) fail('dev_sync_trigger_not_disabled');
+
+          if (!ui.includes("const VERSION = '1.6.0';")) fail('human_review_ui_1_6_0_missing');
+          for (const fragment of [
+            'Current Human Review rationale',
+            'Prior Human Review rationale',
+            'Human Review rationale only. It is not effectiveness, execution authority, or Amazon mutation authority.',
+            'Stale Human Review context only. Never inherited as current; not effectiveness, execution authority, or Amazon mutation authority.',
+            "const currentRationale = packet?.reviewEvidence?.currentRationale;",
+            "const rationale = String(review?.currentRationale || '').trim();",
+            "const rationale = String(row?.rationale || '').trim();",
+          ]) if (!ui.includes(fragment)) fail(`ui_contract_missing:${fragment}`);
+
+          if (review.schemaVersion !== 'csv-recommendation-human-review-v1') fail('human_review_schema_mismatch');
+          if (review.storeId !== process.env.STORE_ID) fail('human_review_store_mismatch');
+          if (review.authority?.executionAuthorized !== false || review.authority?.amazonMutationAuthorized !== false) fail('human_review_authority_boundary_broken');
+
+          const h = review.historicalLearning;
+          if (!h || h.schemaVersion !== 'historical-review-learning-v1') fail('historical_learning_schema_mismatch');
+          for (const [key,value] of Object.entries({
+            readOnly: true,
+            adaptiveLearningAuthorized: false,
+            ruleMutationAuthorized: false,
+            recommendationMutationAuthorized: false,
+            executionAuthorized: false,
+            amazonMutationAuthorized: false,
+          })) if (h.authority?.[key] !== value) fail(`historical_learning_authority_${key}_mismatch`);
+
+          let decisionPacketCount = 0;
+          let currentRationaleCount = 0;
+          let staleRationaleCount = 0;
+          for (const item of Array.isArray(review.items) ? review.items : []) {
+            const packet = item?.decisionPacket;
+            if (!packet) continue;
+            decisionPacketCount += 1;
+            if (packet.schemaVersion !== 'recommendation-decision-packet-v1') fail('decision_packet_schema_mismatch');
+            if (packet.authority?.readOnly !== true || packet.authority?.executionAuthorized !== false || packet.authority?.amazonMutationAuthorized !== false) fail('decision_packet_authority_boundary_broken');
+            const r = packet.reviewEvidence || {};
+            if (!Object.prototype.hasOwnProperty.call(r, 'currentRationale')) fail('decision_packet_current_rationale_field_missing');
+            if (r.currentRationale !== null) {
+              if (typeof r.currentRationale !== 'string' || r.currentRationale.trim() !== r.currentRationale || !r.currentRationale.length) fail('decision_packet_current_rationale_shape_invalid');
+              currentRationaleCount += 1;
+            }
+            for (const stale of Array.isArray(r.staleEvidence) ? r.staleEvidence : []) {
+              if (stale?.stale !== true || stale?.inheritedAsCurrent !== false) fail('decision_packet_stale_inheritance_boundary_broken');
+              if (!Object.prototype.hasOwnProperty.call(stale, 'rationale')) fail('decision_packet_stale_rationale_field_missing');
+              if (stale.rationale !== null) {
+                if (typeof stale.rationale !== 'string' || stale.rationale.trim() !== stale.rationale || !stale.rationale.length) fail('decision_packet_stale_rationale_shape_invalid');
+                staleRationaleCount += 1;
+              }
+            }
+          }
+
+          const evidence = {
+            ok: true,
+            gate: 'issue-270-dev-read-only-acceptance',
+            targetSha: process.env.TARGET_SHA,
+            buildUuid: promotion.buildUuid,
+            deploymentId: promotion.deploymentId,
+            versionId: promotion.versionId,
+            environment: health.environment,
+            uiVersion: '1.6.0',
+            humanReviewSchemaVersion: review.schemaVersion,
+            decisionPacketCount,
+            currentRationaleFixtureCount: currentRationaleCount,
+            staleRationaleFixtureCount: staleRationaleCount,
+            liveRationaleFixtureAvailable: currentRationaleCount + staleRationaleCount > 0,
+            absentFixtureAcceptedWithoutMutation: currentRationaleCount + staleRationaleCount === 0,
+            historicalLearningAuthority: h.authority,
+            syncTriggerEnabled: health.syncTriggerEnabled,
+            requestMethods: ['GET'],
+            runtimeMutationExecuted: false,
+            productionDataMutationExecuted: false,
+            amazonRequestExecuted: false,
+            blockers: [],
+            uiSha256: crypto.createHash('sha256').update(ui).digest('hex'),
+          };
+          fs.writeFileSync('evidence/acceptance.json', JSON.stringify(evidence, null, 2) + '\n');
+          console.log(JSON.stringify(evidence));
+          NODE
+
+      - name: Upload immutable #270 Development evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-270-dev-exact-main-runtime-acceptance
+          path: |
+            evidence/promotion.json
+            evidence/acceptance.json
+            evidence/health.json
+            evidence/human-review.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove one-shot #270 Development control plane
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/265-dev-runtime-readonly-acceptance.yml
+          git commit -m 'Clean #270 Development runtime control plane'
+          git push origin HEAD:ops/270-dev-runtime-readonly-acceptance
