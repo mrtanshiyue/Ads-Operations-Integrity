@@ -524,8 +524,10 @@
   function setOpen(open) {
     state.open = Boolean(open);
     panelNode().classList.toggle('open', state.open);
-    if (state.open) renderContext();
-    else closeDrawer();
+    if (state.open) {
+      renderContext();
+      if (state.tab === 'actions' && !state.actions) void loadActions();
+    } else closeDrawer();
   }
 
   function setDates() {
