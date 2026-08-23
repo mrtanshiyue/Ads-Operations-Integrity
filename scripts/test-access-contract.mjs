@@ -445,7 +445,7 @@ function fakeGovernanceDb({
     __sql: sql,
     __params: params,
     async first() {
-      if (sql.includes('FROM user_global_roles ugr')) {
+      if (sql.includes('SELECT 1 AS ok') && sql.includes('FROM user_global_roles ugr')) {
         return permissionSet.has(params[1]) ? { ok: 1 } : null;
       }
       if (sql.includes('FROM stores')) {
