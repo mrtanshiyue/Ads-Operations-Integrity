@@ -213,3 +213,4 @@ function compact(sql) {
 }
 
 console.log('settlement authority CAS and stale-writer contract: PASS');
+await import('./test-csv-import-authority-cas-contract.mjs');
