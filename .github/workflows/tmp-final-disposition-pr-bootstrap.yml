@@ -1,0 +1,61 @@
+name: Temporary Final Disposition PR Bootstrap
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/tmp-final-disposition-pr-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/human-review-final-disposition-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-review-final-disposition-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Extract and execute fail-closed patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/tmp-final-disposition-bootstrap.yml').read_text()
+          start = text.index("          node <<'NODE'\n") + len("          node <<'NODE'\n")
+          end = text.index("\n          NODE\n", start)
+          lines = text[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines) + '\n'
+          Path('/tmp/final-disposition-patch.js').write_text(script)
+          PY
+          node /tmp/final-disposition-patch.js
+          rm .github/workflows/tmp-final-disposition-pr-bootstrap.yml
+      - name: Run focused regression suite
+        run: |
+          node --check cloudflare/runtime/csv-recommendation-human-review-contract.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check cloudflare/runtime/historical-review-learning.js
+          node --check cloudflare/runtime/data-health-api.js
+          node --check cloudflare/runtime/operator-work-queue.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node scripts/test-human-review-final-disposition.mjs
+          node scripts/test-recommendation-human-review-contract.mjs
+          node scripts/test-recommendation-human-review-persistence.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-historical-review-learning.mjs
+          node scripts/test-historical-review-learning-integration.mjs
+          node scripts/test-historical-review-learning-ui.mjs
+          node scripts/test-operator-work-queue-contract.mjs
+      - name: Commit implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add review-only final dispositions'
+          git push origin HEAD:feature/human-review-final-disposition-v1
