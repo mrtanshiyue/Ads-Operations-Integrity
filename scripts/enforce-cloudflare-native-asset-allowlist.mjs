@@ -1,10 +1,39 @@
-import { access, readFile, readdir, rm } from 'node:fs/promises';
+import { access, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const assetsRoot = path.join(repoRoot, 'dist-cloudflare-native', 'assets');
+
+const legacyAutoDecisionExportPath = path.join(assetsRoot, 'generated', 'inline-script-04.js');
+const legacyAutoDecisionUnsafeAnchor = 'const combined=[...(actionBulk.bulkRows||[]),...keywordRows],validation=validateSponsoredProductsBulkDraft(keywordHeaders,combined,"Auto Decision Center"),manualRows=';
+const legacyAutoDecisionGuardMarker = 'const validationErrors=validation.filter(x=>String(x[0]||"").toUpperCase()==="ERROR");';
+const legacyAutoDecisionHardenedAnchor = [
+  'const combined=[...(actionBulk.bulkRows||[]),...keywordRows],validation=validateSponsoredProductsBulkDraft(keywordHeaders,combined,"Auto Decision Center");',
+  legacyAutoDecisionGuardMarker,
+  'if(validationErrors.length){notify(currentLang==="zh"?`Bulk Validator 发现 ${validationErrors.length} 个 ERROR；已阻止生成执行计划。请先修复后重试。`:`Bulk Validator found ${validationErrors.length} ERROR rows; execution-plan export is blocked until they are fixed.`,"warn");return;}',
+  'const manualRows=',
+].join('');
+
+let legacyAutoDecisionExportSource = await readFile(legacyAutoDecisionExportPath, 'utf8');
+const existingGuardCount = legacyAutoDecisionExportSource.split(legacyAutoDecisionGuardMarker).length - 1;
+if (existingGuardCount === 0) {
+  const unsafeAnchorCount = legacyAutoDecisionExportSource.split(legacyAutoDecisionUnsafeAnchor).length - 1;
+  if (unsafeAnchorCount !== 1) {
+    throw new Error(`Legacy Auto Decision export hardening expected exactly one unsafe validator/export anchor, found ${unsafeAnchorCount}`);
+  }
+  legacyAutoDecisionExportSource = legacyAutoDecisionExportSource.replace(legacyAutoDecisionUnsafeAnchor, legacyAutoDecisionHardenedAnchor);
+  await writeFile(legacyAutoDecisionExportPath, legacyAutoDecisionExportSource, 'utf8');
+} else if (existingGuardCount !== 1) {
+  throw new Error(`Legacy Auto Decision export hardening guard must exist exactly once, found ${existingGuardCount}`);
+}
+const hardenedFunctionIndex = legacyAutoDecisionExportSource.indexOf('const exportCentralDecisionPackage = async () => {');
+const hardenedGuardIndex = legacyAutoDecisionExportSource.indexOf(legacyAutoDecisionGuardMarker, hardenedFunctionIndex);
+const hardenedExportIndex = legacyAutoDecisionExportSource.indexOf('await exportRichExcelMultiSheet', hardenedFunctionIndex);
+if (hardenedFunctionIndex < 0 || hardenedGuardIndex < 0 || hardenedExportIndex < 0 || hardenedGuardIndex >= hardenedExportIndex) {
+  throw new Error('Legacy Auto Decision export must fail closed on Bulk Validator ERROR before Excel generation');
+}
 
 const allowedAssets = new Set([
   'bid-governance-parity-audit-v1.js',
@@ -147,6 +176,7 @@ console.log(JSON.stringify({
   removedAssetCount: removed.length,
   removedAssets: removed,
   forbiddenAssets: [...forbiddenAssets],
+  legacyAutoDecisionExportFailClosed: true,
 }, null, 2));
 
 async function collectFiles(root) {
