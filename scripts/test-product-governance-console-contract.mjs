@@ -140,3 +140,5 @@ console.log(JSON.stringify({
   productionMutation: false,
   calls: calls.map((call) => call.method),
 }, null, 2));
+
+await import('./test-control-api-atomic-governance-contract.mjs');

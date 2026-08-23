@@ -69,6 +69,7 @@ async function listProducts(request, db, actor, url) {
 }
 
 async function createProduct(request, db, actor) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'products.manage')) {
     return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
   }
@@ -78,21 +79,46 @@ async function createProduct(request, db, actor) {
   if (value.error) return json(request, { error: value.error }, 400);
 
   const productId = crypto.randomUUID();
+  const mutation = db.prepare(`
+    INSERT INTO products(product_id, model_code, model_name, brand, status, attributes_json, created_at, updated_at)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1
+      FROM user_global_roles actor_global_role
+      JOIN app_roles actor_global_app_role
+        ON actor_global_app_role.role_key=actor_global_role.role_key
+       AND actor_global_app_role.role_scope='global'
+      JOIN role_permissions actor_global_permission
+        ON actor_global_permission.role_key=actor_global_role.role_key
+      WHERE actor_global_role.user_id=?7
+        AND actor_global_permission.permission_key='products.manage'
+    )
+  `).bind(productId, value.modelCode, value.modelName, value.brand, value.status, value.attributesJson, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'product.create', 'product', productId, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      INSERT INTO products(product_id, model_code, model_name, brand, status, attributes_json, created_at, updated_at)
-      VALUES(?1, ?2, ?3, ?4, ?5, ?6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(productId, value.modelCode, value.modelName, value.brand, value.status, value.attributesJson).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'product_create_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'product_model_code_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'product.create', 'product', productId, value.audit);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'products.manage')) {
+      return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
+    }
+    return json(request, { error: 'product_model_code_conflict' }, 409);
+  }
+
   const row = await productById(db, productId);
+  if (!row) throw new Error('product_create_readback_missing');
   return json(request, { product: publicProduct(row) }, 201);
 }
 
 async function updateProduct(request, db, actor, productId) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'products.manage')) {
     return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
   }
@@ -103,19 +129,45 @@ async function updateProduct(request, db, actor, productId) {
   const value = validateProductPatch(body.value, existing);
   if (value.error) return json(request, { error: value.error }, 400);
 
+  const mutation = db.prepare(`
+    UPDATE products
+    SET model_code = ?1, model_name = ?2, brand = ?3, status = ?4, attributes_json = ?5,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE product_id = ?6
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_global_role
+        JOIN app_roles actor_global_app_role
+          ON actor_global_app_role.role_key=actor_global_role.role_key
+         AND actor_global_app_role.role_scope='global'
+        JOIN role_permissions actor_global_permission
+          ON actor_global_permission.role_key=actor_global_role.role_key
+        WHERE actor_global_role.user_id=?7
+          AND actor_global_permission.permission_key='products.manage'
+      )
+  `).bind(value.modelCode, value.modelName, value.brand, value.status, value.attributesJson, productId, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'product.update', 'product', productId, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      UPDATE products
-      SET model_code = ?1, model_name = ?2, brand = ?3, status = ?4, attributes_json = ?5,
-          updated_at = CURRENT_TIMESTAMP
-      WHERE product_id = ?6
-    `).bind(value.modelCode, value.modelName, value.brand, value.status, value.attributesJson, productId).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'product_update_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'product_model_code_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'product.update', 'product', productId, value.audit);
-  return json(request, { product: publicProduct(await productById(db, productId)) }, 200);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'products.manage')) {
+      return json(request, { error: 'forbidden', permission: 'products.manage' }, 403);
+    }
+    if (!await productById(db, productId)) return json(request, { error: 'product_not_found' }, 404);
+    return json(request, { error: 'product_model_code_conflict' }, 409);
+  }
+
+  const row = await productById(db, productId);
+  if (!row) throw new Error('product_update_readback_missing');
+  return json(request, { product: publicProduct(row) }, 200);
 }
 
 async function listKeywords(request, db, actor, url) {
@@ -146,6 +198,7 @@ async function listKeywords(request, db, actor, url) {
 }
 
 async function createKeyword(request, db, actor) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'keywords.manage')) {
     return json(request, { error: 'forbidden', permission: 'keywords.manage' }, 403);
   }
@@ -155,23 +208,50 @@ async function createKeyword(request, db, actor) {
   if (value.error) return json(request, { error: value.error }, 400);
 
   const keywordId = crypto.randomUUID();
+  const mutation = db.prepare(`
+    INSERT INTO keyword_library(
+      keyword_id, keyword_text, normalized_term, language_code, intent_class, semantic_cluster,
+      lifecycle_status, source_type, notes, created_by, created_at, updated_at
+    )
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1
+      FROM user_global_roles actor_global_role
+      JOIN app_roles actor_global_app_role
+        ON actor_global_app_role.role_key=actor_global_role.role_key
+       AND actor_global_app_role.role_scope='global'
+      JOIN role_permissions actor_global_permission
+        ON actor_global_permission.role_key=actor_global_role.role_key
+      WHERE actor_global_role.user_id=?11
+        AND actor_global_permission.permission_key='keywords.manage'
+    )
+  `).bind(keywordId, value.keywordText, value.normalizedTerm, value.languageCode, value.intentClass,
+    value.semanticCluster, value.lifecycleStatus, value.sourceType, value.notes, actor.user_id, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'keyword.create', 'keyword', keywordId, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      INSERT INTO keyword_library(
-        keyword_id, keyword_text, normalized_term, language_code, intent_class, semantic_cluster,
-        lifecycle_status, source_type, notes, created_by, created_at, updated_at
-      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-    `).bind(keywordId, value.keywordText, value.normalizedTerm, value.languageCode, value.intentClass,
-      value.semanticCluster, value.lifecycleStatus, value.sourceType, value.notes, actor.user_id).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'keyword_create_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'keyword_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'keyword.create', 'keyword', keywordId, value.audit);
-  return json(request, { keyword: publicKeyword(await keywordById(db, keywordId)) }, 201);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'keywords.manage')) {
+      return json(request, { error: 'forbidden', permission: 'keywords.manage' }, 403);
+    }
+    return json(request, { error: 'keyword_conflict' }, 409);
+  }
+
+  const row = await keywordById(db, keywordId);
+  if (!row) throw new Error('keyword_create_readback_missing');
+  return json(request, { keyword: publicKeyword(row) }, 201);
 }
 
 async function updateKeyword(request, db, actor, keywordId) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'keywords.manage')) {
     return json(request, { error: 'forbidden', permission: 'keywords.manage' }, 403);
   }
@@ -182,20 +262,46 @@ async function updateKeyword(request, db, actor, keywordId) {
   const value = validateKeywordPatch(body.value, existing);
   if (value.error) return json(request, { error: value.error }, 400);
 
+  const mutation = db.prepare(`
+    UPDATE keyword_library
+    SET keyword_text=?1, normalized_term=?2, language_code=?3, intent_class=?4, semantic_cluster=?5,
+        lifecycle_status=?6, source_type=?7, notes=?8, updated_at=CURRENT_TIMESTAMP
+    WHERE keyword_id=?9
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_global_role
+        JOIN app_roles actor_global_app_role
+          ON actor_global_app_role.role_key=actor_global_role.role_key
+         AND actor_global_app_role.role_scope='global'
+        JOIN role_permissions actor_global_permission
+          ON actor_global_permission.role_key=actor_global_role.role_key
+        WHERE actor_global_role.user_id=?10
+          AND actor_global_permission.permission_key='keywords.manage'
+      )
+  `).bind(value.keywordText, value.normalizedTerm, value.languageCode, value.intentClass, value.semanticCluster,
+    value.lifecycleStatus, value.sourceType, value.notes, keywordId, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'keyword.update', 'keyword', keywordId, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      UPDATE keyword_library
-      SET keyword_text=?1, normalized_term=?2, language_code=?3, intent_class=?4, semantic_cluster=?5,
-          lifecycle_status=?6, source_type=?7, notes=?8, updated_at=CURRENT_TIMESTAMP
-      WHERE keyword_id=?9
-    `).bind(value.keywordText, value.normalizedTerm, value.languageCode, value.intentClass, value.semanticCluster,
-      value.lifecycleStatus, value.sourceType, value.notes, keywordId).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'keyword_update_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'keyword_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'keyword.update', 'keyword', keywordId, value.audit);
-  return json(request, { keyword: publicKeyword(await keywordById(db, keywordId)) }, 200);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'keywords.manage')) {
+      return json(request, { error: 'forbidden', permission: 'keywords.manage' }, 403);
+    }
+    if (!await keywordById(db, keywordId)) return json(request, { error: 'keyword_not_found' }, 404);
+    return json(request, { error: 'keyword_conflict' }, 409);
+  }
+
+  const row = await keywordById(db, keywordId);
+  if (!row) throw new Error('keyword_update_readback_missing');
+  return json(request, { keyword: publicKeyword(row) }, 200);
 }
 
 async function listNegativeKeywords(request, db, actor, url) {
@@ -230,6 +336,7 @@ async function listNegativeKeywords(request, db, actor, url) {
 }
 
 async function createNegativeKeyword(request, db, actor) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -239,23 +346,50 @@ async function createNegativeKeyword(request, db, actor) {
   if (value.error) return json(request, { error: value.error }, 400);
 
   const id = crypto.randomUUID();
+  const mutation = db.prepare(`
+    INSERT INTO negative_keyword_library(
+      negative_keyword_id, keyword_text, normalized_term, match_type, reason_code, status,
+      notes, created_by, created_at, updated_at
+    )
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
+    WHERE EXISTS (
+      SELECT 1
+      FROM user_global_roles actor_global_role
+      JOIN app_roles actor_global_app_role
+        ON actor_global_app_role.role_key=actor_global_role.role_key
+       AND actor_global_app_role.role_scope='global'
+      JOIN role_permissions actor_global_permission
+        ON actor_global_permission.role_key=actor_global_role.role_key
+      WHERE actor_global_role.user_id=?9
+        AND actor_global_permission.permission_key='negatives.manage'
+    )
+  `).bind(id, value.keywordText, value.normalizedTerm, value.matchType, value.reasonCode,
+    value.status, value.notes, actor.user_id, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'negative_keyword.create', 'negative_keyword', id, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      INSERT INTO negative_keyword_library(
-        negative_keyword_id, keyword_text, normalized_term, match_type, reason_code, status,
-        notes, created_by, created_at, updated_at
-      ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-    `).bind(id, value.keywordText, value.normalizedTerm, value.matchType, value.reasonCode,
-      value.status, value.notes, actor.user_id).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_keyword_create_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'negative_keyword_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'negative_keyword.create', 'negative_keyword', id, value.audit);
-  return json(request, { negativeKeyword: publicNegativeKeyword(await negativeKeywordById(db, id)) }, 201);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    return json(request, { error: 'negative_keyword_conflict' }, 409);
+  }
+
+  const row = await negativeKeywordById(db, id);
+  if (!row) throw new Error('negative_keyword_create_readback_missing');
+  return json(request, { negativeKeyword: publicNegativeKeyword(row) }, 201);
 }
 
 async function updateNegativeKeyword(request, db, actor, id) {
+  requireAtomicBatch(db);
   if (!await hasGlobalPermission(db, actor.user_id, 'negatives.manage')) {
     return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
   }
@@ -266,27 +400,56 @@ async function updateNegativeKeyword(request, db, actor, id) {
   const value = validateNegativePatch(body.value, existing);
   if (value.error) return json(request, { error: value.error }, 400);
 
+  const mutation = db.prepare(`
+    UPDATE negative_keyword_library
+    SET keyword_text=?1, normalized_term=?2, match_type=?3, reason_code=?4, status=?5, notes=?6,
+        updated_at=CURRENT_TIMESTAMP
+    WHERE negative_keyword_id=?7
+      AND EXISTS (
+        SELECT 1
+        FROM user_global_roles actor_global_role
+        JOIN app_roles actor_global_app_role
+          ON actor_global_app_role.role_key=actor_global_role.role_key
+         AND actor_global_app_role.role_scope='global'
+        JOIN role_permissions actor_global_permission
+          ON actor_global_permission.role_key=actor_global_role.role_key
+        WHERE actor_global_role.user_id=?8
+          AND actor_global_permission.permission_key='negatives.manage'
+      )
+  `).bind(value.keywordText, value.normalizedTerm, value.matchType, value.reasonCode,
+    value.status, value.notes, id, actor.user_id);
+  const auditStatement = auditedMutationStatement(
+    db, request, actor.user_id, 'negative_keyword.update', 'negative_keyword', id, value.audit,
+  );
+
+  let mutationChanges;
   try {
-    await db.prepare(`
-      UPDATE negative_keyword_library
-      SET keyword_text=?1, normalized_term=?2, match_type=?3, reason_code=?4, status=?5, notes=?6,
-          updated_at=CURRENT_TIMESTAMP
-      WHERE negative_keyword_id=?7
-    `).bind(value.keywordText, value.normalizedTerm, value.matchType, value.reasonCode,
-      value.status, value.notes, id).run();
+    mutationChanges = await executeAuditedMutation(db, mutation, auditStatement, 'negative_keyword_update_audit_atomicity_violation');
   } catch (error) {
     if (isUniqueError(error)) return json(request, { error: 'negative_keyword_conflict' }, 409);
     throw error;
   }
-  await audit(db, request, actor.user_id, 'negative_keyword.update', 'negative_keyword', id, value.audit);
-  return json(request, { negativeKeyword: publicNegativeKeyword(await negativeKeywordById(db, id)) }, 200);
+  if (mutationChanges !== 1) {
+    if (!await hasGlobalPermission(db, actor.user_id, 'negatives.manage')) {
+      return json(request, { error: 'forbidden', permission: 'negatives.manage' }, 403);
+    }
+    if (!await negativeKeywordById(db, id)) return json(request, { error: 'negative_keyword_not_found' }, 404);
+    return json(request, { error: 'negative_keyword_conflict' }, 409);
+  }
+
+  const row = await negativeKeywordById(db, id);
+  if (!row) throw new Error('negative_keyword_update_readback_missing');
+  return json(request, { negativeKeyword: publicNegativeKeyword(row) }, 200);
 }
 
 async function hasGlobalPermission(db, userId, permission) {
   return Boolean(await db.prepare(`
-    SELECT 1 AS ok FROM user_global_roles ugr
+    SELECT 1 AS ok
+    FROM user_global_roles ugr
+    JOIN app_roles ar ON ar.role_key = ugr.role_key AND ar.role_scope = 'global'
     JOIN role_permissions rp ON rp.role_key = ugr.role_key
-    WHERE ugr.user_id=?1 AND rp.permission_key=?2 LIMIT 1
+    WHERE ugr.user_id=?1 AND rp.permission_key=?2
+    LIMIT 1
   `).bind(userId, permission).first());
 }
 
@@ -448,12 +611,51 @@ function publicNegativeKeyword(row) {
   };
 }
 
-async function audit(db, request, actorUserId, action, entityType, entityId, details) {
-  await db.prepare(`
+function auditedMutationStatement(db, request, actorUserId, action, entityType, entityId, details) {
+  const context = buildAuditContext(request);
+  return db.prepare(`
     INSERT INTO audit_log(event_id, actor_user_id, action, entity_type, entity_id, request_id, cf_ray, details_json)
-    VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
-  `).bind(crypto.randomUUID(), actorUserId, action, entityType, entityId,
-    request.headers.get('cf-ray') || crypto.randomUUID(), request.headers.get('cf-ray'), JSON.stringify(details || {})).run();
+    SELECT ?1,?2,?3,?4,?5,?6,?7,?8
+    WHERE changes()=1
+  `).bind(
+    context.eventId,
+    actorUserId,
+    action,
+    entityType,
+    entityId,
+    context.requestId,
+    context.cfRay,
+    JSON.stringify(details || {}),
+  );
+}
+
+async function executeAuditedMutation(db, mutation, auditStatement, violationError) {
+  const [mutationResult, auditResult] = await db.batch([mutation, auditStatement]);
+  const mutationChanges = changedRows(mutationResult);
+  const auditChanges = changedRows(auditResult);
+  if (mutationChanges === 1 && auditChanges !== 1) throw new Error(violationError);
+  if (mutationChanges !== 1 && auditChanges !== 0) throw new Error(violationError);
+  return mutationChanges;
+}
+
+function buildAuditContext(request) {
+  const cfRay = request.headers.get('cf-ray');
+  return {
+    eventId: crypto.randomUUID(),
+    requestId: cfRay || crypto.randomUUID(),
+    cfRay,
+  };
+}
+
+function requireAtomicBatch(db) {
+  if (!db || typeof db.batch !== 'function') {
+    throw new Error('control_d1_atomic_batch_required');
+  }
+}
+
+function changedRows(result) {
+  const value = result?.meta?.changes ?? result?.changes ?? 0;
+  return Number(value || 0);
 }
 
 async function readJson(request) {
