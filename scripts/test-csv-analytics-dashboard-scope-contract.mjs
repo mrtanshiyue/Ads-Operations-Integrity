@@ -63,24 +63,36 @@ const drillHandlerEnd = drilldownSource.indexOf('async function refresh()', dril
 assert(drillHandlerStart >= 0 && drillHandlerEnd > drillHandlerStart,
   'analytics drill-down shared-scope invalidation handler must remain present');
 const drillHandler = drilldownSource.slice(drillHandlerStart, drillHandlerEnd);
-assert.match(drillHandler, /if \(!nextKey \|\| nextKey === state\.baseScopeKey\) return;/,
-  'drill-down must ignore self-published filter events when the base store/date scope is unchanged');
+assert.match(drillHandler, /const nextQuery = String\(detail\.q \|\| ''\)\.trim\(\)\.slice\(0, 200\)/,
+  'drill-down must consume the dashboard shared query scope');
+assert.match(drillHandler, /const baseChanged = Boolean\(nextKey && nextKey !== state\.baseScopeKey\)/,
+  'drill-down must detect base store/date scope changes independently');
+assert.match(drillHandler, /const queryChanged = nextQuery !== state\.q/,
+  'drill-down must detect dashboard query changes independently');
+assert.match(drillHandler, /if \(!nextKey \|\| \(!baseChanged && !queryChanged\)\) return;/,
+  'drill-down must ignore self-published events when both base scope and query are unchanged');
 assert.match(drillHandler, /state\.baseScopeKey = nextKey/,
   'drill-down must claim the new base scope before clearing stale presentation');
+assert.match(drillHandler, /state\.q = nextQuery/,
+  'dashboard query changes must synchronize into drill-down state');
+assert.match(drillHandler, /querySelector\('\[data-cfdd-search\]'\)/,
+  'dashboard query changes must synchronize the visible drill-down search control');
+assert.match(drillHandler, /search\.value = state\.q/,
+  'drill-down search presentation must match synchronized shared query state');
 assert.match(drillHandler, /state\.requestSeq \+= 1/,
-  'base scope changes must revoke in-flight drill-down responses');
+  'shared base/query scope changes must revoke in-flight drill-down responses');
 assert.match(drillHandler, /state\.loading = false/,
-  'base scope changes must release stale drill-down loading state');
+  'shared scope changes must release stale drill-down loading state');
 assert.match(drillHandler, /renderBusy\(false\)/,
-  'base scope changes must clear stale drill-down busy controls');
+  'shared scope changes must clear stale drill-down busy controls');
 assert.match(drillHandler, /renderScope\(null, null\)/,
-  'base scope changes must clear stale drill-down aggregate cards');
+  'shared scope changes must clear stale drill-down aggregate cards');
 assert.match(drillHandler, /renderTable\(\{ items: \[\], pagination: \{ page: 1, totalItems: 0, totalPages: 0 \} \}\)/,
-  'base scope changes must clear stale drill-down rows and pagination');
+  'shared scope changes must clear stale drill-down rows and pagination');
 assert.match(drillHandler, /renderStatus\('Analytics scope changed\. Refresh scope to load hierarchy\.', 'warn'\)/,
-  'base scope changes must explicitly require a fresh hierarchy read');
+  'shared scope changes must explicitly require a fresh hierarchy read');
 assert.doesNotMatch(drillHandler, /\brefresh\s*\(/,
-  'shared base scope changes must not auto-load drill-down data');
+  'shared scope changes must not auto-load drill-down data');
 assert.match(drilldownSource, /state\.baseScopeKey = scopeKey;\s*const seq = \+\+state\.requestSeq;/,
   'fresh drill-down reads must bind response ownership to the active base scope before request generation');
 assert.match(drilldownSource, /if \(seq !== state\.requestSeq\) return;/,
@@ -93,6 +105,7 @@ console.log(JSON.stringify({
   csvAnalyticsManualDateScope: true,
   staleResponseInvalidation: true,
   drilldownBaseScopeInvalidation: true,
+  drilldownDashboardQuerySync: true,
   drilldownSelfEventLoopSuppressed: true,
   autoLoadOnManualDateChange: false,
 }));
