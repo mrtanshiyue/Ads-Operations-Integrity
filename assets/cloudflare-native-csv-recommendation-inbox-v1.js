@@ -139,9 +139,10 @@
       return;
     }
 
+    const profileId = value(panel, 'profileId');
     const limit = value(panel, 'limit') || '50';
     const sort = value(panel, 'sort') || 'cost';
-    const scopeKey = [storeId, startDate, endDate, limit, sort].join('|');
+    const scopeKey = [storeId, profileId, startDate, endDate, limit, sort].join('|');
     if (!force && state.scopeKey === scopeKey && state.inbox) {
       renderInbox();
       return;
@@ -154,7 +155,6 @@
     section.innerHTML = loadingShell('Loading governed Recommendation Inbox for the current store and date scope…');
 
     const params = new URLSearchParams({ source: 'csv', startDate, endDate, limit, sort });
-    const profileId = value(panel, 'profileId');
     if (profileId) params.set('profileId', profileId);
 
     let timeoutId = null;
@@ -182,6 +182,7 @@
       state.inbox = inbox;
       state.context = {
         storeId,
+        profileId,
         startDate,
         endDate,
         currency: Array.isArray(currencyCodes) && currencyCodes.length === 1 ? String(currencyCodes[0] || '') : '',
