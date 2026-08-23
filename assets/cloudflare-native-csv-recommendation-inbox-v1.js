@@ -1,10 +1,11 @@
 (function initCsvRecommendationInboxUi(global) {
   'use strict';
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.0.1';
   const SCHEMA_VERSION = 'csv-recommendation-inbox-v1';
   const REQUEST_TIMEOUT_MS = 30000;
   const STYLE_ID = 'cfriStylesV1';
+  const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
   const state = {
     mounted: false,
     panel: null,
@@ -16,6 +17,7 @@
     inbox: null,
     context: null,
     viewed: new Set(),
+    drawerTrigger: null,
     filters: {
       priority: '',
       candidateType: '',
@@ -351,11 +353,12 @@
     return '';
   }
 
-  function openEvidence(inboxItemId) {
+  function openEvidence(inboxItemId, trigger) {
     const item = (state.inbox?.items || []).find((entry) => String(entry?.inboxItemId || '') === String(inboxItemId || ''));
     const section = state.panel?.querySelector('[data-csv-recommendation-inbox-workspace]');
     const drawer = section?.querySelector('[data-cfri-drawer]');
     if (!item || !drawer) return;
+    state.drawerTrigger = trigger || document.activeElement;
     if (item.inboxItemId) state.viewed.add(item.inboxItemId);
     renderRows();
 
@@ -368,7 +371,7 @@
     const comparable = state.inbox?.analysisScope?.financiallyComparable === true;
     drawer.hidden = false;
     drawer.innerHTML = `<div class="cfri-drawer-backdrop" data-cfri-close></div>
-      <div class="cfri-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="cfriDrawerTitle">
+      <div class="cfri-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="cfriDrawerTitle" tabindex="-1">
         <div class="cfri-drawer-head">
           <div><div class="cfri-eyebrow">GOVERNED EVIDENCE</div><h3 id="cfriDrawerTitle">${esc(item.value || 'Recommendation')}</h3><p>${esc(item.reason || '—')}</p></div>
           <button type="button" class="btn" data-cfri-close>Close</button>
@@ -417,6 +420,7 @@
           </dl><div class="cfri-callout warn"><strong>Approval boundary:</strong> Human recognition of a recommendation never grants Amazon execution authority.</div>`)}
         </div>
       </div>`;
+    drawer.querySelector('[data-cfri-close]')?.focus({ preventScroll: true });
   }
 
   function rootEvidence(root) {
@@ -442,7 +446,7 @@
     const evidenceButton = event.target.closest?.('[data-cfri-evidence]');
     if (evidenceButton) {
       event.preventDefault();
-      openEvidence(evidenceButton.dataset.cfriEvidence || '');
+      openEvidence(evidenceButton.dataset.cfriEvidence || '', evidenceButton);
       return;
     }
     if (event.target.closest?.('[data-cfri-close]')) {
@@ -461,14 +465,42 @@
   }
 
   function handleKeydown(event) {
-    if (event.key === 'Escape') closeDrawer();
+    const drawer = state.panel?.querySelector('[data-cfri-drawer]');
+    if (!drawer || drawer.hidden) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeDrawer();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...drawer.querySelectorAll(FOCUSABLE_SELECTOR)].filter((node) => !node.hidden && node.getAttribute('aria-hidden') !== 'true');
+    if (!focusable.length) {
+      event.preventDefault();
+      drawer.querySelector('[role="dialog"]')?.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !drawer.contains(active))) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+      return;
+    }
+    if (!event.shiftKey && (active === last || !drawer.contains(active))) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
   }
 
-  function closeDrawer() {
+  function closeDrawer({ restoreFocus = true } = {}) {
     const drawer = state.panel?.querySelector('[data-cfri-drawer]');
     if (!drawer) return;
+    const trigger = state.drawerTrigger;
+    state.drawerTrigger = null;
     drawer.hidden = true;
     drawer.innerHTML = '';
+    if (restoreFocus && trigger?.isConnected && typeof trigger.focus === 'function') trigger.focus({ preventScroll: true });
   }
 
   function resetForStoreChange() {
@@ -479,7 +511,7 @@
     state.inbox = null;
     state.context = null;
     state.viewed.clear();
-    closeDrawer();
+    closeDrawer({ restoreFocus: false });
     scheduleSync();
   }
 
