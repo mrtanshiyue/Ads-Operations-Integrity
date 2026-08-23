@@ -117,9 +117,18 @@
   }
 
   function handleSharedScopeChange(event) {
-    const nextKey = baseScopeKey(event?.detail || {});
-    if (!nextKey || nextKey === state.baseScopeKey) return;
+    const detail = event?.detail || {};
+    const nextKey = baseScopeKey(detail);
+    const nextQuery = String(detail.q || '').trim().slice(0, 200);
+    const baseChanged = Boolean(nextKey && nextKey !== state.baseScopeKey);
+    const queryChanged = nextQuery !== state.q;
+    if (!nextKey || (!baseChanged && !queryChanged)) return;
     state.baseScopeKey = nextKey;
+    if (queryChanged) {
+      state.q = nextQuery;
+      const search = state.root?.querySelector('[data-cfdd-search]');
+      if (search) search.value = state.q;
+    }
     state.requestSeq += 1;
     state.loading = false;
     state.page = 1;
