@@ -54,6 +54,41 @@ assert.match(
   /if \(serial !== state\.auditSerial \|\| storeId !== state\.storeId\) return;/,
   'late audit responses must not overwrite the currently selected store',
 );
+assert.match(
+  operationsHealthSource,
+  /querySelector\('#cfOpsDecisionStart'\)\?\.addEventListener\('change', invalidateDecisionScope\)/,
+  'changing Work Queue start date must invalidate previously loaded authoritative rows',
+);
+assert.match(
+  operationsHealthSource,
+  /querySelector\('#cfOpsDecisionEnd'\)\?\.addEventListener\('change', invalidateDecisionScope\)/,
+  'changing Work Queue end date must invalidate previously loaded authoritative rows',
+);
+assert.match(
+  operationsHealthSource,
+  /function invalidateDecisionScope\(\) \{[\s\S]*state\.decisionSerial \+= 1;[\s\S]*state\.decisionRows = \[\];[\s\S]*state\.operatorWorkRows = \[\];[\s\S]*state\.decisionRange = null;/,
+  'Work Queue date edits must revoke the prior request generation and clear stale rows/range',
+);
+assert.match(
+  operationsHealthSource,
+  /function applyDecisionScopeRange\(panel, range\) \{[\s\S]*const changedControls = \[\];[\s\S]*control\.value = nextValue;[\s\S]*for \(const control of changedControls\) control\.dispatchEvent\(new global\.Event\('change', \{ bubbles: true \}\)\);/,
+  'Work Queue launcher must propagate explicit dates through the existing Decision scope change lifecycle',
+);
+assert.match(
+  operationsHealthSource,
+  /const decisionApi = global\.CloudflareDecisionIntelligence;[\s\S]*typeof decisionApi\.open === 'function'[\s\S]*await decisionApi\.open\(\)/,
+  'Work Queue launcher must use the canonical Decision Intelligence open API when available',
+);
+assert.match(
+  operationsHealthSource,
+  /panel\.querySelector\('\[data-tab="intelligence"\]'\)\?\.click\(\)/,
+  'Open Decision Queue must land on the Intelligence tab rather than preserving a stale Action Inbox tab',
+);
+assert.doesNotMatch(
+  operationsHealthSource,
+  /if \(start\) start\.value = state\.decisionRange\.startDate; if \(end\) end\.value = state\.decisionRange\.endDate;/,
+  'launcher must not bypass Decision scope-change lifecycle with direct date assignment',
+);
 
 const operatorContextSource = await readFile(new URL('../assets/cloudflare-native-operator-context-v1.js', import.meta.url), 'utf8');
 assert.match(
