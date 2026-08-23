@@ -194,6 +194,34 @@ const governanceActor = { user_id: 'user-dev-owner' };
 }
 
 {
+  const auditCountBefore = governanceDb.state.audits.length;
+  const request = new Request('https://example.test/api/v1/stores/store-dev-01/members/user-dev-owner', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ roleKey: 'viewer' }),
+  });
+  const response = await handleAccessGovernanceApiRoute({ request, env: { CONTROL_DB: governanceDb }, actor: governanceActor, url: new URL(request.url) });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'global_role_conflict' });
+  assert.equal(governanceDb.state.members.has('store-dev-01:user-dev-owner'), false);
+  assert.equal(governanceDb.state.audits.length, auditCountBefore);
+}
+
+{
+  const raceDb = fakeGovernanceDb({ insertConflictUserId: 'user-analyst' });
+  const request = new Request('https://example.test/api/v1/stores/store-dev-01/members/user-analyst', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ roleKey: 'viewer' }),
+  });
+  const response = await handleAccessGovernanceApiRoute({ request, env: { CONTROL_DB: raceDb }, actor: governanceActor, url: new URL(request.url) });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'global_role_conflict' });
+  assert.equal(raceDb.state.members.has('store-dev-01:user-analyst'), false);
+  assert.equal(raceDb.state.audits.length, 0);
+}
+
+{
   const deniedDb = fakeGovernanceDb({ permissions: ['users.manage'] });
   const request = new Request('https://example.test/api/v1/stores/store-dev-01/members/user-analyst', {
     method: 'PUT',
@@ -229,6 +257,8 @@ console.log(JSON.stringify({
     'store-membership-upsert',
     'store-membership-store-role-only',
     'store-membership-active-user-only',
+    'store-membership-global-role-conflict-preflight',
+    'store-membership-global-role-conflict-race-normalization',
     'store-membership-dual-global-permission',
     'store-membership-delete',
     'store-membership-audit',
@@ -275,7 +305,7 @@ function fakeUsersDb(initialRow) {
   return db;
 }
 
-function fakeGovernanceDb({ permissions = ['users.manage', 'stores.manage'] } = {}) {
+function fakeGovernanceDb({ permissions = ['users.manage', 'stores.manage'], insertConflictUserId = null } = {}) {
   const roles = new Map([
     ['owner', { role_key: 'owner', role_name: 'Owner', role_scope: 'global', priority: 1, is_system: 1, permissions: ['users.manage', 'stores.manage'] }],
     ['operator', { role_key: 'operator', role_name: 'Operator', role_scope: 'store', priority: 30, is_system: 1, permissions: ['products.manage', 'keywords.manage'] }],
@@ -320,6 +350,16 @@ function fakeGovernanceDb({ permissions = ['users.manage', 'stores.manage'] } = 
               }
               if (sql.includes('FROM stores')) {
                 return params[0] === store.store_id ? { ...store } : null;
+              }
+              if (sql.includes('FROM users') && sql.includes('WHERE u.user_id=?1')) {
+                const row = users.get(params[0]);
+                return row ? {
+                  user_id: row.user_id,
+                  email: row.email,
+                  display_name: row.display_name,
+                  status: row.status,
+                  has_global_role: Boolean(row.global_roles_csv),
+                } : null;
               }
               if (sql.includes('FROM users') && sql.includes('WHERE user_id=?1')) {
                 const row = users.get(params[0]);
@@ -369,6 +409,9 @@ function fakeGovernanceDb({ permissions = ['users.manage', 'stores.manage'] } = 
             },
             async run() {
               if (sql.includes('INSERT INTO store_members')) {
+                if (params[1] === insertConflictUserId) {
+                  throw new Error('D1_ERROR: store_member_global_role_conflict: SQLITE_CONSTRAINT');
+                }
                 state.members.set(`${params[0]}:${params[1]}`, params[2]);
                 return { success: true };
               }

@@ -211,6 +211,7 @@ async function putStoreMember(request, db, actor, storeId, userId) {
   const user = await userById(db, userId);
   if (!user) return json(request, { error: 'user_not_found' }, 404);
   if (user.status !== 'active') return json(request, { error: 'user_not_active' }, 409);
+  if (Boolean(user.has_global_role)) return json(request, { error: 'global_role_conflict' }, 409);
 
   const body = await readJson(request);
   if (body.error) return json(request, { error: body.error }, 400);
@@ -222,12 +223,19 @@ async function putStoreMember(request, db, actor, storeId, userId) {
   if (role.role_scope !== 'store') return json(request, { error: 'store_role_required' }, 400);
 
   const existing = await memberByIds(db, storeId, userId);
-  await db.prepare(`
-    INSERT INTO store_members(store_id, user_id, role_key, created_at)
-    VALUES(?1,?2,?3,CURRENT_TIMESTAMP)
-    ON CONFLICT(store_id, user_id) DO UPDATE SET
-      role_key=excluded.role_key
-  `).bind(storeId, userId, role.role_key).run();
+  try {
+    await db.prepare(`
+      INSERT INTO store_members(store_id, user_id, role_key, created_at)
+      VALUES(?1,?2,?3,CURRENT_TIMESTAMP)
+      ON CONFLICT(store_id, user_id) DO UPDATE SET
+        role_key=excluded.role_key
+    `).bind(storeId, userId, role.role_key).run();
+  } catch (error) {
+    if (isStoreMemberGlobalRoleConflict(error)) {
+      return json(request, { error: 'global_role_conflict' }, 409);
+    }
+    throw error;
+  }
 
   await audit(db, request, actor.user_id, storeId, 'store_member.upsert', 'store_member', `${storeId}:${userId}`, {
     storeId,
@@ -291,9 +299,16 @@ async function storeById(db, storeId) {
 
 async function userById(db, userId) {
   return db.prepare(`
-    SELECT user_id, email, display_name, status
-    FROM users
-    WHERE user_id=?1
+    SELECT
+      u.user_id,
+      u.email,
+      u.display_name,
+      u.status,
+      EXISTS(
+        SELECT 1 FROM user_global_roles WHERE user_id=u.user_id
+      ) AS has_global_role
+    FROM users u
+    WHERE u.user_id=?1
     LIMIT 1
   `).bind(userId).first();
 }
@@ -519,6 +534,10 @@ function decodeCursor(value) {
 
 function isUniqueError(error) {
   return /unique|constraint/i.test(String(error?.message || error || ''));
+}
+
+function isStoreMemberGlobalRoleConflict(error) {
+  return /store_member_global_role_conflict/i.test(String(error?.message || error || ''));
 }
 
 function plainObject(value) {
