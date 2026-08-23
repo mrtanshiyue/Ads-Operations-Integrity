@@ -203,6 +203,8 @@
     global.document.querySelector('#btnCfOpsHealthClose')?.addEventListener('click', close);
     global.document.querySelector('#btnCfOpsHealthRefresh')?.addEventListener('click', () => { void refresh(); });
     global.document.querySelector('#btnCfOpsDecisionLoad')?.addEventListener('click', () => { void refreshDecisionQueue(); });
+    global.document.querySelector('#cfOpsDecisionStart')?.addEventListener('change', invalidateDecisionScope);
+    global.document.querySelector('#cfOpsDecisionEnd')?.addEventListener('change', invalidateDecisionScope);
     global.document.querySelector('#cfOpsHealthStore')?.addEventListener('change', async (event) => { await selectStore(String(event.target.value || '')); });
     global.document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && state.open) close(); });
     renderDecisionQueue();
@@ -231,6 +233,20 @@
     state.open = true; modal.style.display = 'flex'; renderStores(); renderAccess(); renderDecisionQueue(); await refresh();
   }
   function close() { const modal = global.document.querySelector('#nativeOperationsHealthModal'); if (modal) modal.style.display = 'none'; state.open = false; }
+
+  function invalidateDecisionScope() {
+    const hadLoadedScope = Boolean(state.decisionRange || state.decisionGeneratedAt || state.decisionRows.length || state.operatorWorkRows.length || state.decisionError);
+    state.decisionSerial += 1;
+    state.decisionLoading = false;
+    state.decisionRows = [];
+    state.operatorWorkRows = [];
+    state.decisionGeneratedAt = '';
+    state.decisionRange = null;
+    state.decisionError = null;
+    setDecisionBusy(false);
+    renderDecisionQueue();
+    if (hadLoadedScope) setStatus('Decision 日期范围已变更；请重新读取 Work Queue 后再打开 Decision Queue', 'info');
+  }
 
   async function refresh() {
     if (!state.open || !state.storeId || state.loading) return;
@@ -323,16 +339,30 @@
     }
   }
 
-  function openDecisionQueue(row) {
-    if (!row?.storeId || !state.decisionRange) return;
+  async function openDecisionQueue(row) {
+    const range = state.decisionRange;
+    if (!row?.storeId || !range) return;
     global.CloudflareOperatorContext?.setContext?.({ storeId: row.storeId }, { source: 'operations-decision-queue' });
     state.storeId = row.storeId;
+    close();
+    const decisionApi = global.CloudflareDecisionIntelligence;
+    if (decisionApi && typeof decisionApi.open === 'function') await decisionApi.open();
+    else global.document.querySelector('#cfDecisionLauncher')?.click();
     const panel = global.document.querySelector('#cfDecisionPanel');
-    if (panel) {
-      const start = panel.querySelector('[name="startDate"]'); const end = panel.querySelector('[name="endDate"]');
-      if (start) start.value = state.decisionRange.startDate; if (end) end.value = state.decisionRange.endDate;
+    if (!panel) return;
+    applyDecisionScopeRange(panel, range);
+    panel.querySelector('[data-tab="intelligence"]')?.click();
+  }
+
+  function applyDecisionScopeRange(panel, range) {
+    const changedControls = [];
+    for (const [name, nextValue] of [['startDate', range.startDate], ['endDate', range.endDate]]) {
+      const control = panel?.querySelector(`[name="${name}"]`);
+      if (!control || control.value === nextValue) continue;
+      control.value = nextValue;
+      changedControls.push(control);
     }
-    close(); global.document.querySelector('#cfDecisionLauncher')?.click();
+    for (const control of changedControls) control.dispatchEvent(new global.Event('change', { bubbles: true }));
   }
 
   function renderOverview() {
@@ -378,7 +408,7 @@
     for (const row of state.decisionRows) {
       const tr = global.document.createElement('tr'); const priority = textCell(row.decisionLabel); priority.dataset.priority = String(row.decisionPriority); tr.appendChild(priority);
       tr.appendChild(textCell(row.displayName || row.storeCode || row.storeId)); tr.appendChild(textCell(row.decisionReason)); tr.appendChild(textCell(displayCount(row.activeQueueCount))); tr.appendChild(textCell(displayCount(row.needsReviewCount))); tr.appendChild(textCell(displayCount(row.highUnreviewedCount))); tr.appendChild(textCell(displayCount(row.staleReviewEvidenceCount)));
-      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => openDecisionQueue(row)); openButton.disabled = row.evidenceState !== 'available'; action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
+      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => { void openDecisionQueue(row); }); openButton.disabled = row.evidenceState !== 'available'; action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
     }
   }
 
@@ -401,7 +431,7 @@
     for (const row of state.operatorWorkRows) {
       const tr = global.document.createElement('tr'); const priority = textCell(`P${row.priority} · ${String(row.queueClass || '').replaceAll('_', ' ')}`); priority.dataset.priority = String(row.priority); tr.appendChild(priority);
       tr.appendChild(textCell(row.displayName || row.storeCode || row.storeId)); tr.appendChild(textCell(row.reasonText || row.reasonCode || '—')); tr.appendChild(textCell(displayCount(row.needsReviewCount))); tr.appendChild(textCell(displayCount(row.staleReviewEvidenceCount))); tr.appendChild(textCell(displayCount(row.highUnreviewedCount))); tr.appendChild(textCell(displayCount(row.otherUnreviewedCount)));
-      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => openDecisionQueue(row)); openButton.disabled = row.evidenceState !== 'available' || (row.needsReviewCount === 0 && row.staleReviewEvidenceCount === 0 && row.highUnreviewedCount === 0 && row.otherUnreviewedCount === 0); action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
+      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => { void openDecisionQueue(row); }); openButton.disabled = row.evidenceState !== 'available' || (row.needsReviewCount === 0 && row.staleReviewEvidenceCount === 0 && row.highUnreviewedCount === 0 && row.otherUnreviewedCount === 0); action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
     }
   }
 
