@@ -39,6 +39,21 @@ assert.match(
   /row\.needsReviewCount === 0 && row\.staleReviewEvidenceCount === 0 && row\.highUnreviewedCount === 0 && row\.otherUnreviewedCount === 0/,
   'stale-review-only work queue rows must keep Open Decision Queue actionable',
 );
+assert.match(
+  operationsHealthSource,
+  /requestSerial: 0, decisionSerial: 0, auditSerial: 0/,
+  'operations health must track audit request ownership independently',
+);
+assert.match(
+  operationsHealthSource,
+  /const auditStoreId = state\.storeId;\s*const auditSerial = \+\+state\.auditSerial;/,
+  'cross-store refresh must capture the audit store and generation before awaiting',
+);
+assert.match(
+  operationsHealthSource,
+  /if \(serial !== state\.auditSerial \|\| storeId !== state\.storeId\) return;/,
+  'late audit responses must not overwrite the currently selected store',
+);
 
 const queue = buildOperatorWorkQueue({
   generatedAt: '2026-08-23T00:00:00.000Z',
