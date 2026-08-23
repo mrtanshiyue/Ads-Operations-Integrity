@@ -150,3 +150,5 @@ console.log(JSON.stringify({
   executionAuthorized: false,
   amazonMutationAuthorized: false,
 }));
+
+// #273 registered-workflow trigger; remove before landing.
