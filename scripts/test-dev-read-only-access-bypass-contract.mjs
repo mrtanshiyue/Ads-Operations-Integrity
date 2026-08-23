@@ -153,7 +153,7 @@ assert.match(webEntrySource, /DEV_READ_ONLY_BYPASS_ACTOR_ID = 'user-dev-owner'/)
 assert.match(webEntrySource, /'\/api\/v1\/stores'/);
 assert.match(webEntrySource, /'\/api\/v1\/capabilities'/);
 assert.match(observedEntrySource, /handleDevReadOnlyBootstrapRoute/);
-assert.match(observedEntrySource, /uatResponse \|\| devBootstrapResponse \|\| await application\.fetch/);
+assert.match(observedEntrySource, /devBootstrapResponse \|\| await application\.fetch/);
 assert.match(bootstrapSource, /APP_ENV/);
 assert.match(bootstrapSource, /ACCESS_MODE/);
 assert.match(bootstrapSource, /DEV_BOOTSTRAP_ACTOR_ID = 'user-dev-owner'/);
