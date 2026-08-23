@@ -211,8 +211,9 @@
         signal: controller.signal,
       });
       validateWriteResponse(payload, scope.storeId);
-      if (scopeKey(currentScope()) !== writeScopeKey) throw new Error('human_review_scope_changed_during_write');
+      if (!writeScopeIsCurrent(writeScopeKey)) return; // human_review_scope_changed_during_write: stale response suppressed
       await loadSnapshot(scope, { force: true });
+      if (!writeScopeIsCurrent(writeScopeKey)) return;
       const verified = state.reviews.get(inboxItemId);
       if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
         throw new Error('human_review_read_after_write_mismatch');
@@ -221,12 +222,13 @@
         throw new Error('human_review_rationale_read_after_write_mismatch');
       }
     } catch (error) {
+      if (!writeScopeIsCurrent(writeScopeKey)) return;
       state.errors.set(inboxItemId, errorCode(error));
       renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
     } finally {
       global.clearTimeout(timeoutId);
       state.busy.delete(inboxItemId);
-      applySnapshot(recommendationSection());
+      if (writeScopeIsCurrent(writeScopeKey)) applySnapshot(recommendationSection());
     }
   }
 
@@ -241,6 +243,10 @@
     if (value === null || value === undefined) return null;
     const normalized = String(value).trim();
     return normalized || null;
+  }
+
+  function writeScopeIsCurrent(writeScopeKey) {
+    return currentSource() === 'csv' && scopeKey(currentScope()) === writeScopeKey;
   }
 
   async function requestReview(scope, { method, body, signal } = {}) {
