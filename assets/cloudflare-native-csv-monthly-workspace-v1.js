@@ -1,7 +1,7 @@
 export const CSV_MONTHLY_WORKSPACE_SCHEMA_VERSION = 'csv-monthly-operating-workspace-v1';
 export const CSV_MONTHLY_WORKSPACE_UI_VERSION = '1.0.0';
 
-const state = { mounted: false, busy: false, workspace: null };
+const state = { mounted: false, busy: false, requestSeq: 0, workspace: null };
 const NON_AUTHORITY = Object.freeze({
   mode: 'browser_local_monthly_workspace_only',
   authoritative: false,
@@ -131,25 +131,29 @@ function mount() {
 }
 
 async function refresh(root, joint) {
-  if (state.busy) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return status(root, 'Joint CSV inputs are unavailable.', 'bad');
+  const seq = ++state.requestSeq;
   state.busy = true;
   setEnabled(root, false);
   status(root, `Building monthly workspace locally from ${files.length} file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
+    if (seq !== state.requestSeq) return;
     const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (seq !== state.requestSeq) return;
     state.workspace = buildCsvMonthlyOperatingWorkspace(result);
     populateMonthSelect(root);
     renderSelected(root);
     const s = state.workspace.summary;
     status(root, `${s.monthCount} month(s) · ${s.fullMonthCount} full coverage · ${s.partialMonthCount} partial · ${s.blockedMonthCount} blocked. No persistence or execution authority.`, s.blockedMonthCount ? 'bad' : s.partialMonthCount ? 'warn' : 'ok');
   } catch (error) {
+    if (seq !== state.requestSeq) return;
     state.workspace = null;
     root.querySelector('[data-cfmw-body]').hidden = true;
     status(root, `Monthly workspace failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
+    if (seq !== state.requestSeq) return;
     state.busy = false;
     setEnabled(root, true);
   }
@@ -196,7 +200,7 @@ function inferCurrency(item) { return item.sourceReceipts.find((receipt) => rece
 function finiteOrNull(value) { return value == null || !Number.isFinite(Number(value)) ? null : Number(value); }
 function card(label, value) { return `<div class="cfmw-card"><span>${esc(label)}</span>${value}</div>`; }
 function setEnabled(root, enabled) { root.querySelector('[data-cfmw-refresh]').disabled = !enabled || state.busy; if (!enabled) root.querySelector('[data-cfmw-month]').disabled = true; }
-function reset(root, message) { state.workspace = null; const select = root.querySelector('[data-cfmw-month]'); select.innerHTML = '<option>Run Joint CSV Analysis</option>'; select.disabled = true; root.querySelector('[data-cfmw-body]').hidden = true; status(root, message); }
+function reset(root, message) { state.requestSeq += 1; state.busy = false; state.workspace = null; const select = root.querySelector('[data-cfmw-month]'); select.innerHTML = '<option>Run Joint CSV Analysis</option>'; select.disabled = true; const body = root.querySelector('[data-cfmw-body]'); body.hidden = true; body.innerHTML = ''; status(root, message); }
 function status(root, message, kind = '') { const node = root.querySelector('[data-cfmw-status]'); node.textContent = message; node.dataset.kind = kind; }
 function num(value) { return value == null || !Number.isFinite(Number(value)) ? '0' : Math.round(Number(value)).toLocaleString(); }
 function pct(value) { return value == null || !Number.isFinite(Number(value)) ? '—' : `${(Number(value) * 100).toFixed(1)}%`; }
