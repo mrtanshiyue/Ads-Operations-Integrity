@@ -1,9 +1,9 @@
-# Phase 5 Store 01 First-Run Archive
+# Phase 5 Store 01 Activation Design Archive
 
-Status: **ARCHIVED / NOT ACTIVE EXECUTION AUTHORITY**.
+Status: **ARCHIVED DESIGN / NOT ACTIVE EXECUTION AUTHORITY**.
 
-This directory preserves the historical Phase 5 Store 01 live-read activation design and its deterministic first-run planner. The original activation sequence assumed a temporary Development transition with `AMAZON_ADS_ENABLED=true` and an exact single-run `SYNC_TRIGGER_ENABLED=true` permit. That sequence is complete/frozen and conflicts with the current Stable Operations / Maintenance Mode HARD-OFF posture.
+This directory preserves the historical Phase 5 Store 01 live-read activation design. The original sequence assumed temporary Development transitions with `AMAZON_ADS_ENABLED=true` and an exact single-run `SYNC_TRIGGER_ENABLED=true` permit. That sequence is complete/frozen and is not current Maintenance Mode authority.
 
-The archived material is retained for traceability only. It must not be used to authorize Amazon API/network activity, credential mutation, Sync activation, scheduled sync, Production mutation, or Optimization Action execution.
+The deterministic `scripts/plan-phase5-store01-first-run.mjs` module remains in the active scripts tree because canonical producer regression tests import its pure planning contract. Its presence is test/contract coverage only and does not authorize Amazon API/network activity, credential mutation, Sync activation, scheduled sync, Production mutation, or Optimization Action execution.
 
 Current closed-state authority remains in the root Maintenance documentation, `docs/operations/PHASE5_STORE01_ACTIVATION_STATE.json`, canonical CI/HARD-OFF regression contracts, and maintained Production/Release evidence surfaces.
