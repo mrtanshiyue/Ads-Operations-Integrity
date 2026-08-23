@@ -4,6 +4,7 @@
   const VERSION = '2.0.0';
   const STORAGE_PROFILE = 'aoi.decision.profileId';
   const STORAGE_RANGE = 'aoi.decision.rangeDays';
+  const DECISION_SCOPE_CONTROLS = new Set(['profileId', 'startDate', 'endDate', 'limit', 'sort']);
   const state = {
     mounted: false,
     open: false,
@@ -14,6 +15,7 @@
     intelligenceSerial: 0,
     actionsSerial: 0,
     detailSerial: 0,
+    governanceSerial: 0,
     selectedIntelligenceIndex: null,
     selectedActionId: null,
     dryRuns: new Map(),
@@ -56,6 +58,7 @@
     panel.querySelector('[data-results]').addEventListener('click', handleIntelligenceClick);
     panel.querySelector('[data-actions-results]').addEventListener('click', handleActionClick);
     panel.querySelector('[data-drawer]').addEventListener('click', handleDrawerClick);
+    panel.addEventListener('change', handleDecisionScopeChange);
 
     panel.querySelector('[name="profileId"]').value = localStorage.getItem(STORAGE_PROFILE) || '';
     panel.querySelector('[name="rangeDays"]').value = localStorage.getItem(STORAGE_RANGE) || '30';
@@ -65,9 +68,11 @@
       state.intelligenceSerial += 1;
       state.actionsSerial += 1;
       state.detailSerial += 1;
+      state.governanceSerial += 1;
       state.loading = false;
       state.payload = null;
       state.actions = null;
+      state.dryRuns.clear();
       panel.querySelector('[data-results]').innerHTML = '';
       panel.querySelector('[data-actions-results]').innerHTML = '';
       panel.querySelector('[data-actions-status]').textContent = '';
@@ -125,6 +130,20 @@
         <div data-actions-results></div>
       </div>
       <aside class="cfdi-drawer" data-drawer hidden aria-label="Evidence Drilldown"></aside>`;
+  }
+
+  function handleDecisionScopeChange(event) {
+    const name = String(event.target?.name || '');
+    if (!DECISION_SCOPE_CONTROLS.has(name)) return;
+    state.intelligenceSerial += 1;
+    state.detailSerial += 1;
+    state.governanceSerial += 1;
+    state.loading = false;
+    state.payload = null;
+    state.dryRuns.clear();
+    panelNode().querySelector('[data-results]').innerHTML = '';
+    setStatus('Decision scope changed. Run preview again before review or persistence.', 'warn');
+    closeDrawer();
   }
 
   async function runIntelligence() {
@@ -324,33 +343,44 @@
 
   async function dryRunSelectedRecommendation() {
     const item = selectedIntelligenceItem();
-    if (!item?.recommendation || !state.payload) return;
+    const sourcePayload = state.payload;
+    const storeId = currentStoreId();
+    if (!item?.recommendation || !sourcePayload || !storeId) return;
+    const serial = ++state.governanceSerial;
     setDrawerBusy('Validating dry-run…');
     try {
-      const body = recommendationActionBody(item, state.payload, true);
-      const payload = await requestJson(actionCollectionUrl(true), jsonPost(body));
+      const body = recommendationActionBody(item, sourcePayload, true);
+      const payload = await requestJson(actionCollectionUrl(true, storeId), jsonPost(body));
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       state.dryRuns.set(item.fingerprint, payload);
-      renderIntelligenceDrawer(item, state.payload);
+      renderIntelligenceDrawer(item, sourcePayload);
     } catch (error) {
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       setDrawerError(error.message || 'Dry-run failed.');
     }
   }
 
   async function persistSelectedRecommendation() {
     const item = selectedIntelligenceItem();
-    if (!item?.recommendation || !state.payload) return;
+    const sourcePayload = state.payload;
+    const storeId = currentStoreId();
+    if (!item?.recommendation || !sourcePayload || !storeId) return;
     const dryRun = state.dryRuns.get(item.fingerprint);
     if (!dryRun?.valid) return setDrawerError('Run a valid dry-run before persistence.');
+    const serial = ++state.governanceSerial;
     setDrawerBusy('Persisting proposed action…');
     try {
-      const payload = await requestJson(actionCollectionUrl(false), jsonPost(recommendationActionBody(item, state.payload, false)));
+      const payload = await requestJson(actionCollectionUrl(false, storeId), jsonPost(recommendationActionBody(item, sourcePayload, false)));
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       state.tab = 'actions';
       renderTabs();
       closeDrawer();
       await loadActions();
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       const status = panelNode().querySelector('[data-actions-status]');
       status.textContent = `${payload.idempotentReuse ? 'Existing' : 'New'} proposed action ${payload.action?.actionId || ''}. Amazon execution remains disabled.`;
     } catch (error) {
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       setDrawerError(error.message || 'Proposed action persistence failed.');
     }
   }
@@ -435,23 +465,35 @@
   async function rejectSelectedAction(actionId) {
     const reason = String(panelNode().querySelector('[name="rejectionReason"]')?.value || '').trim();
     if (!reason) return setDrawerError('Rejection reason is required.');
+    const storeId = currentStoreId();
+    if (!storeId) return;
+    const serial = ++state.governanceSerial;
     setDrawerBusy('Rejecting proposed action…');
     try {
-      await requestJson(actionTransitionUrl(actionId, 'reject'), jsonPost({ reason }));
+      await requestJson(actionTransitionUrl(actionId, 'reject', storeId), jsonPost({ reason }));
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       await loadActions();
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       await openActionDetail(actionId);
     } catch (error) {
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       setDrawerError(error.message || 'Reject transition failed.');
     }
   }
 
   async function approveSelectedAction(actionId) {
+    const storeId = currentStoreId();
+    if (!storeId) return;
+    const serial = ++state.governanceSerial;
     setDrawerBusy('Recording governance approval…');
     try {
-      await requestJson(actionTransitionUrl(actionId, 'approve'), jsonPost({}));
+      await requestJson(actionTransitionUrl(actionId, 'approve', storeId), jsonPost({}));
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       await loadActions();
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       await openActionDetail(actionId);
     } catch (error) {
+      if (serial !== state.governanceSerial || storeId !== currentStoreId()) return;
       setDrawerError(error.message || 'Approve transition failed.');
     }
   }
@@ -539,13 +581,11 @@
     };
   }
 
-  function actionCollectionUrl(dryRun) {
-    const storeId = currentStoreId();
+  function actionCollectionUrl(dryRun, storeId = currentStoreId()) {
     return `/api/v1/stores/${encodeURIComponent(storeId)}/optimization-actions${dryRun ? '?dryRun=true' : ''}`;
   }
 
-  function actionTransitionUrl(actionId, transition) {
-    const storeId = currentStoreId();
+  function actionTransitionUrl(actionId, transition, storeId = currentStoreId()) {
     return `/api/v1/stores/${encodeURIComponent(storeId)}/optimization-actions/${encodeURIComponent(actionId)}/${transition}`;
   }
 
