@@ -66,12 +66,14 @@
   function setContext(patch = {}, options = {}) {
     const next = { ...state.context };
     let changed = false;
+    let storeChanged = false;
 
     if (Object.prototype.hasOwnProperty.call(patch, 'storeId')) {
       const value = text(patch.storeId);
       if (value !== next.storeId) {
         next.storeId = value;
         changed = true;
+        storeChanged = true;
       }
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'productId')) {
@@ -93,6 +95,7 @@
     state.context = next;
     if (!changed) return getContext();
 
+    if (storeChanged) syncWorkspaceStore(next.storeId);
     render();
     dispatchContextChange(options.source || 'operator-context');
     if (!options.skipApply) applyToControls();
@@ -282,7 +285,7 @@
       </label>
       <label class="cfOperatorContextField">
         <span>${escapeHtml(t('关键词', 'Keyword'))}</span>
-        <select id="cfOperatorContextKeyword"${keywordDisabled ? ' disabled' : ''}>${keywordOptions}</select>
+        <select id="cfOperatorContextKeyword"${keywordDisabled ? ' disabled'}>${keywordOptions}</select>
       </label>
       <div class="cfOperatorContextActions">
         <button type="button" id="btnCfOperatorContextAudit" class="btn" ${mode.canRead ? '' : 'disabled'}>${escapeHtml(t('查看当前审计', 'Audit current scope'))}</button>
@@ -337,6 +340,17 @@
       syncSelect(selector, state.context.productId);
     }
     applyKeywordSearch();
+  }
+
+  function syncWorkspaceStore(storeId) {
+    const id = text(storeId);
+    if (!id) return;
+    const select = global.document.querySelector('#cfOperatorStore');
+    if (!select || select.value === id) return;
+    const option = Array.from(select.options || []).find((entry) => entry.value === id);
+    if (!option) return;
+    select.value = id;
+    select.dispatchEvent(new global.Event('change', { bubbles: true }));
   }
 
   function syncSelect(selector, value) {
