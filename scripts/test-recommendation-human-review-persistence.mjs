@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   authorizeReviewCandidateForPersistence,
+  effectiveReviewNote,
+  parseReviewNoteRequest,
   persistedStateToUiState,
   reviewContextKeyFromEvidenceJson,
 } from '../cloudflare/runtime/csv-recommendation-human-review-api.js';
@@ -111,6 +113,23 @@ assert.equal(persistedStateToUiState('rejected'), 'rejected');
 assert.equal(persistedStateToUiState('dismissed'), 'rejected');
 assert.equal(persistedStateToUiState('snoozed'), null);
 
+const omittedNote = parseReviewNoteRequest({ inboxItemId: 'item', state: 'approved' });
+assert.deepEqual(omittedNote, { provided: false, value: null });
+assert.equal(effectiveReviewNote(omittedNote, 'Existing rationale'), 'Existing rationale');
+assert.equal(effectiveReviewNote(omittedNote, null), null);
+
+const explicitNote = parseReviewNoteRequest({ note: '  Keep this rationale  ' });
+assert.deepEqual(explicitNote, { provided: true, value: 'Keep this rationale' });
+assert.equal(effectiveReviewNote(explicitNote, 'Old rationale'), 'Keep this rationale');
+
+const explicitBlank = parseReviewNoteRequest({ note: '   ' });
+assert.deepEqual(explicitBlank, { provided: true, value: null });
+assert.equal(effectiveReviewNote(explicitBlank, 'Existing rationale'), null);
+const explicitNull = parseReviewNoteRequest({ note: null });
+assert.deepEqual(explicitNull, { provided: true, value: null });
+assert.equal(effectiveReviewNote(explicitNull, 'Existing rationale'), null);
+assert.equal(parseReviewNoteRequest({ note: 'x'.repeat(4001) }).error, 'review_note_too_long');
+
 const binding = await buildRecommendationReviewBinding(authorized);
 const contextKey = reviewContextKeyFromEvidenceJson(binding.sourceEvidenceJson);
 assert.ok(contextKey);
@@ -130,6 +149,8 @@ assert.ok(apiSource.includes('review_candidate_not_currently_emitted'));
 assert.ok(apiSource.includes('authenticated_actor_required'));
 assert.ok(apiSource.includes('requestedState'));
 assert.ok(apiSource.includes('source_evidence_sha256'));
+assert.ok(apiSource.includes('effectiveReviewNote(noteRequest, existing.reviewer_note)'));
+assert.ok(apiSource.includes('effectiveReviewNote(noteRequest, raced.reviewer_note)'));
 assert.ok(!apiSource.includes('optimization_actions'));
 assert.ok(!apiSource.includes('optimization_execution_permits'));
 assert.ok(!apiSource.includes('amazon-ads'));
@@ -144,6 +165,9 @@ console.log(JSON.stringify({
   needsReviewMappedToOpen: true,
   rootPersistenceFailsClosed: true,
   approvedRejectedReviewOnlyPersistence: true,
+  omittedNotePreservesExistingRationale: true,
+  explicitBlankOrNullClearsRationale: true,
+  explicitNoteIsTrimmed: true,
   evidenceMutationChangesFingerprint: true,
   idempotencyKey: 'source_kind+recommendation_fingerprint',
   optimizationActionMutationAllowed: false,
