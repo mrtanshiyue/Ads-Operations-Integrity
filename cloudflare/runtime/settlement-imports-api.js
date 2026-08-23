@@ -269,15 +269,33 @@ async function classifySettlementAuthority(request, env, route, actor, storeId, 
   }
   if (dataClass === row.data_class) return json(request, { error:'settlement_authority_no_change' }, 409);
 
-  const nextVersion = Number(row.authority_version) + 1;
+  const previousVersion = Number(row.authority_version);
+  const nextVersion = previousVersion + 1;
   const now = new Date().toISOString();
+  let mutation;
   try {
-    await route.storeDb.prepare(`
+    mutation = await route.storeDb.prepare(`
       UPDATE settlement_import_authority
       SET data_class=?2,authority_version=?3,actor_user_id=?4,
           reason=?5,evidence_json=?6,updated_at=?7
-      WHERE import_id=?1 AND provenance_class='exact_source_object'
-    `).bind(importId, dataClass, nextVersion, actor.user_id, reason, JSON.stringify(evidence), now).run();
+      WHERE import_id=?1
+        AND provenance_class='exact_source_object'
+        AND authority_version=?8
+        AND data_class=?9
+        AND EXISTS (
+          SELECT 1
+          FROM settlement_import_batches b
+          JOIN settlement_import_reconciliation_receipts r ON r.import_id=b.import_id
+          WHERE b.import_id=settlement_import_authority.import_id
+            AND b.status='published'
+            AND r.status='pass'
+            AND COALESCE(r.difference_micros,0)=0
+            AND COALESCE(r.mismatch_rows,0)=0
+        )
+    `).bind(
+      importId, dataClass, nextVersion, actor.user_id, reason, JSON.stringify(evidence), now,
+      previousVersion, row.data_class,
+    ).run();
   } catch (error) {
     const message = String(error?.message || error || '');
     if (message.includes('SETTLEMENT_AUTHORITY_') || message.includes('SETTLEMENT_PROVENANCE_')) {
@@ -285,6 +303,18 @@ async function classifySettlementAuthority(request, env, route, actor, storeId, 
     }
     throw error;
   }
+  if (mutationChanges(mutation) !== 1) {
+    const current = await route.storeDb.prepare(`
+      SELECT import_id,data_class,provenance_class,authority_version,
+             actor_user_id,reason,evidence_json,created_at,updated_at
+      FROM settlement_import_authority WHERE import_id=?1 LIMIT 1
+    `).bind(importId).first();
+    if (current && current.data_class === dataClass) {
+      return json(request, { error:'settlement_authority_no_change' }, 409);
+    }
+    return json(request, { error:'settlement_authority_conflict' }, 409);
+  }
+
   const updated = await route.storeDb.prepare(`
     SELECT import_id,data_class,provenance_class,authority_version,
            actor_user_id,reason,evidence_json,created_at,updated_at
@@ -295,7 +325,7 @@ async function classifySettlementAuthority(request, env, route, actor, storeId, 
       previous:{
         dataClass:row.data_class,
         provenanceClass:row.provenance_class,
-        authorityVersion:Number(row.authority_version),
+        authorityVersion:previousVersion,
       },
       current:{
         dataClass,
@@ -403,6 +433,12 @@ async function audit(db, request, actorUserId, storeId, action, entityType, enti
   } catch (error) {
     console.error('settlement_import_audit_failed', { action, message:error?.message || String(error) });
   }
+}
+
+function mutationChanges(result) {
+  const value = result?.meta?.changes ?? result?.changes;
+  const changes = Number(value);
+  return Number.isFinite(changes) ? changes : 0;
 }
 
 async function readJson(request) {
