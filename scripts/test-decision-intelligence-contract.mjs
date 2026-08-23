@@ -117,6 +117,10 @@ assert.match(uiSource, /state\.governanceSerial \+= 1;[\s\S]{0,220}state\.dryRun
   'Store changes must invalidate in-flight governance presentation and prior dry-run authorization');
 assert.match(uiSource, /function handleDecisionScopeChange\(event\)[\s\S]{0,500}state\.payload = null;[\s\S]{0,200}state\.dryRuns\.clear\(\)/,
   'Profile/date/limit/sort changes must remove stale preview and dry-run state before further governance actions');
+assert.match(uiSource, /function handleDecisionScopeChange\(event\)[\s\S]{0,900}if \(name === 'profileId'\) \{[\s\S]{0,180}state\.actionsSerial \+= 1;[\s\S]{0,120}state\.actions = null;[\s\S]{0,180}querySelector\('\[data-actions-results\]'\)\.innerHTML = '';[\s\S]{0,360}state\.open && state\.tab === 'actions'\) void loadActions\(\);/,
+  'Profile changes must invalidate, clear, and refresh the profile-filtered Action Inbox');
+assert.match(uiSource, /const profileId = value\(panel, 'profileId'\);\s*if \(profileId\) params\.set\('profileId', profileId\);/,
+  'Action Inbox requests must remain explicitly filtered by the current profile when present');
 assert.match(uiSource, /const serial = \+\+state\.governanceSerial;/,
   'Governance operations must capture a generation before awaiting');
 assert.match(uiSource, /actionCollectionUrl\(true, storeId\)/,
@@ -145,5 +149,6 @@ console.log(JSON.stringify({
   crossStoreLateResponseSuppression: true,
   governanceScopeOwnership: true,
   decisionScopeInvalidation: true,
+  actionInboxProfileScopeInvalidation: true,
   amazonMutationAuthorized: false,
 }, null, 2));
