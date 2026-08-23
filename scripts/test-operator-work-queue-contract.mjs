@@ -55,6 +55,23 @@ assert.match(
   'late audit responses must not overwrite the currently selected store',
 );
 
+const operatorContextSource = await readFile(new URL('../assets/cloudflare-native-operator-context-v1.js', import.meta.url), 'utf8');
+assert.match(
+  operatorContextSource,
+  /let changed = false;\s*let storeChanged = false;/,
+  'shared operator context must distinguish store transitions from product and keyword transitions',
+);
+assert.match(
+  operatorContextSource,
+  /if \(storeChanged\) syncWorkspaceStore\(next\.storeId\);/,
+  'programmatic store navigation must propagate into the canonical Operator Workspace store selector',
+);
+assert.match(
+  operatorContextSource,
+  /select\.dispatchEvent\(new global\.Event\('change', \{ bubbles: true \}\)\);/,
+  'canonical store propagation must emit the existing workspace store-change lifecycle',
+);
+
 const queue = buildOperatorWorkQueue({
   generatedAt: '2026-08-23T00:00:00.000Z',
   dateRange: range,
