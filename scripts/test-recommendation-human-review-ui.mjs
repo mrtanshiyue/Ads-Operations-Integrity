@@ -7,18 +7,20 @@ const inbox = await readFile(new URL('../assets/cloudflare-native-csv-recommenda
 const usability = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const allowlist = await readFile(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
-assert.match(ui, /const VERSION = '1\.6\.0'/, 'Human Review UI version contract is missing');
+assert.match(ui, /const VERSION = '1\.7\.0'/, 'Human Review UI version contract is missing');
 assert.match(ui, /const CONTRACT_VERSION = 'csv-recommendation-human-review-v1'/, 'Human Review server contract version is missing');
 assert.match(ui, /const DECISION_PACKET_VERSION = 'recommendation-decision-packet-v1'/,
   'Recommendation Decision Packet UI contract version is missing');
 assert.match(ui, /const CANDIDATE_LIBRARY_VERSION = 'governed-keyword-negative-candidate-library-v1'/,
-  'Governed Keyword / Negative Candidate Library UI contract version is missing');
+  'Governed Keyword \/ Negative Candidate Library UI contract version is missing');
 assert.match(ui, /const HISTORICAL_LEARNING_VERSION = 'historical-review-learning-v1'/,
   'Historical Review Learning UI contract version is missing');
 assert.match(ui, /candidateLibraryVersion: CANDIDATE_LIBRARY_VERSION/,
   'Human Review UI public contract must expose Candidate Library version');
 assert.match(ui, /historicalLearningVersion: HISTORICAL_LEARNING_VERSION/,
   'Human Review UI public contract must expose Historical Learning version');
+assert.match(ui, /const REVIEW_NOTE_MAX_LENGTH = 4000/,
+  'Human Review rationale client guard must preserve the 4000-character server contract');
 assert.match(ui, /const DURABLE_STATES = new Set\(\['acknowledged', 'needs_review', 'approved', 'rejected'\]\)/,
   'Human Review UI must expose the four schema-backed durable review states');
 assert.match(ui, /reviewContract: CONTRACT_VERSION/, 'Human Review requests must select the dedicated persistence route');
@@ -29,10 +31,10 @@ assert.match(ui, /if \(!\['GET', 'POST'\]\.includes\(method\)\)/,
 assert.doesNotMatch(ui, /method\s*:\s*['"](?:PUT|PATCH|DELETE)['"]/i,
   'Human Review UI must not expose generic mutation verbs');
 
-assert.match(ui, /data-cfhr-set="needs_review"/, 'Needs-review durable action is missing');
-assert.match(ui, /data-cfhr-set="acknowledged"/, 'Acknowledgement durable action is missing');
-assert.match(ui, /data-cfhr-set="approved"/, 'Approved review-only durable action is missing');
-assert.match(ui, /data-cfhr-set="rejected"/, 'Rejected review-only durable action is missing');
+assert.match(ui, /data-cfhr-set="needs_review"/, 'Needs-review durable table action is missing');
+assert.match(ui, /data-cfhr-set="acknowledged"/, 'Acknowledgement durable table action is missing');
+assert.match(ui, /data-cfhr-set="approved"/, 'Approved review-only durable table action is missing');
+assert.match(ui, /data-cfhr-set="rejected"/, 'Rejected review-only durable table action is missing');
 assert.doesNotMatch(ui, /data-cfhr-set="execute"/, 'Execute action must remain unavailable');
 assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.'),
   'Final disposition UI copy must preserve the execution boundary');
@@ -43,6 +45,33 @@ assert.match(ui, /human_review_read_after_write_mismatch/,
   'UI must fail closed if read-after-write does not confirm requested durable state');
 assert.match(ui, /No optimistic review, reconstructed evidence, or inferred learning state is shown/,
   'UI must explicitly reject optimistic durable presentation, evidence reconstruction, and inferred learning state');
+
+assert.match(ui, /<span>Human Review rationale \(optional\)<\/span><textarea data-cfhr-rationale maxlength="4000"/,
+  'Rationale editor must live in the existing Durable Human Review drawer with maxlength=4000');
+assert.match(ui, /const currentNote = item\?\.review\?\.note == null \? '' : String\(item\.review\.note\)/,
+  'Editable rationale must initialize only from exact-current server review.note');
+assert.doesNotMatch(ui, /latestHistoricalReview\?\.note[\s\S]{0,300}data-cfhr-rationale/,
+  'Stale historical rationale must never seed the editable current rationale');
+assert.doesNotMatch(ui, /staleEvidence[\s\S]{0,300}data-cfhr-rationale/,
+  'Stale Decision Packet rationale must never seed the editable current rationale');
+for (const durableState of ['needs_review', 'acknowledged', 'approved', 'rejected']) {
+  assert.match(ui, new RegExp(`data-cfhr-drawer-set="${durableState}"`),
+    `Drawer rationale action missing: ${durableState}`);
+}
+assert.match(ui, /noteProvided: true, note: editor\.value/,
+  'Drawer state actions must explicitly submit the rationale textarea value');
+assert.match(ui, /if \(noteProvided\) body\.note = submittedNote/,
+  'Drawer writes must add note only when the drawer explicitly supplies it');
+assert.match(ui, /void persistReview\(inboxItemId, requestedState\);/,
+  'Table-row durable state actions must remain note-omitting writes');
+assert.match(ui, /const normalized = raw\.trim\(\);[\s\S]*return normalized \|\| null;/,
+  'Blank drawer rationale must normalize to the explicit clear value for verification');
+assert.match(ui, /normalizedReviewNote\(verified\?\.review\?\.note\) !== expectedNote/,
+  'Fresh GET must verify the server-normalized rationale after drawer writes');
+assert.match(ui, /human_review_rationale_read_after_write_mismatch/,
+  'Rationale read-after-write mismatch must fail closed');
+assert.ok(ui.includes('Human Review rationale only. Not effectiveness. Not execution authority. Not Amazon mutation authority.'),
+  'Rationale authoring copy must preserve effectiveness/execution/Amazon authority boundaries');
 
 assert.match(ui, /state\.observer\?\.disconnect\(\)/, 'Human Review UI must isolate its own DOM mutations from MutationObserver feedback');
 assert.match(ui, /function mutatePresentation\(callback\)/, 'Observer-isolated presentation mutation helper is missing');
