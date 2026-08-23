@@ -387,7 +387,7 @@
     for (const row of state.operatorWorkRows) {
       const tr = global.document.createElement('tr'); const priority = textCell(`P${row.priority} · ${String(row.queueClass || '').replaceAll('_', ' ')}`); priority.dataset.priority = String(row.priority); tr.appendChild(priority);
       tr.appendChild(textCell(row.displayName || row.storeCode || row.storeId)); tr.appendChild(textCell(row.reasonText || row.reasonCode || '—')); tr.appendChild(textCell(displayCount(row.needsReviewCount))); tr.appendChild(textCell(displayCount(row.staleReviewEvidenceCount))); tr.appendChild(textCell(displayCount(row.highUnreviewedCount))); tr.appendChild(textCell(displayCount(row.otherUnreviewedCount)));
-      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => openDecisionQueue(row)); openButton.disabled = row.evidenceState !== 'available' || (row.needsReviewCount === 0 && row.highUnreviewedCount === 0 && row.otherUnreviewedCount === 0); action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
+      const action = global.document.createElement('td'); const openButton = buttonNode('Open Decision Queue', () => openDecisionQueue(row)); openButton.disabled = row.evidenceState !== 'available' || (row.needsReviewCount === 0 && row.staleReviewEvidenceCount === 0 && row.highUnreviewedCount === 0 && row.otherUnreviewedCount === 0); action.appendChild(openButton); tr.appendChild(action); tbody.appendChild(tr);
     }
   }
 
