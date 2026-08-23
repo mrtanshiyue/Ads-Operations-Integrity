@@ -695,7 +695,7 @@ function normalizeAnalysisWindow(value) {
   if (endDate < startDate) return { error: 'analysis_window_invalid' };
   const days = Math.floor((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
   if (days < 1 || days > 93) return { error: 'analysis_window_invalid' };
-  return { value: { startDate, endDate, days };
+  return { value: { startDate, endDate, days } };
 }
 
 function normalizeEvidenceEnvelope(value) {
