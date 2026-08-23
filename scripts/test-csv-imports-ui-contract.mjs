@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -9,6 +10,7 @@ const index = await readFile(path.join(dist, 'index.html'), 'utf8');
 const asset = await readFile(path.join(dist, 'assets', 'cloudflare-native-imports-console-v1.js'), 'utf8');
 const tag = '<script src="assets/cloudflare-native-imports-console-v1.js"></script>';
 
+new vm.Script(asset, { filename: 'cloudflare-native-imports-console-v1.js' });
 assert.equal(index.split(tag).length - 1, 1, 'Imports console must be injected exactly once');
 assert.match(asset, /const VERSION = '1\.3\.0'/, 'Operational imports UI version must be explicit');
 assert.match(asset, /CloudflareImportsConsole/, 'Imports console public API missing');
@@ -21,6 +23,36 @@ assert.match(asset, /content-type': 'text\/csv/, 'Raw CSV upload content type mi
 assert.match(asset, /duplicate report/i, 'Duplicate warning UX missing');
 assert.match(asset, /ads\.write/, 'Write permission awareness missing');
 assert.match(asset, /ads\.read/, 'Read permission awareness missing');
+
+// Every async store-scoped path must be owned by the store scope that started it.
+assert.match(asset, /scopeGeneration: 0,\s*refreshSerial: 0,\s*permissionSerial: 0,\s*detailSerial: 0,\s*settlementDetailSerial: 0,/,
+  'Imports console must track store-scope generations and independent read ownership');
+assert.match(asset, /function currentScope\(\) \{\s*return Object\.freeze\(\{ storeId: state\.storeId, generation: state\.scopeGeneration \}\);\s*\}/,
+  'Imports console must capture store and generation together');
+assert.match(asset, /function scopeIsCurrent\(scope\) \{\s*return Boolean\(scope && scope\.storeId === state\.storeId && scope\.generation === state\.scopeGeneration\);\s*\}/,
+  'late async responses must prove store and generation ownership before updating UI');
+assert.match(asset, /state\.scopeGeneration \+= 1;\s*state\.refreshSerial \+= 1;\s*state\.permissionSerial \+= 1;\s*state\.detailSerial \+= 1;\s*state\.settlementDetailSerial \+= 1;\s*state\.loading = false;/,
+  'store transition must revoke list, permission, and detail reads and release stale list loading ownership');
+assert.match(asset, /const scope = currentScope\(\);\s*const serial = \+\+state\.refreshSerial;\s*state\.loading = true;/,
+  'history refresh must capture store scope and its own generation');
+assert.match(asset, /if \(serial !== state\.refreshSerial \|\| !scopeIsCurrent\(scope\)\) return;/,
+  'late history responses must not overwrite a newly selected store');
+assert.match(asset, /const serial = \+\+state\.permissionSerial;/,
+  'permission reads must have independent request ownership');
+assert.match(asset, /const serial = \+\+state\.detailSerial;/,
+  'Search Term detail reads must have independent request ownership');
+assert.match(asset, /const serial = \+\+state\.settlementDetailSerial;/,
+  'Settlement detail reads must have independent request ownership');
+assert.match(asset, /state\.selectedImportId !== id/,
+  'Search Term detail responses must also remain bound to the selected import id');
+assert.match(asset, /state\.selectedSettlementImportId !== id/,
+  'Settlement detail responses must also remain bound to the selected import id');
+assert.equal((asset.match(/const scope = currentScope\(\);/g) || []).length, 8,
+  'all list, permission, detail, upload, and authority-classification async paths must capture scope');
+assert.doesNotMatch(asset, /requestJson\(`\/api\/v1\/stores\/\$\{encodeURIComponent\(state\.storeId\)\}/,
+  'store-scoped network requests must never read mutable state.storeId after async work begins');
+assert.match(asset, /if \(!scopeIsCurrent\(scope\)\) return;/,
+  'write completion must not publish old-store result state into a newly selected store');
 
 // Search Term and Settlement must remain explicitly separated at the operational boundary.
 assert.match(asset, /Search Term CSV/, 'Search Term report-type card missing');
@@ -58,4 +90,8 @@ assert.match(asset, /exact_source_object/, 'Exact-source authority gate missing'
 assert.doesNotMatch(asset, /AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED/, 'Imports console must not mutate Amazon execution switches');
 assert.doesNotMatch(asset, /startSync\s*\(|AMAZON_SYNC_WORKFLOW/, 'Imports console must not introduce Amazon sync execution');
 
-console.log(JSON.stringify({ ok: true, contract: 'csv-imports-ui-v3-settlement-operational-authority' }));
+console.log(JSON.stringify({
+  ok: true,
+  contract: 'csv-imports-ui-v3-settlement-operational-authority',
+  crossStoreScopeOwnership: true,
+}));
