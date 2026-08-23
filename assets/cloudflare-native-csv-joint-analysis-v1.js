@@ -43,6 +43,7 @@ export async function analyzeLocalCsvInputs(inputs, options = {}) {
 
 const browserState = {
   mounted: false,
+  requestSeq: 0,
   result: null,
 };
 
@@ -113,6 +114,7 @@ function mount() {
   const run = section.querySelector('[data-csv-joint-run]');
   const clear = section.querySelector('[data-csv-joint-clear]');
   input.addEventListener('change', () => {
+    revokeAnalysis(section);
     const count = input.files?.length || 0;
     run.disabled = count === 0 || count > MAX_FILES;
     setStatus(section, count > MAX_FILES
@@ -133,34 +135,45 @@ async function runAnalysis(section) {
   if (!files.length) return setStatus(section, 'Select one or more Search Term CSV files.', 'error');
   if (files.length > MAX_FILES) return setStatus(section, `Too many files selected. Limit is ${MAX_FILES}.`, 'error');
 
+  const seq = ++browserState.requestSeq;
   run.disabled = true;
   run.setAttribute('aria-busy', 'true');
   setStatus(section, `Parsing and joining ${files.length} local CSV file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
+    if (seq !== browserState.requestSeq) return;
     const result = await analyzeLocalCsvInputs(inputs);
+    if (seq !== browserState.requestSeq) return;
     browserState.result = result;
     renderResult(section, result);
     setStatus(section, `${result.summary.batchCount} imports · ${result.summary.factCount} facts · ${result.summary.analyzedTermCount} terms. Advisory output only; canonical Amazon identity remains unresolved.`, 'success');
   } catch (error) {
+    if (seq !== browserState.requestSeq) return;
     browserState.result = null;
     const results = section.querySelector('[data-csv-joint-results]');
     results.hidden = true;
     results.innerHTML = '';
     setStatus(section, friendlyError(error), 'error');
   } finally {
+    if (seq !== browserState.requestSeq) return;
     run.removeAttribute('aria-busy');
     run.disabled = !(input.files?.length > 0 && input.files.length <= MAX_FILES);
   }
 }
 
-function clearAnalysis(section) {
+function revokeAnalysis(section) {
+  browserState.requestSeq += 1;
   browserState.result = null;
-  const input = section.querySelector('[data-csv-joint-files]');
   const results = section.querySelector('[data-csv-joint-results]');
-  input.value = '';
   results.hidden = true;
   results.innerHTML = '';
+  section.querySelector('[data-csv-joint-run]')?.removeAttribute('aria-busy');
+}
+
+function clearAnalysis(section) {
+  revokeAnalysis(section);
+  const input = section.querySelector('[data-csv-joint-files]');
+  input.value = '';
   section.querySelector('[data-csv-joint-run]').disabled = true;
   setStatus(section, `Local selection and rendered analysis cleared. Select up to ${MAX_FILES} Search Term CSV files.`, 'idle');
 }
