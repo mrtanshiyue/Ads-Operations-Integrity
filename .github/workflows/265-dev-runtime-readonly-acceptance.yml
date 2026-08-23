@@ -1,0 +1,444 @@
+name: 273 Human Review rationale capture implementation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/265-dev-runtime-readonly-acceptance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/273-human-review-rationale-capture'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/273-human-review-rationale-capture
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply deterministic #273 product patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          function replaceOnce(source, before, after, label) {
+            const first = source.indexOf(before);
+            if (first < 0) throw new Error(`${label}_marker_missing`);
+            if (source.indexOf(before, first + before.length) >= 0) throw new Error(`${label}_marker_not_unique`);
+            return source.slice(0, first) + after + source.slice(first + before.length);
+          }
+
+          // Server: distinguish omitted note from explicit clear and preserve existing note on state-only updates.
+          const apiPath = 'cloudflare/runtime/csv-recommendation-human-review-api.js';
+          let api = fs.readFileSync(apiPath, 'utf8');
+          api = replaceOnce(api,
+`export function reviewContextKeyFromEvidenceJson(value) {
+  const parsed = parseJson(value);
+  const descriptor = parsed?.descriptor;
+  if (!descriptor || typeof descriptor !== 'object') return null;
+  const parts = [
+    descriptor.sourceKind,
+    descriptor.inboxItemId,
+    descriptor.candidateType,
+    descriptor.actionType,
+    descriptor.matchScope,
+    descriptor.value,
+  ].map(clean);
+  return parts.every(Boolean) ? parts.join('\\u001f') : null;
+}
+
+async function currentRecommendationSnapshot`,
+`export function reviewContextKeyFromEvidenceJson(value) {
+  const parsed = parseJson(value);
+  const descriptor = parsed?.descriptor;
+  if (!descriptor || typeof descriptor !== 'object') return null;
+  const parts = [
+    descriptor.sourceKind,
+    descriptor.inboxItemId,
+    descriptor.candidateType,
+    descriptor.actionType,
+    descriptor.matchScope,
+    descriptor.value,
+  ].map(clean);
+  return parts.every(Boolean) ? parts.join('\\u001f') : null;
+}
+
+export function parseReviewNoteRequest(body) {
+  const value = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const provided = Object.prototype.hasOwnProperty.call(value, 'note');
+  if (!provided) return { provided: false, value: null };
+  const note = optionalNote(value.note);
+  return note.error ? { provided: true, error: note.error } : { provided: true, value: note.value };
+}
+
+export function effectiveReviewNote(noteRequest, existingReviewerNote = null) {
+  return noteRequest?.provided === true ? (noteRequest.value ?? null) : (existingReviewerNote ?? null);
+}
+
+async function currentRecommendationSnapshot`,
+            'api_note_helpers');
+          api = replaceOnce(api,
+`  const note = optionalNote(body.value.note);
+  if (note.error) return json(request, { error: note.error }, 400);`,
+`  const noteRequest = parseReviewNoteRequest(body.value);
+  if (noteRequest.error) return json(request, { error: noteRequest.error }, 400);`,
+            'api_note_parse');
+          api = replaceOnce(api,
+`  if (existing) {
+    const sameState = existing.state === record.state;
+    const sameNote = clean(existing.reviewer_note) === clean(note.value);
+    if (sameState && sameNote) {
+      reused = true;
+    } else {
+      await db.prepare(\`
+        UPDATE advisory_review_records
+        SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
+            snoozed_until=NULL, updated_at=?5
+        WHERE review_id=?1
+      \`).bind(reviewId, record.state, actor.user_id, note.value, now).run();
+      changed = true;
+    }
+  } else {`,
+`  if (existing) {
+    const effectiveNote = effectiveReviewNote(noteRequest, existing.reviewer_note);
+    const sameState = existing.state === record.state;
+    const sameNote = clean(existing.reviewer_note) === clean(effectiveNote);
+    if (sameState && sameNote) {
+      reused = true;
+    } else {
+      await db.prepare(\`
+        UPDATE advisory_review_records
+        SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
+            snoozed_until=NULL, updated_at=?5
+        WHERE review_id=?1
+      \`).bind(reviewId, record.state, actor.user_id, effectiveNote, now).run();
+      changed = true;
+    }
+  } else {`,
+            'api_existing_note');
+          api = replaceOnce(api,
+`        actor.user_id,
+        note.value,
+        now,`,
+`        actor.user_id,
+        effectiveReviewNote(noteRequest, null),
+        now,`,
+            'api_insert_note');
+          api = replaceOnce(api,
+`      reviewId = raced.review_id;
+      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(note.value);
+      if (!reused) {
+        await db.prepare(\`
+          UPDATE advisory_review_records
+          SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
+              snoozed_until=NULL, updated_at=?5
+          WHERE review_id=?1
+        \`).bind(reviewId, record.state, actor.user_id, note.value, now).run();
+        changed = true;
+      }`,
+`      reviewId = raced.review_id;
+      const racedEffectiveNote = effectiveReviewNote(noteRequest, raced.reviewer_note);
+      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(racedEffectiveNote);
+      if (!reused) {
+        await db.prepare(\`
+          UPDATE advisory_review_records
+          SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
+              snoozed_until=NULL, updated_at=?5
+          WHERE review_id=?1
+        \`).bind(reviewId, record.state, actor.user_id, racedEffectiveNote, now).run();
+        changed = true;
+      }`,
+            'api_race_note');
+          fs.writeFileSync(apiPath, api);
+
+          // Persistence contract tests.
+          const persistencePath = 'scripts/test-recommendation-human-review-persistence.mjs';
+          let persistence = fs.readFileSync(persistencePath, 'utf8');
+          persistence = replaceOnce(persistence,
+`import {
+  authorizeReviewCandidateForPersistence,
+  persistedStateToUiState,
+  reviewContextKeyFromEvidenceJson,
+} from '../cloudflare/runtime/csv-recommendation-human-review-api.js';`,
+`import {
+  authorizeReviewCandidateForPersistence,
+  effectiveReviewNote,
+  parseReviewNoteRequest,
+  persistedStateToUiState,
+  reviewContextKeyFromEvidenceJson,
+} from '../cloudflare/runtime/csv-recommendation-human-review-api.js';`,
+            'persistence_imports');
+          persistence = replaceOnce(persistence,
+`assert.equal(persistedStateToUiState('snoozed'), null);
+
+const binding = await buildRecommendationReviewBinding(authorized);`,
+`assert.equal(persistedStateToUiState('snoozed'), null);
+
+const omittedNote = parseReviewNoteRequest({ inboxItemId: 'item', state: 'approved' });
+assert.deepEqual(omittedNote, { provided: false, value: null });
+assert.equal(effectiveReviewNote(omittedNote, 'Existing rationale'), 'Existing rationale');
+assert.equal(effectiveReviewNote(omittedNote, null), null);
+
+const explicitNote = parseReviewNoteRequest({ note: '  Keep this rationale  ' });
+assert.deepEqual(explicitNote, { provided: true, value: 'Keep this rationale' });
+assert.equal(effectiveReviewNote(explicitNote, 'Old rationale'), 'Keep this rationale');
+
+const explicitBlank = parseReviewNoteRequest({ note: '   ' });
+assert.deepEqual(explicitBlank, { provided: true, value: null });
+assert.equal(effectiveReviewNote(explicitBlank, 'Existing rationale'), null);
+const explicitNull = parseReviewNoteRequest({ note: null });
+assert.deepEqual(explicitNull, { provided: true, value: null });
+assert.equal(effectiveReviewNote(explicitNull, 'Existing rationale'), null);
+assert.equal(parseReviewNoteRequest({ note: 'x'.repeat(4001) }).error, 'review_note_too_long');
+
+const binding = await buildRecommendationReviewBinding(authorized);`,
+            'persistence_note_cases');
+          persistence = replaceOnce(persistence,
+`assert.ok(apiSource.includes('source_evidence_sha256'));
+assert.ok(!apiSource.includes('optimization_actions'));`,
+`assert.ok(apiSource.includes('source_evidence_sha256'));
+assert.ok(apiSource.includes('effectiveReviewNote(noteRequest, existing.reviewer_note)'));
+assert.ok(apiSource.includes('effectiveReviewNote(noteRequest, raced.reviewer_note)'));
+assert.ok(!apiSource.includes('optimization_actions'));`,
+            'persistence_source_contract');
+          fs.writeFileSync(persistencePath, persistence);
+
+          // UI: exact-current rationale editor in existing drawer; row actions remain note-omitting.
+          const uiPath = 'assets/cloudflare-native-csv-recommendation-human-review-v1.js';
+          let ui = fs.readFileSync(uiPath, 'utf8');
+          ui = replaceOnce(ui, "  const VERSION = '1.6.0';", "  const VERSION = '1.7.0';", 'ui_version');
+          ui = replaceOnce(ui,
+`  async function persistReview(inboxItemId, requestedState) {
+    if (!DURABLE_STATES.has(requestedState)) return;
+    const scope = currentScope();
+    if (!scopeComplete(scope) || currentSource() !== 'csv') return;
+    const writeScopeKey = scopeKey(scope);
+    const current = state.reviews.get(inboxItemId);
+    if (current?.persistenceAuthorized !== true) {
+      state.errors.set(inboxItemId, 'review_persistence_not_authorized');
+      applySnapshot(recommendationSection());
+      return;
+    }
+    if (state.busy.has(inboxItemId)) return;
+    state.busy.add(inboxItemId);
+    state.errors.delete(inboxItemId);
+    applySnapshot(recommendationSection());
+    const controller = new AbortController();
+    const timeoutId = global.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const payload = await requestReview(scope, {
+        method: 'POST',
+        body: { inboxItemId, state: requestedState },
+        signal: controller.signal,
+      });
+      validateWriteResponse(payload, scope.storeId);
+      if (scopeKey(currentScope()) !== writeScopeKey) throw new Error('human_review_scope_changed_during_write');
+      await loadSnapshot(scope, { force: true });
+      const verified = state.reviews.get(inboxItemId);
+      if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
+        throw new Error('human_review_read_after_write_mismatch');
+      }
+    } catch (error) {
+      state.errors.set(inboxItemId, errorCode(error));
+      renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
+    } finally {
+      global.clearTimeout(timeoutId);
+      state.busy.delete(inboxItemId);
+      applySnapshot(recommendationSection());
+    }
+  }`,
+`  async function persistReview(inboxItemId, requestedState, { noteProvided = false, note = null } = {}) {
+    if (!DURABLE_STATES.has(requestedState)) return;
+    const scope = currentScope();
+    if (!scopeComplete(scope) || currentSource() !== 'csv') return;
+    const writeScopeKey = scopeKey(scope);
+    const current = state.reviews.get(inboxItemId);
+    if (current?.persistenceAuthorized !== true) {
+      state.errors.set(inboxItemId, 'review_persistence_not_authorized');
+      applySnapshot(recommendationSection());
+      return;
+    }
+    if (state.busy.has(inboxItemId)) return;
+    state.busy.add(inboxItemId);
+    state.errors.delete(inboxItemId);
+    applySnapshot(recommendationSection());
+    const controller = new AbortController();
+    const timeoutId = global.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const body = { inboxItemId, state: requestedState };
+      if (noteProvided) body.note = note;
+      const payload = await requestReview(scope, {
+        method: 'POST',
+        body,
+        signal: controller.signal,
+      });
+      validateWriteResponse(payload, scope.storeId);
+      if (scopeKey(currentScope()) !== writeScopeKey) throw new Error('human_review_scope_changed_during_write');
+      await loadSnapshot(scope, { force: true });
+      const verified = state.reviews.get(inboxItemId);
+      if (verified?.review?.persisted !== true || verified?.review?.state !== requestedState) {
+        throw new Error('human_review_read_after_write_mismatch');
+      }
+      if (noteProvided && normalizeReviewNote(verified?.review?.note) !== normalizeReviewNote(note)) {
+        throw new Error('human_review_note_read_after_write_mismatch');
+      }
+    } catch (error) {
+      state.errors.set(inboxItemId, errorCode(error));
+      renderGlobalStatus(recommendationSection(), 'failed', errorCode(error));
+    } finally {
+      global.clearTimeout(timeoutId);
+      state.busy.delete(inboxItemId);
+      applySnapshot(recommendationSection());
+    }
+  }
+
+  function normalizeReviewNote(value) {
+    const normalized = String(value ?? '').trim();
+    return normalized || null;
+  }`,
+            'ui_persist_review');
+          ui = replaceOnce(ui,
+`  function handleClick(event) {
+    const reset = event.target.closest?.('[data-cfgl-reset]');
+    if (reset) {
+      event.preventDefault();
+      event.stopPropagation();
+      state.libraryFilters = defaultLibraryFilters();
+      applySnapshot(recommendationSection());
+      return;
+    }
+    const button = event.target.closest?.('[data-cfhr-set]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const requestedState = String(button.dataset.cfhrSet || '');
+    const inboxItemId = String(button.dataset.cfhrItem || '');
+    if (!DURABLE_STATES.has(requestedState) || !inboxItemId) return;
+    void persistReview(inboxItemId, requestedState);
+  }`,
+`  function handleClick(event) {
+    const reset = event.target.closest?.('[data-cfgl-reset]');
+    if (reset) {
+      event.preventDefault();
+      event.stopPropagation();
+      state.libraryFilters = defaultLibraryFilters();
+      applySnapshot(recommendationSection());
+      return;
+    }
+    const drawerButton = event.target.closest?.('[data-cfhr-drawer-set]');
+    if (drawerButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const requestedState = String(drawerButton.dataset.cfhrDrawerSet || '');
+      const inboxItemId = String(drawerButton.dataset.cfhrItem || '');
+      const editor = drawerButton.closest('[data-cfhr-drawer]')?.querySelector('[data-cfhr-rationale]');
+      if (!DURABLE_STATES.has(requestedState) || !inboxItemId || !editor) return;
+      void persistReview(inboxItemId, requestedState, { noteProvided: true, note: editor.value });
+      return;
+    }
+    const button = event.target.closest?.('[data-cfhr-set]');
+    if (!button) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const requestedState = String(button.dataset.cfhrSet || '');
+    const inboxItemId = String(button.dataset.cfhrItem || '');
+    if (!DURABLE_STATES.has(requestedState) || !inboxItemId) return;
+    void persistReview(inboxItemId, requestedState);
+  }`,
+            'ui_handle_click');
+          ui = replaceOnce(ui,
+`        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>\`
+      : '<h4>Recommendation Decision Packet</h4>`,
+`        </div>${rationaleEditorHtml(item)}<div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Rationale is review context only, not effectiveness. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>\`
+      : '<h4>Recommendation Decision Packet</h4>`,
+            'ui_drawer_insert');
+          ui = replaceOnce(ui,
+`  function historicalLearningDrawerHtml(inboxItemId) {`,
+`  function rationaleEditorHtml(item) {
+    const inboxItemId = String(item?.inboxItemId || '');
+    const allowed = item?.persistenceAuthorized === true;
+    const busy = state.busy.has(inboxItemId);
+    const note = String(item?.review?.note || '');
+    if (!allowed) return '<div class="cfhr-rationale-editor"><strong>Human Review rationale</strong><small>Rationale editing is unavailable because durable Human Review persistence is not authorized for this candidate.</small></div>';
+    return \`<label class="cfhr-rationale-editor"><span>Human Review rationale (optional)</span><textarea data-cfhr-rationale data-cfhr-item="${esc(inboxItemId)}" maxlength="4000"${busy ? ' disabled' : ''}>${esc(note)}</textarea><small>Exact-current Human Review context only. Blank intentionally clears the rationale when a drawer review action is submitted. Rationale is not effectiveness, execution authority, or Amazon mutation authority.</small></label><div class="cfhr-actions" role="group" aria-label="Human review actions with rationale"><button type="button" class="btn" data-cfhr-drawer-set="needs_review" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Needs review + save rationale</button><button type="button" class="btn" data-cfhr-drawer-set="acknowledged" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Acknowledge + save rationale</button><button type="button" class="btn" data-cfhr-drawer-set="approved" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Approve review + save rationale</button><button type="button" class="btn" data-cfhr-drawer-set="rejected" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Reject review + save rationale</button></div>\`;
+  }
+
+  function historicalLearningDrawerHtml(inboxItemId) {`,
+            'ui_rationale_editor');
+          ui = replaceOnce(ui,
+`      .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy`,
+`      .cfhr-rationale-editor{display:flex;flex-direction:column;gap:4px;margin:8px 0}.cfhr-rationale-editor span,.cfhr-rationale-editor strong{font-size:9px}.cfhr-rationale-editor textarea{width:100%;min-height:84px;resize:vertical;padding:7px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);color:var(--text);font:inherit;font-size:10px;box-sizing:border-box}.cfhr-rationale-editor small{font-size:9px;color:var(--muted)}
+      .cfhr-actions{display:flex;gap:4px;flex-wrap:wrap}.cfhr-actions .btn{padding:4px 6px;font-size:9px}.cfhr-busy`,
+            'ui_rationale_css');
+          fs.writeFileSync(uiPath, ui);
+
+          // UI contract tests.
+          const uiTestPath = 'scripts/test-recommendation-human-review-ui.mjs';
+          let uiTest = fs.readFileSync(uiTestPath, 'utf8');
+          uiTest = replaceOnce(uiTest,
+            "assert.match(ui, /const VERSION = '1\\.6\\.0'/, 'Human Review UI version contract is missing');",
+            "assert.match(ui, /const VERSION = '1\\.7\\.0'/, 'Human Review UI version contract is missing');",
+            'ui_test_version');
+          uiTest = replaceOnce(uiTest,
+`assert.match(ui, /human_review_read_after_write_mismatch/,
+  'UI must fail closed if read-after-write does not confirm requested durable state');`,
+`assert.match(ui, /human_review_read_after_write_mismatch/,
+  'UI must fail closed if read-after-write does not confirm requested durable state');
+assert.match(ui, /human_review_note_read_after_write_mismatch/,
+  'Explicit rationale writes must be verified by a fresh server read');
+assert.match(ui, /data-cfhr-rationale/,
+  'Existing Durable Human Review drawer must expose the rationale editor');
+assert.ok(ui.includes('Human Review rationale (optional)'),
+  'Rationale editor label is missing');
+assert.match(ui, /maxlength="4000"/,
+  'Rationale editor must mirror the server 4000-character bound');
+assert.match(ui, /const note = String\(item\?\.review\?\.note \|\| ''\)/,
+  'Editable rationale must initialize only from the exact-current server review note');
+assert.match(ui, /data-cfhr-drawer-set="approved"/,
+  'Drawer review actions with explicit rationale are missing');
+assert.match(ui, /body\.note = note/,
+  'Drawer rationale must be included only when explicitly provided');
+assert.match(ui, /persistReview\(inboxItemId, requestedState, \{ noteProvided: true, note: editor\.value \}\)/,
+  'Drawer review action must submit the explicit textarea value');
+assert.match(ui, /persistReview\(inboxItemId, requestedState\);/,
+  'Table-row review actions must remain note-omitting state-only writes');
+assert.ok(ui.includes('Blank intentionally clears the rationale when a drawer review action is submitted.'),
+  'Explicit rationale clear semantics must be visible to the operator');
+assert.ok(ui.includes('Rationale is not effectiveness, execution authority, or Amazon mutation authority.'),
+  'Rationale editor must preserve effectiveness/execution/Amazon boundaries');`,
+            'ui_test_rationale_capture');
+          fs.writeFileSync(uiTestPath, uiTest);
+          NODE
+
+      - name: Validate #273 focused contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node --check scripts/test-recommendation-human-review-persistence.mjs
+          node --check scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-recommendation-human-review-persistence.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-recommendation-decision-packet.mjs
+
+      - name: Commit product changes and remove one-shot control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add cloudflare/runtime/csv-recommendation-human-review-api.js assets/cloudflare-native-csv-recommendation-human-review-v1.js scripts/test-recommendation-human-review-persistence.mjs scripts/test-recommendation-human-review-ui.mjs
+          git rm .github/workflows/265-dev-runtime-readonly-acceptance.yml
+          git commit -m 'Implement #273 non-destructive Human Review rationale capture'
+          git push origin HEAD:feat/273-human-review-rationale-capture
