@@ -4,6 +4,7 @@ const ui = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-
 const usability = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js', import.meta.url), 'utf8');
 const triage = readFileSync(new URL('../assets/cloudflare-native-csv-recommendation-operator-triage-v1.js', import.meta.url), 'utf8');
 const loader = readFileSync(new URL('../assets/generated/inline-script-10.js', import.meta.url), 'utf8');
+const humanReviewLoader = readFileSync(new URL('../assets/generated/inline-script-01.js', import.meta.url), 'utf8');
 const allowlist = readFileSync(new URL('./enforce-cloudflare-native-asset-allowlist.mjs', import.meta.url), 'utf8');
 
 const required = [
@@ -35,6 +36,16 @@ for (const token of required) {
 
 if (!/const profileId = value\(panel, 'profileId'\);[\s\S]*const scopeKey = \[storeId, profileId, startDate, endDate, limit, sort\]\.join\('\|'\);/u.test(ui)) {
   throw new Error('Recommendation Inbox cache scope must include profileId so cross-profile results cannot reuse stale Inbox state');
+}
+
+for (const scopeControl of ['profileId', 'startDate', 'endDate', 'limit', 'sort']) {
+  if (!humanReviewLoader.includes(`'${scopeControl}'`)) {
+    throw new Error(`Recommendation scope refresh bridge must invalidate Inbox/Human Review when ${scopeControl} changes`);
+  }
+}
+if (!humanReviewLoader.includes('CloudflareCsvRecommendationInboxUi?.refresh?.()')
+  || !humanReviewLoader.includes('CloudflareCsvRecommendationHumanReviewUi?.refresh?.()')) {
+  throw new Error('Recommendation scope changes must force fresh Inbox and Human Review reads');
 }
 
 const usabilityRequired = [
