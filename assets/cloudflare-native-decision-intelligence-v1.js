@@ -141,9 +141,19 @@
     state.loading = false;
     state.payload = null;
     state.dryRuns.clear();
-    panelNode().querySelector('[data-results]').innerHTML = '';
+    const panel = panelNode();
+    panel.querySelector('[data-results]').innerHTML = '';
     setStatus('Decision scope changed. Run preview again before review or persistence.', 'warn');
     closeDrawer();
+    if (name === 'profileId') {
+      state.actionsSerial += 1;
+      state.actions = null;
+      panel.querySelector('[data-actions-results]').innerHTML = '';
+      panel.querySelector('[data-actions-status]').textContent = state.open && state.tab === 'actions'
+        ? 'Loading Action Inbox…'
+        : 'Profile changed. Open Action Inbox to load the current profile.';
+      if (state.open && state.tab === 'actions') void loadActions();
+    }
   }
 
   async function runIntelligence() {
