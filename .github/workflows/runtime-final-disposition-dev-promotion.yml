@@ -1,0 +1,176 @@
+name: Human Review Final Disposition Dev Web Promotion
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.runtime-final-disposition-dev-promote'
+      - '.github/workflows/runtime-final-disposition-dev-promotion.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-final-disposition-dev-web-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote-dev:
+    if: github.head_ref == 'acceptance/259-human-review-final-disposition-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TARGET_MAIN_SHA: fea3005caf7b233870b75787162a580b1d22a28e
+      DEV_WORKER: ads-operations-web-dev
+      DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      EXPECTED_BASELINE_DEPLOYMENT: 5a5f3299-4de4-422e-bbdd-9d29a6ea12f9
+      EXPECTED_BASELINE_VERSION: 7aae4c95-9226-4723-9d1f-201091c92423
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+      EXPECTED_SYNC_DEPLOYMENT: cf0b0adf-96dc-437d-8298-15af58f992ce
+      EXPECTED_SYNC_VERSION: 295df84e-2103-4858-9895-49f67d4b10b4
+    steps:
+      - name: Checkout acceptance control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require explicit Dev promotion sentinel
+        run: |
+          set -euo pipefail
+          test -f .runtime-final-disposition-dev-promote
+          test "$(tr -d '\n' < .runtime-final-disposition-dev-promote)" = "PROMOTE_DEV_WEB_EXACT_MAIN=$TARGET_MAIN_SHA"
+
+      - name: Require exact protected main and frozen baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+
+          current_main="$(curl -fsS 'https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main' | jq -r '.commit.sha')"
+          test "$current_main" = "$TARGET_MAIN_SHA" || { echo "canonical main drifted: $current_main"; exit 1; }
+
+          baseline="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
+          printf '%s' "$baseline" | jq -e --arg d "$EXPECTED_BASELINE_DEPLOYMENT" --arg v "$EXPECTED_BASELINE_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+
+          dev_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/settings")"
+          dev_schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/schedules")"
+          printf '%s' "$dev_settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "SYNC_TRIGGER_ENABLED" and .text == "false")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_PERMIT_ID" and .text == "")) | length == 1) and (.result.bindings | map(select(.name == "PHASE5_SINGLE_RUN_REPORT_DATE" and .text == "")) | length == 1)' >/dev/null
+          printf '%s' "$dev_schedules" | jq -e '.success == true and ((.result.schedules // .result // []) | length) == 0' >/dev/null
+
+          sync_deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
+          sync_settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
+          sync_schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
+          printf '%s' "$sync_deployments" | jq -e --arg d "$EXPECTED_SYNC_DEPLOYMENT" --arg v "$EXPECTED_SYNC_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+          printf '%s' "$sync_settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
+          printf '%s' "$sync_schedules" | jq -e '.success == true and ((.result.schedules // .result // []) | length) == 0' >/dev/null
+
+      - name: Promote exact canonical main to Development Web via Workers Builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          json=(-H 'Content-Type: application/json')
+
+          workers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")"
+          printf '%s' "$workers" | jq -e '.success == true' >/dev/null
+          dev_tag="$(printf '%s' "$workers" | jq -er --arg n "$DEV_WORKER" '.result[] | select(.id == $n) | .tag')"
+
+          triggers="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/workers/$dev_tag/triggers")"
+          printf '%s' "$triggers" | jq -e '.success == true and (.result | length) == 1' >/dev/null
+          trigger_uuid="$(printf '%s' "$triggers" | jq -er '.result[0].trigger_uuid')"
+          build_command="$(printf '%s' "$triggers" | jq -r '.result[0].build_command // ""')"
+          deploy_command="$(printf '%s' "$triggers" | jq -r '.result[0].deploy_command // ""')"
+          printf '%s\n%s\n' "$build_command" "$deploy_command" | grep -Eiq 'sync|wrangler\.sync' && { echo 'Refusing trigger containing Sync deployment semantics'; exit 1; } || true
+          test -n "$deploy_command" || { echo 'Development trigger has no deploy command'; exit 1; }
+
+          baseline="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
+          baseline_deployment="$(printf '%s' "$baseline" | jq -er '.result.deployments[0].id')"
+          baseline_version="$(printf '%s' "$baseline" | jq -er '.result.deployments[0].versions[0].version_id')"
+          test "$baseline_deployment" = "$EXPECTED_BASELINE_DEPLOYMENT"
+          test "$baseline_version" = "$EXPECTED_BASELINE_VERSION"
+
+          body="$(jq -cn --arg branch main --arg sha "$TARGET_MAIN_SHA" '{branch:$branch,commit_hash:$sha}')"
+          create="$(curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$body" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/triggers/$trigger_uuid/builds")"
+          printf '%s' "$create" | jq -e '.success == true and (.result.build_uuid | length) > 0' >/dev/null
+          build_uuid="$(printf '%s' "$create" | jq -er '.result.build_uuid')"
+          echo "BUILD_UUID=$build_uuid"
+
+          build=''
+          for _ in $(seq 1 90); do
+            build="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/builds/$build_uuid")"
+            printf '%s' "$build" | jq -e '.success == true' >/dev/null
+            status="$(printf '%s' "$build" | jq -r '.result.status // ""')"
+            if [ "$status" = stopped ]; then break; fi
+            sleep 5
+          done
+          printf '%s' "$build" | jq -e --arg sha "$TARGET_MAIN_SHA" '.result.status == "stopped" and .result.build_outcome == "success" and .result.build_trigger_metadata.branch == "main" and .result.build_trigger_metadata.commit_hash == $sha' >/dev/null
+
+          latest=''
+          for _ in $(seq 1 60); do
+            latest="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
+            printf '%s' "$latest" | jq -e '.success == true and (.result.deployments | length) > 0' >/dev/null
+            new_deployment="$(printf '%s' "$latest" | jq -er '.result.deployments[0].id')"
+            if [ "$new_deployment" != "$baseline_deployment" ]; then break; fi
+            sleep 3
+          done
+          new_deployment="$(printf '%s' "$latest" | jq -er '.result.deployments[0].id')"
+          new_version="$(printf '%s' "$latest" | jq -er '.result.deployments[0].versions[0].version_id')"
+          test "$new_deployment" != "$baseline_deployment"
+          test "$new_version" != "$baseline_version"
+
+          health=''
+          for _ in $(seq 1 30); do
+            health="$(curl -fsS "$DEV_BASE_URL/api/health")"
+            health_version="$(printf '%s' "$health" | jq -r '.deployment.versionId // ""')"
+            if [ "$health_version" = "$new_version" ]; then break; fi
+            sleep 2
+          done
+          printf '%s' "$health" | jq -e --arg v "$new_version" '.ok == true and .environment == "development" and .syncTriggerEnabled == false and .deployment.versionId == $v' >/dev/null
+
+          mkdir -p artifacts/runtime-final-disposition-dev-promotion
+          jq -n \
+            --arg schemaVersion human-review-final-disposition-dev-promotion-v1 \
+            --arg expectedMain "$TARGET_MAIN_SHA" \
+            --arg triggerUuid "$trigger_uuid" \
+            --arg buildUuid "$build_uuid" \
+            --arg baselineDeployment "$baseline_deployment" \
+            --arg baselineVersion "$baseline_version" \
+            --arg deployment "$new_deployment" \
+            --arg version "$new_version" \
+            '{schemaVersion:$schemaVersion,expectedMain:$expectedMain,triggerUuid:$triggerUuid,buildUuid:$buildUuid,baselineDeployment:$baselineDeployment,baselineVersion:$baselineVersion,deployment:$deployment,version:$version,buildOutcome:"success",branch:"main",productionSyncUntouched:true,amazonAdsEnabled:false}' \
+            > artifacts/runtime-final-disposition-dev-promotion/promotion.json
+
+          echo "DEV_TRIGGER_UUID=$trigger_uuid" >> "$GITHUB_ENV"
+          echo "DEV_BUILD_UUID=$build_uuid" >> "$GITHUB_ENV"
+          echo "DEV_DEPLOYMENT=$new_deployment" >> "$GITHUB_ENV"
+          echo "DEV_VERSION=$new_version" >> "$GITHUB_ENV"
+
+      - name: Re-verify Production Sync HARD-OFF after Dev promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
+          settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
+          schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
+          printf '%s' "$deployments" | jq -e --arg d "$EXPECTED_SYNC_DEPLOYMENT" --arg v "$EXPECTED_SYNC_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+          printf '%s' "$settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
+          printf '%s' "$schedules" | jq -e '.success == true and ((.result.schedules // .result // []) | length) == 0' >/dev/null
+          echo 'PRODUCTION_SYNC_UNTOUCHED=true'
+          echo 'AMAZON_REQUESTS=0'
+
+      - name: Upload immutable Dev promotion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-final-disposition-dev-promotion-${{ github.run_id }}
+          path: artifacts/runtime-final-disposition-dev-promotion/
+          if-no-files-found: warn
+          retention-days: 90
