@@ -69,8 +69,7 @@
         "PHASE5_SINGLE_RUN_PERMIT_ID": "",
         "PHASE5_SINGLE_RUN_REPORT_DATE": "",
         "TEAM_DOMAIN": "https://tanshiyuesir.cloudflareaccess.com",
-        "ACCESS_AUD": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8",
-        "OPERATIONAL_UAT_ACCESS_AUD": "b86d09befdfc53ffbf72a9a13f1db537e290aed444077df92635b129d1dd7337"
+        "ACCESS_AUD": "4cb87cb838507ac2e774cff9fdb6f53c6bbd2bc2db1ab0d9a2d1e04a9e5b1da8"
       },
       "version_metadata": {
         "binding": "CF_VERSION_METADATA"
