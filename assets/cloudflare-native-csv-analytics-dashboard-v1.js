@@ -202,8 +202,16 @@
     });
     for (const id of ['#cfCsvAnalyticsStart', '#cfCsvAnalyticsEnd']) root.querySelector(id)?.addEventListener('change', () => {
       state.datePreset = 'custom';
-      syncDatePresetButtons();
+      state.startDate = String(root.querySelector('#cfCsvAnalyticsStart')?.value || '').trim();
+      state.endDate = String(root.querySelector('#cfCsvAnalyticsEnd')?.value || '').trim();
       state.page = 1;
+      state.requestSeq += 1;
+      state.loading = false;
+      setBusy(false);
+      syncDatePresetButtons();
+      syncScopeSummary();
+      renderEmpty('Date scope changed. Click Load to refresh.');
+      setStatus('Date scope changed. Click Load to refresh.', 'warn');
       broadcastScope();
     });
     root.querySelector('#cfCsvAnalyticsQuery')?.addEventListener('keydown', (event) => {
