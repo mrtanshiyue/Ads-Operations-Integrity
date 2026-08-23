@@ -20,14 +20,3 @@ assert.equal((renderTrend.match(/trendChart=new Chart\(/g) || []).length, 1, 'Le
 assert.doesNotMatch(renderTrend, /Canvas is already in use/, 'Do not suppress the Chart.js ownership error by message matching');
 
 console.log('Trend Chart lifecycle ownership contracts passed');
-
-// A main-branch push means Cloudflare Workers Builds is deploying the same commit.
-// Run the network smoke only in that post-merge context; PR validation remains
-// deterministic and does not depend on the current production deployment.
-if (
-  process.env.GITHUB_ACTIONS === 'true'
-  && process.env.GITHUB_EVENT_NAME === 'push'
-  && process.env.GITHUB_REF === 'refs/heads/main'
-) {
-  await import('./smoke-cloudflare-production.mjs');
-}
