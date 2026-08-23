@@ -108,6 +108,31 @@ assert.match(uiSource, /const serial = \+\+state\.intelligenceSerial;/);
 assert.match(uiSource, /serial !== state\.intelligenceSerial \|\| storeId !== currentStoreId\(\)/);
 assert.match(uiSource, /const serial = \+\+state\.actionsSerial;/);
 assert.match(uiSource, /serial !== state\.actionsSerial \|\| storeId !== currentStoreId\(\)/);
+
+assert.match(uiSource, /DECISION_SCOPE_CONTROLS = new Set\(\['profileId', 'startDate', 'endDate', 'limit', 'sort'\]\)/,
+  'Decision preview controls must define an explicit scope invalidation set');
+assert.match(uiSource, /detailSerial:\s*0,\s*governanceSerial:\s*0/,
+  'Decision UI must track governance response ownership independently');
+assert.match(uiSource, /state\.governanceSerial \+= 1;[\s\S]{0,220}state\.dryRuns\.clear\(\)/,
+  'Store changes must invalidate in-flight governance presentation and prior dry-run authorization');
+assert.match(uiSource, /function handleDecisionScopeChange\(event\)[\s\S]{0,500}state\.payload = null;[\s\S]{0,200}state\.dryRuns\.clear\(\)/,
+  'Profile/date/limit/sort changes must remove stale preview and dry-run state before further governance actions');
+assert.match(uiSource, /const serial = \+\+state\.governanceSerial;/,
+  'Governance operations must capture a generation before awaiting');
+assert.match(uiSource, /actionCollectionUrl\(true, storeId\)/,
+  'Dry-run must bind its request URL to the captured store');
+assert.match(uiSource, /actionCollectionUrl\(false, storeId\)/,
+  'Proposed-action persistence must bind its request URL to the captured store');
+assert.match(uiSource, /actionTransitionUrl\(actionId, 'reject', storeId\)/,
+  'Reject transition must bind its request URL to the captured store');
+assert.match(uiSource, /actionTransitionUrl\(actionId, 'approve', storeId\)/,
+  'Approve transition must bind its request URL to the captured store');
+assert.match(uiSource, /serial !== state\.governanceSerial \|\| storeId !== currentStoreId\(\)/,
+  'Late governance responses must not update a different current store');
+assert.match(uiSource, /function actionCollectionUrl\(dryRun, storeId = currentStoreId\(\)\)/,
+  'Action collection URL helper must accept captured store ownership');
+assert.match(uiSource, /function actionTransitionUrl\(actionId, transition, storeId = currentStoreId\(\)\)/,
+  'Action transition URL helper must accept captured store ownership');
 assert.doesNotMatch(uiSource, /\/apply['"`]/);
 
 console.log(JSON.stringify({
@@ -118,5 +143,7 @@ console.log(JSON.stringify({
   deterministicFingerprint: true,
   authorityGuard: 'fail-closed',
   crossStoreLateResponseSuppression: true,
+  governanceScopeOwnership: true,
+  decisionScopeInvalidation: true,
   amazonMutationAuthorized: false,
 }, null, 2));
