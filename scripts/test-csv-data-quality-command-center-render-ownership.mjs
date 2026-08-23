@@ -12,6 +12,10 @@ const jointSource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-joint-analysis-v1.js'),
   'utf8',
 );
+const periodSource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-period-ui-v1.js'),
+  'utf8',
+);
 
 assert.match(
   source,
@@ -93,7 +97,44 @@ assert.match(revoke, /removeAttribute\('aria-busy'\)/,
 assert.match(jointSource, /function clearAnalysis\(section\) \{\s*revokeAnalysis\(section\);/,
   'explicit Clear must use the same generation revocation path');
 
-for (const [name, candidate] of [['data-quality', source], ['joint-analysis', jointSource]]) {
+assert.match(
+  periodSource,
+  /const state = \{ mounted: false, rendering: false, requestSeq: 0, result: null \}/,
+  'Period-over-Period must track local refresh generation ownership',
+);
+const periodRefreshStart = periodSource.indexOf('async function refresh(root, joint)');
+const periodRefreshEnd = periodSource.indexOf("\nfunction clear(root, message, kind = '')", periodRefreshStart);
+assert(periodRefreshStart >= 0 && periodRefreshEnd > periodRefreshStart, 'Period refresh lifecycle must remain present');
+const periodRefresh = periodSource.slice(periodRefreshStart, periodRefreshEnd);
+assert.doesNotMatch(periodRefresh, /if \(state\.rendering\) return;/,
+  'a newer Period generation must not be dropped solely because an older Promise is still running');
+assert.match(periodRefresh, /const seq = \+\+state\.requestSeq;/,
+  'each Period refresh must capture a fresh generation');
+assert.match(periodRefresh, /const inputs = await Promise\.all[\s\S]*?if \(seq !== state\.requestSeq\) return;/,
+  'stale Period file reads must not advance into local recomputation');
+assert.match(periodRefresh, /const result = await window\.CloudflareCsvJointAnalysis\.analyzeLocalCsvInputs\(inputs\);\s*if \(seq !== state\.requestSeq\) return;\s*state\.result = result;/,
+  'stale Period recomputation must not take result ownership');
+assert.match(periodRefresh, /catch \(error\) \{\s*if \(seq !== state\.requestSeq\) return;/,
+  'stale Period failures must not overwrite the active generation');
+assert.match(periodRefresh, /finally \{\s*if \(seq === state\.requestSeq\) state\.rendering = false;/,
+  'stale Period finally blocks must not release a newer generation busy state');
+
+const periodClearStart = periodSource.indexOf("function clear(root, message, kind = '')");
+const periodClearEnd = periodSource.indexOf('\nfunction render(root)', periodClearStart);
+assert(periodClearStart >= 0 && periodClearEnd > periodClearStart, 'Period clear lifecycle must remain present');
+const periodClear = periodSource.slice(periodClearStart, periodClearEnd);
+assert.match(periodClear, /state\.requestSeq \+= 1;/,
+  'Period file change, Clear, and failed Joint Analysis must revoke the active generation');
+assert.match(periodClear, /state\.rendering = false;/,
+  'Period invalidation must allow the next valid Joint success to refresh immediately');
+assert.match(periodClear, /state\.result = null;/,
+  'Period invalidation must release old local result ownership');
+assert.match(periodClear, /body\.hidden = true;/,
+  'Period invalidation must hide stale comparison evidence');
+assert.match(periodClear, /body\.innerHTML = '';/,
+  'Period invalidation must remove stale comparison markup');
+
+for (const [name, candidate] of [['data-quality', source], ['joint-analysis', jointSource], ['period-over-period', periodSource]]) {
   assert.doesNotMatch(
     candidate,
     /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
@@ -106,11 +147,13 @@ assert.match(source, /executionAuthorized: false/);
 assert.match(source, /amazonMutationAuthorized: false/);
 assert.match(jointSource, /authority: 'csv_advisory_only'/);
 assert.match(jointSource, /No upload, D1 write, Amazon request, persistence, or execution is performed\./);
+assert.match(periodSource, /authority: 'browser_local_observation_only'/);
 
 console.log(JSON.stringify({
   ok: true,
   localRenderGenerationOwned: true,
   jointRunGenerationOwned: true,
+  periodRefreshGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleAnalysisResultSuppressed: true,
   staleFailureSuppressed: true,
