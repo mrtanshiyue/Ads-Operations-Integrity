@@ -110,6 +110,7 @@ assert.equal(current.rejectedCount, 0);
 assert.equal(current.recurrent, true);
 assert.equal(current.currentEvidenceDrift, true);
 assert.equal(current.latestHistoricalReview.recommendationFingerprint, 'fp-current');
+assert.equal(Object.hasOwn(current.latestHistoricalReview, 'note'), true);
 assert.equal(current.latestHistoricalReview.note, 'Prior operator rationale: keep under review.');
 
 const historicalOnly = learning.contexts.find((context) => context.contextKey === 'context-old');
@@ -120,6 +121,7 @@ assert.equal(historicalOnly.currentReviewState, null);
 assert.equal(historicalOnly.staleEvidenceCount, null);
 assert.equal(historicalOnly.currentEvidenceDrift, null);
 assert.equal(historicalOnly.value, 'old waste term');
+assert.equal(Object.hasOwn(historicalOnly.latestHistoricalReview, 'note'), true);
 assert.equal(historicalOnly.latestHistoricalReview.note, null);
 
 const neverReviewedCurrent = learning.contexts.find((context) => context.contextKey === 'context-2');
