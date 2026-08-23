@@ -1,0 +1,169 @@
+name: Human Review Final Disposition Dev Runtime Acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/runtime-final-disposition-dev-acceptance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-final-disposition-dev-acceptance
+  cancel-in-progress: false
+
+jobs:
+  accept-dev:
+    if: github.head_ref == 'acceptance/259-human-review-final-disposition-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TARGET_MAIN_SHA: fea3005caf7b233870b75787162a580b1d22a28e
+      EXPECTED_BUILD_UUID: 19ae84fc-09aa-47e5-b035-00ee120f6d76
+      EXPECTED_DEV_DEPLOYMENT: 992a0e5b-c347-429f-b1a8-c735fbce087c
+      EXPECTED_DEV_VERSION: 6dad58e5-72a7-4a0c-aab0-283674a93751
+      DEV_WORKER: ads-operations-web-dev
+      DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      DEV_CONTROL_DB_ID: 2093b94f-27d5-4a4c-ada1-ff14af5c8de2
+      DEV_STORE_DB_ID: 123b2a32-d78b-4de9-8318-08e35cefb008
+      PROD_SYNC_WORKER: ads-operations-sync-prod
+      EXPECTED_SYNC_DEPLOYMENT: cf0b0adf-96dc-437d-8298-15af58f992ce
+      EXPECTED_SYNC_VERSION: 295df84e-2103-4858-9895-49f67d4b10b4
+    steps:
+      - name: Checkout acceptance control plane
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact-main promoted Development runtime and D1 schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          json=(-H 'Content-Type: application/json')
+
+          current_main="$(curl -fsS 'https://api.github.com/repos/mrtanshiyue/Ads-Operations-Integrity/branches/main' | jq -r '.commit.sha')"
+          test "$current_main" = "$TARGET_MAIN_SHA"
+
+          build="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/builds/builds/$EXPECTED_BUILD_UUID")"
+          printf '%s' "$build" | jq -e --arg sha "$TARGET_MAIN_SHA" '.success == true and .result.status == "stopped" and .result.build_outcome == "success" and .result.build_trigger_metadata.branch == "main" and .result.build_trigger_metadata.commit_hash == $sha' >/dev/null
+
+          deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$DEV_WORKER/deployments")"
+          printf '%s' "$deployments" | jq -e --arg d "$EXPECTED_DEV_DEPLOYMENT" --arg v "$EXPECTED_DEV_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+
+          health="$(curl -fsS "$DEV_BASE_URL/api/health")"
+          printf '%s' "$health" | jq -e --arg v "$EXPECTED_DEV_VERSION" '.ok == true and .environment == "development" and .syncTriggerEnabled == false and .deployment.versionId == $v' >/dev/null
+
+          d1_query() {
+            local db="$1" sql="$2" payload
+            payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
+            curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$payload" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$db/query"
+          }
+
+          schema="$(d1_query "$DEV_STORE_DB_ID" "SELECT sql FROM sqlite_master WHERE type='table' AND name='advisory_review_records'")"
+          printf '%s' "$schema" | jq -e '.success == true and (.result[0].results | length) == 1 and (.result[0].results[0].sql | contains("approved")) and (.result[0].results[0].sql | contains("rejected"))' >/dev/null
+          ledger="$(d1_query "$DEV_STORE_DB_ID" "SELECT name FROM d1_migrations WHERE name='0025_store_advisory_review_final_disposition.sql'")"
+          printf '%s' "$ledger" | jq -e '.success == true and (.result[0].results | length) == 1' >/dev/null
+          guards="$(d1_query "$DEV_STORE_DB_ID" "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN ('trg_advisory_review_binding_immutable','trg_advisory_review_no_delete','trg_advisory_review_csv_authority_guard') ORDER BY name")"
+          printf '%s' "$guards" | jq -e '.success == true and (.result[0].results | length) == 3 and (any(.result[0].results[]; .name == "trg_advisory_review_csv_authority_guard" and (.sql | contains("CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED"))))' >/dev/null
+
+      - name: Validate live Human Review Final Disposition read contract and fail-closed Dev write boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          json=(-H 'Content-Type: application/json')
+
+          d1_query() {
+            local db="$1" sql="$2" payload
+            payload="$(jq -cn --arg sql "$sql" '{sql:$sql}')"
+            curl -fsS -X POST "${auth[@]}" "${json[@]}" --data "$payload" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/d1/database/$db/query"
+          }
+
+          store_row="$(d1_query "$DEV_CONTROL_DB_ID" "SELECT store_id, store_code FROM stores WHERE d1_binding_key='STORE_01_DB' AND status <> 'disabled' LIMIT 1")"
+          printf '%s' "$store_row" | jq -e '.success == true and (.result[0].results | length) == 1' >/dev/null
+          store_id="$(printf '%s' "$store_row" | jq -er '.result[0].results[0].store_id')"
+
+          count_sql="SELECT (SELECT COUNT(*) FROM advisory_review_records) AS advisory_review_records, (SELECT COUNT(*) FROM optimization_actions) AS optimization_actions, (SELECT COUNT(*) FROM optimization_execution_receipts) AS optimization_execution_receipts, (SELECT COUNT(*) FROM sync_runs) AS sync_runs"
+          before="$(d1_query "$DEV_STORE_DB_ID" "$count_sql")"
+          before_counts="$(printf '%s' "$before" | jq -c '.result[0].results[0]')"
+
+          review_url="$DEV_BASE_URL/api/v1/stores/$store_id/advisory-reviews?reviewContract=csv-recommendation-human-review-v1&startDate=2026-06-01&endDate=2026-06-01&limit=50&sort=cost"
+          review="$(curl -fsS -H 'Accept: application/json' "$review_url")"
+          printf '%s' "$review" | jq -e --arg sid "$store_id" '
+            .schemaVersion == "csv-recommendation-human-review-v1" and
+            .storeId == $sid and
+            .authority.reviewPersistenceSupported == true and
+            .authority.approvedRejectedPersistenceSupported == true and
+            .authority.finalDispositionReviewOnly == true and
+            .authority.durableStates == ["acknowledged","needs_review","approved","rejected"] and
+            .authority.optimizationActionPersistenceAuthorized == false and
+            .authority.executionAuthorized == false and
+            .authority.amazonMutationAuthorized == false and
+            (.items | type == "array") and (.items | length) > 0 and
+            (all(.items[]; (.review.state | IN("unreviewed","acknowledged","needs_review","approved","rejected","unsupported")) and .decisionPacket.schemaVersion == "recommendation-decision-packet-v1" and .decisionPacket.authority.readOnly == true and .decisionPacket.authority.executionAuthorized == false and .decisionPacket.authority.amazonMutationAuthorized == false)) and
+            .candidateLibrary.schemaVersion == "governed-keyword-negative-candidate-library-v1" and
+            .candidateLibrary.authority.readOnly == true and .candidateLibrary.authority.executionAuthorized == false and .candidateLibrary.authority.amazonMutationAuthorized == false and
+            .historicalLearning.schemaVersion == "historical-review-learning-v1" and
+            .historicalLearning.authority.readOnly == true and
+            .historicalLearning.authority.adaptiveLearningAuthorized == false and
+            .historicalLearning.authority.ruleMutationAuthorized == false and
+            .historicalLearning.authority.recommendationMutationAuthorized == false and
+            .historicalLearning.authority.executionAuthorized == false and
+            .historicalLearning.authority.amazonMutationAuthorized == false and
+            .historicalLearning.semantics.approvedMeansExecuted == false and
+            .historicalLearning.semantics.approvedMeansSuccessful == false and
+            .historicalLearning.semantics.rejectedMeansFailed == false and
+            .historicalLearning.semantics.finalDispositionIsEffectiveness == false and
+            .historicalLearning.semantics.automaticFeedbackIntoRecommendations == false
+          ' >/dev/null
+
+          asset="$(curl -fsS "$DEV_BASE_URL/assets/cloudflare-native-csv-recommendation-human-review-v1.js")"
+          grep -Fq "const VERSION = '1.4.0';" <<< "$asset"
+          grep -Fq "data-cfhr-set=\"approved\"" <<< "$asset"
+          grep -Fq "data-cfhr-set=\"rejected\"" <<< "$asset"
+          grep -Fq 'Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.' <<< "$asset"
+
+          write_status="$(curl -sS -o /tmp/dev-write.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"inboxItemId":"acceptance-write-must-not-reach-handler","state":"approved"}' "$review_url")"
+          test "$write_status" = 403
+          jq -e '.error == "dev_read_only_bypass_write_blocked"' /tmp/dev-write.json >/dev/null
+
+          after="$(d1_query "$DEV_STORE_DB_ID" "$count_sql")"
+          after_counts="$(printf '%s' "$after" | jq -c '.result[0].results[0]')"
+          test "$before_counts" = "$after_counts" || { echo "Business/execution counts changed: $before_counts -> $after_counts"; exit 1; }
+
+          mkdir -p artifacts/runtime-final-disposition-dev-acceptance
+          printf '%s' "$review" | jq '{schemaVersion,storeId,authority,itemCount:(.items|length),candidateLibrary:{schemaVersion,status,summary,authority},historicalLearning:{schemaVersion,summary,authority,semantics}}' > artifacts/runtime-final-disposition-dev-acceptance/runtime.json
+          jq -n --argjson before "$before_counts" --argjson after "$after_counts" --arg writeStatus "$write_status" '{before:$before,after:$after,unchanged:($before==$after),devWriteBoundaryStatus:$writeStatus,devWriteBoundaryError:"dev_read_only_bypass_write_blocked"}' > artifacts/runtime-final-disposition-dev-acceptance/differential.json
+
+      - name: Re-verify Production Sync HARD-OFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          deployments="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/deployments")"
+          settings="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/settings")"
+          schedules="$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$PROD_SYNC_WORKER/schedules")"
+          printf '%s' "$deployments" | jq -e --arg d "$EXPECTED_SYNC_DEPLOYMENT" --arg v "$EXPECTED_SYNC_VERSION" '.success == true and .result.deployments[0].id == $d and .result.deployments[0].versions[0].version_id == $v' >/dev/null
+          printf '%s' "$settings" | jq -e '.success == true and (.result.bindings | map(select(.name == "AMAZON_ADS_ENABLED" and .text == "false")) | length == 1)' >/dev/null
+          printf '%s' "$schedules" | jq -e '.success == true and ((.result.schedules // .result // []) | length) == 0' >/dev/null
+          echo 'DEVELOPMENT_FINAL_DISPOSITION_ACCEPTANCE=PASS'
+          echo 'PRODUCTION_SYNC_UNTOUCHED=true'
+          echo 'AMAZON_REQUESTS=0'
+
+      - name: Upload immutable Dev acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-final-disposition-dev-acceptance-${{ github.run_id }}
+          path: artifacts/runtime-final-disposition-dev-acceptance/
+          if-no-files-found: error
+          retention-days: 90
