@@ -87,6 +87,18 @@ export function reviewContextKeyFromEvidenceJson(value) {
   return parts.every(Boolean) ? parts.join('\u001f') : null;
 }
 
+export function parseReviewNoteRequest(body) {
+  const value = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const provided = Object.prototype.hasOwnProperty.call(value, 'note');
+  if (!provided) return { provided: false, value: null };
+  const note = optionalNote(value.note);
+  return note.error ? { provided: true, error: note.error } : { provided: true, value: note.value };
+}
+
+export function effectiveReviewNote(noteRequest, existingReviewerNote = null) {
+  return noteRequest?.provided === true ? (noteRequest.value ?? null) : (existingReviewerNote ?? null);
+}
+
 async function currentRecommendationSnapshot({ request, env, actor, storeId, url, range }) {
   const intelligenceUrl = new URL(`/api/v1/stores/${encodeURIComponent(storeId)}/search-term-intelligence`, request.url);
   intelligenceUrl.searchParams.set('source', 'csv');
@@ -214,8 +226,8 @@ async function persistCurrentReview({ request, env, actor, db, storeId, snapshot
   if (!ALLOWED_REQUEST_STATES.has(requestedState)) {
     return json(request, { error: 'recommendation_review_state_not_supported' }, 400);
   }
-  const note = optionalNote(body.value.note);
-  if (note.error) return json(request, { error: note.error }, 400);
+  const noteRequest = parseReviewNoteRequest(body.value);
+  if (noteRequest.error) return json(request, { error: noteRequest.error }, 400);
 
   const emitted = snapshot.items.find((item) => clean(item?.inboxItemId) === inboxItemId);
   if (!emitted) {
@@ -257,8 +269,9 @@ async function persistCurrentReview({ request, env, actor, db, storeId, snapshot
   let changed = false;
 
   if (existing) {
+    const effectiveNote = effectiveReviewNote(noteRequest, existing.reviewer_note);
     const sameState = existing.state === record.state;
-    const sameNote = clean(existing.reviewer_note) === clean(note.value);
+    const sameNote = clean(existing.reviewer_note) === clean(effectiveNote);
     if (sameState && sameNote) {
       reused = true;
     } else {
@@ -267,7 +280,7 @@ async function persistCurrentReview({ request, env, actor, db, storeId, snapshot
         SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
             snoozed_until=NULL, updated_at=?5
         WHERE review_id=?1
-      `).bind(reviewId, record.state, actor.user_id, note.value, now).run();
+      `).bind(reviewId, record.state, actor.user_id, effectiveNote, now).run();
       changed = true;
     }
   } else {
@@ -289,7 +302,7 @@ async function persistCurrentReview({ request, env, actor, db, storeId, snapshot
         record.recommendationActionType,
         record.state,
         actor.user_id,
-        note.value,
+        effectiveReviewNote(noteRequest, null),
         now,
         record.sourceEvidenceJson,
         record.sourceEvidenceSha256,
@@ -306,14 +319,15 @@ async function persistCurrentReview({ request, env, actor, db, storeId, snapshot
         return json(request, { error: 'recommendation_review_evidence_conflict' }, 409);
       }
       reviewId = raced.review_id;
-      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(note.value);
+      const racedEffectiveNote = effectiveReviewNote(noteRequest, raced.reviewer_note);
+      reused = raced.state === record.state && clean(raced.reviewer_note) === clean(racedEffectiveNote);
       if (!reused) {
         await db.prepare(`
           UPDATE advisory_review_records
           SET state=?2, reviewer_user_id=?3, reviewer_note=?4, reviewed_at=?5,
               snoozed_until=NULL, updated_at=?5
           WHERE review_id=?1
-        `).bind(reviewId, record.state, actor.user_id, note.value, now).run();
+        `).bind(reviewId, record.state, actor.user_id, racedEffectiveNote, now).run();
         changed = true;
       }
     }
