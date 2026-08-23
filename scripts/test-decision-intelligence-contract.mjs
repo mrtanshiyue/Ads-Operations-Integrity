@@ -102,6 +102,12 @@ assert.match(uiSource, /NON-AUTHORITATIVE PREVIEW/);
 assert.match(uiSource, /Development preview \/ non-authoritative/);
 assert.match(uiSource, /Action Inbox/);
 assert.match(uiSource, /Amazon execution remains disabled/);
+assert.match(uiSource, /intelligenceSerial:\s*0,\s*actionsSerial:\s*0/);
+assert.match(uiSource, /state\.intelligenceSerial \+= 1;\s*state\.actionsSerial \+= 1;/);
+assert.match(uiSource, /const serial = \+\+state\.intelligenceSerial;/);
+assert.match(uiSource, /serial !== state\.intelligenceSerial \|\| storeId !== currentStoreId\(\)/);
+assert.match(uiSource, /const serial = \+\+state\.actionsSerial;/);
+assert.match(uiSource, /serial !== state\.actionsSerial \|\| storeId !== currentStoreId\(\)/);
 assert.doesNotMatch(uiSource, /\/apply['"`]/);
 
 console.log(JSON.stringify({
@@ -111,5 +117,6 @@ console.log(JSON.stringify({
   modelVersion: SEARCH_TERM_MODEL_VERSION,
   deterministicFingerprint: true,
   authorityGuard: 'fail-closed',
+  crossStoreLateResponseSuppression: true,
   amazonMutationAuthorized: false,
 }, null, 2));
