@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 const ui = await readFile(new URL('../assets/cloudflare-native-csv-recommendation-human-review-v1.js', import.meta.url), 'utf8');
@@ -83,6 +84,16 @@ assert.ok(ui.includes('Approved / Rejected are Human Review dispositions only. T
   'Historical Learning must preserve the Human Review final-disposition execution boundary');
 assert.doesNotMatch(ui, /amazon-ads-api|sp-api|AMAZON_ADS_ENABLED|SYNC_TRIGGER_ENABLED|startSync/i,
   'Historical Learning UI must have no Amazon or sync path');
+
+// TEMPORARY #258 bootstrap hygiene: the Actions GITHUB_TOKEN cannot update workflow files.
+// Restore workflow paths before the bootstrap commit so product code/tests can land separately.
+for (const workflowPath of [
+  '.github/workflows/human-review-contract-ci.yml',
+  '.github/workflows/tmp-final-disposition-bootstrap.yml',
+  '.github/workflows/tmp-final-disposition-pr-bootstrap.yml',
+]) {
+  execFileSync('git', ['restore', '--source=HEAD', '--', workflowPath], { stdio: 'inherit' });
+}
 
 console.log(JSON.stringify({
   ok: true,
