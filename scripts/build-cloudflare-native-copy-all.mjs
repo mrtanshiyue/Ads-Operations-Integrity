@@ -18,8 +18,6 @@ const required = [
   'assets/cloudflare-native-access-console-v1.js',
   'assets/cloudflare-native-query-bridge-v1.js',
   'assets/cloudflare-native-data-panel-v1.js',
-  'assets/cloudflare-gate6-acceptance-v1.js',
-  'assets/cloudflare-gate7-ui-acceptance-v1.js',
 ];
 
 for (const entry of required) {
@@ -177,7 +175,6 @@ if (!/CloudflareNativeQueryBridge/.test(dataPanelSource) || !/cloudflare_native_
 
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
-
 const sourceIndex = await readFile(path.join(repoRoot, 'index.html'), 'utf8');
 const connectSrcPattern = /connect-src\s+[^;]+;/i;
 if (!connectSrcPattern.test(sourceIndex)) {
@@ -226,10 +223,8 @@ const auditConsoleTag = '<script src="assets/cloudflare-native-audit-console-v1.
 const accessConsoleTag = '<script src="assets/cloudflare-native-access-console-v1.js"></script>';
 const nativeBridgeTag = '<script src="assets/cloudflare-native-query-bridge-v1.js"></script>';
 const nativeDataPanelTag = '<script src="assets/cloudflare-native-data-panel-v1.js"></script>';
-const gate6AcceptanceTag = '<script src="assets/cloudflare-gate6-acceptance-v1.js"></script>';
-const gate7AcceptanceTag = '<script src="assets/cloudflare-gate7-ui-acceptance-v1.js"></script>';
-const nativeTags = `  ${nativeClientTag}\n  ${keywordGovernanceTag}\n  ${productGovernanceTag}\n  ${operationsHealthTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n  ${gate6AcceptanceTag}\n  ${gate7AcceptanceTag}\n`;
-for (const tag of [nativeClientTag, keywordGovernanceTag, productGovernanceTag, operationsHealthTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag, gate6AcceptanceTag, gate7AcceptanceTag]) {
+const nativeTags = `  ${nativeClientTag}\n  ${keywordGovernanceTag}\n  ${productGovernanceTag}\n  ${operationsHealthTag}\n  ${negativeGovernanceTag}\n  ${auditConsoleTag}\n  ${accessConsoleTag}\n  ${nativeBridgeTag}\n  ${nativeDataPanelTag}\n`;
+for (const tag of [nativeClientTag, keywordGovernanceTag, productGovernanceTag, operationsHealthTag, negativeGovernanceTag, auditConsoleTag, accessConsoleTag, nativeBridgeTag, nativeDataPanelTag]) {
   nativeIndex = nativeIndex.replaceAll(tag, '');
 }
 nativeIndex = nativeIndex.replace(/<\/head>/i, `${nativeTags}</head>`);
@@ -243,10 +238,8 @@ if (
   || !nativeIndex.includes(accessConsoleTag)
   || !nativeIndex.includes(nativeBridgeTag)
   || !nativeIndex.includes(nativeDataPanelTag)
-  || !nativeIndex.includes(gate6AcceptanceTag)
-  || !nativeIndex.includes(gate7AcceptanceTag)
 ) {
-  throw new Error('Failed to inject the native browser API/keyword/product/health/negative/audit/access/query/data-panel/Gate clients');
+  throw new Error('Failed to inject the native browser API/keyword/product/health/negative/audit/access/query/data-panel clients');
 }
 if ((nativeIndex.split(keywordGovernanceTag).length - 1) !== 1) {
   throw new Error('Keyword governance console client must be injected exactly once');
@@ -318,7 +311,5 @@ console.log(JSON.stringify({
   nativeQueryBridge: 'assets/cloudflare-native-query-bridge-v1.js',
   nativeDataPanel: 'assets/cloudflare-native-data-panel-v1.js',
   nativeDataPanelContract: 'same-origin-query-and-raw-fail-closed',
-  gate6AcceptanceClient: 'assets/cloudflare-gate6-acceptance-v1.js',
-  gate7AcceptanceClient: 'assets/cloudflare-gate7-ui-acceptance-v1.js',
   retiredScriptTagsRemoved,
 }, null, 2));
