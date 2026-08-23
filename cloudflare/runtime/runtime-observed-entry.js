@@ -1,8 +1,4 @@
 import application from './web-entry.js';
-import {
-  handleOperationalUatEphemeralServiceRoute,
-} from './operational-uat-ephemeral-service-route.js';
-import { OPERATIONAL_UAT_ROUTE } from './operational-uat-live-probe.js';
 import { handleDevReadOnlyBootstrapRoute } from './dev-read-only-bootstrap-api.js';
 
 export default {
@@ -10,13 +6,8 @@ export default {
     const startedAt = Date.now();
     const url = new URL(request.url);
     const workerVersion = runtimeWorkerVersion(env);
-    const uatResponse = url.pathname === OPERATIONAL_UAT_ROUTE
-      ? await handleOperationalUatEphemeralServiceRoute({ request, env, url })
-      : null;
-    const devBootstrapResponse = uatResponse
-      ? null
-      : await handleDevReadOnlyBootstrapRoute({ request, env, url });
-    const response = uatResponse || devBootstrapResponse || await application.fetch(request, env, ctx);
+    const devBootstrapResponse = await handleDevReadOnlyBootstrapRoute({ request, env, url });
+    const response = devBootstrapResponse || await application.fetch(request, env, ctx);
     const record = runtimeEvidenceRecord({
       request,
       env,
@@ -39,7 +30,6 @@ export function runtimeWorkerVersion(env = {}) {
 export function normalizeRuntimeRoute(pathname) {
   const path = String(pathname || '');
   if (path === '/api/health') return '/api/health';
-  if (path === OPERATIONAL_UAT_ROUTE) return '/api/v1/operational-uat/live-probe';
   if (/^\/api\/v1\/stores\/[^/]+\/csv-analytics\/[^/]+$/.test(path)) {
     return '/api/v1/stores/:store/csv-analytics/:dimension';
   }
