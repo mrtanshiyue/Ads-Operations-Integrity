@@ -7,6 +7,7 @@ BEGIN TRANSACTION;
 
 DROP TRIGGER trg_advisory_review_binding_immutable;
 DROP TRIGGER trg_advisory_review_no_delete;
+DROP TRIGGER IF EXISTS trg_advisory_review_csv_authority_guard;
 
 ALTER TABLE advisory_review_records RENAME TO advisory_review_records_legacy_0025;
 
@@ -90,6 +91,29 @@ CREATE TRIGGER trg_advisory_review_no_delete
 BEFORE DELETE ON advisory_review_records
 BEGIN
   SELECT RAISE(ABORT, 'ADVISORY_REVIEW_DELETE_FORBIDDEN');
+END;
+
+-- 0022 added this database-boundary guard after the advisory review table was created.
+-- Rebuilding the table would otherwise drop the trigger with the renamed legacy table.
+-- Preserve the exact fail-closed CSV authority invariant across the 0025 state evolution.
+CREATE TRIGGER trg_advisory_review_csv_authority_guard
+BEFORE INSERT ON advisory_review_records
+WHEN NEW.source_kind = 'csv_import'
+BEGIN
+  SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
+  WHERE json_type(NEW.source_evidence_json, '$.sourceImportIds') IS NOT 'array'
+     OR COALESCE(json_array_length(NEW.source_evidence_json, '$.sourceImportIds'), 0) = 0;
+
+  SELECT RAISE(ABORT, 'CSV_ADVISORY_REVIEW_AUTHORITY_REQUIRED')
+  WHERE EXISTS (
+    SELECT 1
+    FROM json_each(NEW.source_evidence_json, '$.sourceImportIds') j
+    LEFT JOIN csv_import_authority a ON a.import_id = CAST(j.value AS TEXT)
+    WHERE j.type <> 'text'
+       OR a.import_id IS NULL
+       OR a.data_class <> 'business'
+       OR a.provenance_class NOT IN ('exact_source_object','reconciled_exact_source')
+  );
 END;
 
 COMMIT;
