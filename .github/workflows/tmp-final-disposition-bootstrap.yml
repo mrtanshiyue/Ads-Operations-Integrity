@@ -1,0 +1,532 @@
+name: Temporary Final Disposition Bootstrap
+
+on:
+  push:
+    branches:
+      - 'feature/human-review-final-disposition-v1'
+    paths:
+      - '.github/workflows/tmp-final-disposition-bootstrap.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/human-review-final-disposition-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply exact final disposition patches
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          function read(path){ return fs.readFileSync(path,'utf8'); }
+          function write(path,value){ fs.writeFileSync(path,value); }
+          function once(path, from, to) {
+            const src = read(path);
+            const first = src.indexOf(from);
+            if (first < 0) throw new Error(`anchor missing: ${path}: ${from.slice(0,80)}`);
+            if (src.indexOf(from, first + from.length) >= 0) throw new Error(`anchor not unique: ${path}`);
+            write(path, src.slice(0, first) + to + src.slice(first + from.length));
+          }
+
+          const contract = 'cloudflare/runtime/csv-recommendation-human-review-contract.js';
+          once(contract,
+`const ADVISORY_STATE_MAP = Object.freeze({
+  acknowledged: 'acknowledged',
+  needs_review: 'open',
+});`,
+`const ADVISORY_STATE_MAP = Object.freeze({
+  acknowledged: 'acknowledged',
+  needs_review: 'open',
+  approved: 'approved',
+  rejected: 'rejected',
+});`);
+          once(contract,
+` * represents acknowledged / needs_review for search-term candidates only. Session states
+ * remain presentation-only. approved / rejected and root-level candidates remain fail-closed
+ * until an explicit schema contract exists; they must never be coerced into execution state.`,
+` * represents acknowledged / needs_review / approved / rejected for search-term candidates.
+ * Session states remain presentation-only. Final dispositions are Human Review outcomes only;
+ * they must never be coerced into Optimization Action approval or execution state.`);
+
+          const api = 'cloudflare/runtime/csv-recommendation-human-review-api.js';
+          once(api,
+`const ALLOWED_REQUEST_STATES = new Set(['acknowledged', 'needs_review']);`,
+`const ALLOWED_REQUEST_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);`);
+          once(api,
+`export function persistedStateToUiState(value) {
+  if (value === 'acknowledged') return 'acknowledged';
+  if (value === 'open') return 'needs_review';
+  return null;
+}`,
+`export function persistedStateToUiState(value) {
+  if (value === 'acknowledged') return 'acknowledged';
+  if (value === 'open') return 'needs_review';
+  if (value === 'approved') return 'approved';
+  if (value === 'rejected' || value === 'dismissed') return 'rejected';
+  return null;
+}`);
+          once(api,
+`    durableStates: ['acknowledged', 'needs_review'],
+    viewedPersistenceSupported: false,
+    approvedRejectedPersistenceSupported: false,`,
+`    durableStates: ['acknowledged', 'needs_review', 'approved', 'rejected'],
+    viewedPersistenceSupported: false,
+    approvedRejectedPersistenceSupported: true,
+    finalDispositionReviewOnly: true,`);
+
+          const historical = 'cloudflare/runtime/historical-review-learning.js';
+          once(historical,
+`      needsReviewMeansRejected: false,
+      historicalOutcomeAvailable: false,
+      automaticFeedbackIntoRecommendations: false,`,
+`      needsReviewMeansRejected: false,
+      approvedMeansExecuted: false,
+      approvedMeansSuccessful: false,
+      rejectedMeansFailed: false,
+      finalDispositionIsEffectiveness: false,
+      historicalOutcomeAvailable: false,
+      automaticFeedbackIntoRecommendations: false,`);
+          once(historical,
+`    acknowledgedCount: stateCounts.acknowledged,
+    needsReviewCount: stateCounts.needs_review,
+    unsupportedStateCount: stateCounts.unsupported,`,
+`    acknowledgedCount: stateCounts.acknowledged,
+    needsReviewCount: stateCounts.needs_review,
+    approvedCount: stateCounts.approved,
+    rejectedCount: stateCounts.rejected,
+    unsupportedStateCount: stateCounts.unsupported,`);
+          once(historical,
+`function historyStateCounts(entries) {
+  const counts = { acknowledged: 0, needs_review: 0, unsupported: 0 };
+  for (const entry of entries) {
+    const review = entry?.review || entry;
+    const state = normalizedState(review?.state);
+    if (state === 'acknowledged') counts.acknowledged += 1;
+    else if (state === 'needs_review') counts.needs_review += 1;
+    else counts.unsupported += 1;
+  }
+  return counts;
+}`,
+`function historyStateCounts(entries) {
+  const counts = { acknowledged: 0, needs_review: 0, approved: 0, rejected: 0, unsupported: 0 };
+  for (const entry of entries) {
+    const review = entry?.review || entry;
+    const state = normalizedState(review?.state);
+    if (state === 'acknowledged') counts.acknowledged += 1;
+    else if (state === 'needs_review') counts.needs_review += 1;
+    else if (state === 'approved') counts.approved += 1;
+    else if (state === 'rejected') counts.rejected += 1;
+    else counts.unsupported += 1;
+  }
+  return counts;
+}`);
+          once(historical,
+`  if (state === 'acknowledged') return 'acknowledged';
+  if (state === 'needs_review' || state === 'open') return 'needs_review';
+  return 'unsupported';`,
+`  if (state === 'acknowledged') return 'acknowledged';
+  if (state === 'needs_review' || state === 'open') return 'needs_review';
+  if (state === 'approved') return 'approved';
+  if (state === 'rejected' || state === 'dismissed') return 'rejected';
+  return 'unsupported';`);
+
+          const health = 'cloudflare/runtime/data-health-api.js';
+          once(health,
+`      scopeBlockedCount: null, unreviewedCount: null, needsReviewCount: null, acknowledgedCount: null,
+      staleReviewEvidenceCount: null, highUnreviewedCount: null, analysisScopeComplete: null,`,
+`      scopeBlockedCount: null, unreviewedCount: null, needsReviewCount: null, acknowledgedCount: null,
+      approvedCount: null, rejectedCount: null, resolvedCount: null,
+      staleReviewEvidenceCount: null, highUnreviewedCount: null, analysisScopeComplete: null,`);
+          once(health,
+`  let needsReviewCount = 0;
+  let acknowledgedCount = 0;
+  let highUnreviewedCount = 0;`,
+`  let needsReviewCount = 0;
+  let acknowledgedCount = 0;
+  let approvedCount = 0;
+  let rejectedCount = 0;
+  let highUnreviewedCount = 0;`);
+          once(health,
+`    } else if (state === 'needs_review') needsReviewCount += 1;
+    else if (state === 'acknowledged') acknowledgedCount += 1;`,
+`    } else if (state === 'needs_review') needsReviewCount += 1;
+    else if (state === 'acknowledged') acknowledgedCount += 1;
+    else if (state === 'approved') approvedCount += 1;
+    else if (state === 'rejected') rejectedCount += 1;`);
+          once(health,
+`    unreviewedCount, needsReviewCount, acknowledgedCount, staleReviewEvidenceCount: staleReviewIds.size, highUnreviewedCount,`,
+`    unreviewedCount, needsReviewCount, acknowledgedCount, approvedCount, rejectedCount,
+    resolvedCount: approvedCount + rejectedCount, staleReviewEvidenceCount: staleReviewIds.size, highUnreviewedCount,`);
+
+          const queue = 'cloudflare/runtime/operator-work-queue.js';
+          once(queue,
+`    acknowledgedCount: counts?.acknowledgedCount ?? null,
+    recommendationCandidateCount: counts?.recommendationCandidateCount ?? null,`,
+`    acknowledgedCount: counts?.acknowledgedCount ?? null,
+    approvedCount: counts?.approvedCount ?? null,
+    rejectedCount: counts?.rejectedCount ?? null,
+    resolvedCount: counts?.resolvedCount ?? null,
+    recommendationCandidateCount: counts?.recommendationCandidateCount ?? null,`);
+          once(queue,
+`    'acknowledgedCount', 'recommendationCandidateCount', 'criticalHighCandidateCount',`,
+`    'acknowledgedCount', 'approvedCount', 'rejectedCount', 'resolvedCount',
+    'recommendationCandidateCount', 'criticalHighCandidateCount',`);
+          once(queue,
+`  if (values.highUnreviewedCount > values.unreviewedCount) return null;
+  if (values.needsReviewCount + values.acknowledgedCount + values.unreviewedCount > values.recommendationCandidateCount) return null;`,
+`  if (values.highUnreviewedCount > values.unreviewedCount) return null;
+  if (values.resolvedCount !== values.approvedCount + values.rejectedCount) return null;
+  if (values.needsReviewCount + values.acknowledgedCount + values.resolvedCount + values.unreviewedCount > values.recommendationCandidateCount) return null;`);
+          once(queue,
+`    acknowledgedCount: null,
+    recommendationCandidateCount: null,`,
+`    acknowledgedCount: null,
+    approvedCount: null,
+    rejectedCount: null,
+    resolvedCount: null,
+    recommendationCandidateCount: null,`);
+          once(queue,
+`  return row(identity, range, {
+    queueClass: 'no_active_queue', priority: 5, evidenceState: 'available',
+    reasonCode: store.candidateEmissionAuthorized === false ? 'candidate_emission_not_authorized' : 'no_active_queue',
+    reasonText: store.candidateEmissionAuthorized === false
+      ? 'The requested analysis scope does not authorize recommendation candidate emission'
+      : 'No active recommendation review queue exists for the requested date range',`,
+`  return row(identity, range, {
+    queueClass: 'no_active_queue', priority: 5, evidenceState: 'available',
+    reasonCode: store.candidateEmissionAuthorized === false
+      ? 'candidate_emission_not_authorized'
+      : counts.resolvedCount > 0 ? 'final_disposition_only' : 'no_active_queue',
+    reasonText: store.candidateEmissionAuthorized === false
+      ? 'The requested analysis scope does not authorize recommendation candidate emission'
+      : counts.resolvedCount > 0
+        ? 'Only final Human Review dispositions remain; there is no active review queue'
+        : 'No active recommendation review queue exists for the requested date range',`);
+
+          const ui = 'assets/cloudflare-native-csv-recommendation-human-review-v1.js';
+          once(ui, `const VERSION = '1.3.0';`, `const VERSION = '1.4.0';`);
+          once(ui,
+`const DURABLE_STATES = new Set(['acknowledged', 'needs_review']);`,
+`const DURABLE_STATES = new Set(['acknowledged', 'needs_review', 'approved', 'rejected']);`);
+          once(ui,
+`if (!['unreviewed', 'acknowledged', 'needs_review'].includes(reviewState)) throw new Error('human_review_state_unsupported');`,
+`if (!['unreviewed', 'acknowledged', 'needs_review', 'approved', 'rejected'].includes(reviewState)) throw new Error('human_review_state_unsupported');`);
+          once(ui,
+`    if (durableStates.length !== 2 || !durableStates.includes('acknowledged') || !durableStates.includes('needs_review')) {
+      throw new Error('human_review_durable_state_contract_invalid');
+    }`,
+`    if (durableStates.length !== 4 || !['acknowledged', 'needs_review', 'approved', 'rejected'].every((value) => durableStates.includes(value))) {
+      throw new Error('human_review_durable_state_contract_invalid');
+    }
+    if (authority?.approvedRejectedPersistenceSupported !== true || authority?.finalDispositionReviewOnly !== true) {
+      throw new Error('human_review_final_disposition_authority_invalid');
+    }`);
+          once(ui,
+`    for (const key of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {`,
+`    for (const key of ['recurrenceIsEffectiveness', 'acknowledgedMeansApproved', 'acknowledgedMeansExecuted', 'needsReviewMeansRejected', 'approvedMeansExecuted', 'approvedMeansSuccessful', 'rejectedMeansFailed', 'finalDispositionIsEffectiveness', 'historicalOutcomeAvailable', 'automaticFeedbackIntoRecommendations']) {`);
+          once(ui,
+`${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged']])}`,
+`${librarySelect('review', 'Review', filters.review, [['all','All'],['unreviewed','Unreviewed'],['needs_review','Needs review'],['acknowledged','Acknowledged'],['approved','Approved'],['rejected','Rejected']])}`);
+          once(ui,
+`      <small>Recurrence is not effectiveness. Acknowledged is not approved or executed; needs_review is not rejected or failed. Historical Learning never changes recommendation rules or execution authority.</small>`,
+`      <small>Recurrence and final disposition are not effectiveness. Approved is not executed or successful; rejected is not failed. Historical Learning never changes recommendation rules or execution authority.</small>`);
+          once(ui,
+`          <button type="button" class="btn" data-cfhr-set="acknowledged" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Acknowledge</button>
+        </div>`,
+`          <button type="button" class="btn" data-cfhr-set="acknowledged" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Acknowledge</button>
+          <button type="button" class="btn" data-cfhr-set="approved" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Approve review decision</button>
+          <button type="button" class="btn" data-cfhr-set="rejected" data-cfhr-item="${esc(inboxItemId)}"${busy ? ' disabled' : ''}>Reject review decision</button>
+          <small class="cfhr-boundary">Approved / Rejected are Human Review dispositions only. They do not execute Amazon changes.</small>
+        </div>`);
+          once(ui,
+`        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review persistence never creates an Optimization Action, execution permit, or Amazon mutation authority.</div>`,
+`        </div><div class="cfri-callout warn"><strong>Authority boundary:</strong> Acknowledged / needs-review / approved / rejected are Human Review states only. Approved does not approve an Optimization Action, create an execution permit, or authorize an Amazon mutation.</div>`);
+          once(ui,
+`      <div><span>Acknowledged / Needs review</span><strong>${esc(display(context.acknowledgedCount))} / ${esc(display(context.needsReviewCount))}</strong></div>`,
+`      <div><span>Acknowledged / Needs review</span><strong>${esc(display(context.acknowledgedCount))} / ${esc(display(context.needsReviewCount))}</strong></div>
+      <div><span>Approved / Rejected</span><strong>${esc(display(context.approvedCount))} / ${esc(display(context.rejectedCount))}</strong></div>`);
+
+          const contractTest = 'scripts/test-recommendation-human-review-contract.mjs';
+          once(contractTest,
+`for (const state of ['approved', 'rejected']) {
+  const result = await evaluateRecommendationReviewRequest({
+    inboxItem: futureGovernedItem,
+    requestedState: state,
+    analysisScope: { candidateEmissionAuthorized: true },
+  });
+  assert.equal(result.persistenceAuthorized, false);
+  assert.equal(result.schemaReusable, false);
+  assert.ok(result.reasons.includes('durable_state_schema_mapping_missing'));
+  assert.equal(result.execution.optimizationActionApprovalAllowed, false);
+}`,
+`for (const state of ['approved', 'rejected']) {
+  const result = await evaluateRecommendationReviewRequest({
+    inboxItem: futureGovernedItem,
+    requestedState: state,
+    analysisScope: { candidateEmissionAuthorized: true },
+  });
+  assert.equal(result.persistenceAuthorized, true);
+  assert.equal(result.schemaReusable, true);
+  assert.equal(result.advisoryReviewRecord.state, state);
+  assert.equal(result.execution.optimizationActionApprovalAllowed, false);
+  assert.equal(result.execution.executionAuthorized, false);
+  assert.equal(result.execution.amazonMutationAuthorized, false);
+}`);
+          once(contractTest,
+`  approvedRejectedFailClosedWithoutSchemaMapping: true,`,
+`  approvedRejectedReviewOnlyPersistence: true,`);
+
+          const persistenceTest = 'scripts/test-recommendation-human-review-persistence.mjs';
+          once(persistenceTest,
+`for (const state of ['approved', 'rejected']) {
+  const result = await evaluateRecommendationReviewRequest({
+    inboxItem: authorized,
+    requestedState: state,
+    analysisScope: scope,
+  });
+  assert.equal(result.persistenceAuthorized, false);
+}
+assert.equal(persistedStateToUiState('acknowledged'), 'acknowledged');
+assert.equal(persistedStateToUiState('open'), 'needs_review');
+assert.equal(persistedStateToUiState('dismissed'), null);`,
+`for (const state of ['approved', 'rejected']) {
+  const result = await evaluateRecommendationReviewRequest({
+    inboxItem: authorized,
+    requestedState: state,
+    analysisScope: scope,
+  });
+  assert.equal(result.persistenceAuthorized, true);
+  assert.equal(result.advisoryReviewRecord.state, state);
+  assert.equal(result.execution.optimizationActionApprovalAllowed, false);
+  assert.equal(result.execution.executionAuthorized, false);
+  assert.equal(result.execution.amazonMutationAuthorized, false);
+}
+assert.equal(persistedStateToUiState('acknowledged'), 'acknowledged');
+assert.equal(persistedStateToUiState('open'), 'needs_review');
+assert.equal(persistedStateToUiState('approved'), 'approved');
+assert.equal(persistedStateToUiState('rejected'), 'rejected');
+assert.equal(persistedStateToUiState('dismissed'), 'rejected');
+assert.equal(persistedStateToUiState('snoozed'), null);`);
+          once(persistenceTest, `  migrationRequired: false,`, `  migrationRequired: true,`);
+          once(persistenceTest, `  approvedRejectedFailClosed: true,`, `  approvedRejectedReviewOnlyPersistence: true,`);
+
+          const uiTest = 'scripts/test-recommendation-human-review-ui.mjs';
+          once(uiTest, `/const VERSION = '1\\.3\\.0'/`, `/const VERSION = '1\\.4\\.0'/`);
+          once(uiTest,
+`/const DURABLE_STATES = new Set\\(\\['acknowledged', 'needs_review'\\]\\)/,
+  'Human Review UI must expose only the two schema-backed durable states'`,
+`/const DURABLE_STATES = new Set\\(\\['acknowledged', 'needs_review', 'approved', 'rejected'\\]\\)/,
+  'Human Review UI must expose the four schema-backed durable review states'`);
+          once(uiTest,
+`assert.doesNotMatch(ui, /data-cfhr-set="(?:approved|rejected|execute)"/,
+  'Approved/rejected/execute must remain fail-closed and have no UI action');`,
+`assert.match(ui, /data-cfhr-set="approved"/, 'Approved review-only durable action is missing');
+assert.match(ui, /data-cfhr-set="rejected"/, 'Rejected review-only durable action is missing');
+assert.doesNotMatch(ui, /data-cfhr-set="execute"/, 'Execute action must remain unavailable');
+assert.match(ui, /Approved \/ Rejected are Human Review dispositions only\. They do not execute Amazon changes\./,
+  'Final disposition UI copy must preserve the execution boundary');`);
+          once(uiTest,
+`assert.match(ui, /Recurrence is not effectiveness\\. Acknowledged is not approved or executed; needs_review is not rejected or failed\\./,
+  'Historical Learning semantics copy must reject outcome inference');`,
+`assert.match(ui, /Recurrence and final disposition are not effectiveness\\. Approved is not executed or successful; rejected is not failed\\./,
+  'Historical Learning semantics copy must reject disposition effectiveness inference');
+assert.match(ui, /\\['approved','Approved'\\].*\\['rejected','Rejected'\\]/s,
+  'Candidate Library review filter must expose Approved and Rejected');`);
+
+          const historicalTest = 'scripts/test-historical-review-learning.mjs';
+          once(historicalTest,
+`  needsReviewMeansRejected: false,
+  historicalOutcomeAvailable: false,
+  automaticFeedbackIntoRecommendations: false,`,
+`  needsReviewMeansRejected: false,
+  approvedMeansExecuted: false,
+  approvedMeansSuccessful: false,
+  rejectedMeansFailed: false,
+  finalDispositionIsEffectiveness: false,
+  historicalOutcomeAvailable: false,
+  automaticFeedbackIntoRecommendations: false,`);
+          once(historicalTest,
+`assert.deepEqual(learning.summary.stateCounts, { acknowledged: 3, needs_review: 2, unsupported: 0 });`,
+`assert.deepEqual(learning.summary.stateCounts, { acknowledged: 3, needs_review: 2, approved: 0, rejected: 0, unsupported: 0 });`);
+          once(historicalTest,
+`assert.equal(current.needsReviewCount, 1);
+assert.equal(current.recurrent, true);`,
+`assert.equal(current.needsReviewCount, 1);
+assert.equal(current.approvedCount, 0);
+assert.equal(current.rejectedCount, 0);
+assert.equal(current.recurrent, true);`);
+          once(historicalTest,
+`assert.equal(neverReviewedCurrent.staleEvidenceCount, 0);
+
+assert.throws(() =>`,
+`assert.equal(neverReviewedCurrent.staleEvidenceCount, 0);
+
+const dispositionLearning = buildHistoricalReviewLearning({
+  storeId: 'STORE01',
+  historicalEntries: [
+    { contextKey: 'd1', review: historicalReview({ id: 'approved-1', fingerprint: 'approved-fp', state: 'approved', updatedAt: '2026-07-01T00:00:00.000Z' }) },
+    { contextKey: 'd2', review: historicalReview({ id: 'rejected-1', fingerprint: 'rejected-fp', state: 'rejected', updatedAt: '2026-07-02T00:00:00.000Z' }) },
+    { contextKey: 'd3', review: historicalReview({ id: 'dismissed-1', fingerprint: 'dismissed-fp', state: 'dismissed', updatedAt: '2026-07-03T00:00:00.000Z' }) },
+    { contextKey: 'd4', review: historicalReview({ id: 'snoozed-1', fingerprint: 'snoozed-fp', state: 'snoozed', updatedAt: '2026-07-04T00:00:00.000Z' }) },
+  ],
+});
+assert.deepEqual(dispositionLearning.summary.stateCounts, { acknowledged: 0, needs_review: 0, approved: 1, rejected: 2, unsupported: 1 });
+assert.equal(dispositionLearning.semantics.approvedMeansExecuted, false);
+assert.equal(dispositionLearning.semantics.approvedMeansSuccessful, false);
+assert.equal(dispositionLearning.semantics.rejectedMeansFailed, false);
+assert.equal(dispositionLearning.semantics.finalDispositionIsEffectiveness, false);
+
+assert.throws(() =>`);
+
+          const queueTest = 'scripts/test-operator-work-queue-contract.mjs';
+          once(queueTest,
+`  acknowledgedCount: 0,
+  staleReviewEvidenceCount: 0,`,
+`  acknowledgedCount: 0,
+  approvedCount: 0,
+  rejectedCount: 0,
+  resolvedCount: 0,
+  staleReviewEvidenceCount: 0,`);
+          once(queueTest,
+`assert.equal(acknowledged.priority, 5);
+
+const emissionBlocked =`,
+`assert.equal(acknowledged.priority, 5);
+
+const resolved = buildOperatorWorkQueueRow({
+  ...base,
+  storeId: 'store-resolved',
+  storeCode: 'STORE07B',
+  recommendationCandidateCount: 2,
+  criticalHighCandidateCount: 0,
+  unreviewedCount: 0,
+  highUnreviewedCount: 0,
+  approvedCount: 1,
+  rejectedCount: 1,
+  resolvedCount: 2,
+}, range);
+assert.equal(resolved.queueClass, 'no_active_queue');
+assert.equal(resolved.reasonCode, 'final_disposition_only');
+assert.equal(resolved.resolvedCount, 2);
+assert.match(resolved.reasonText, /final Human Review dispositions/);
+
+const emissionBlocked =`);
+
+          const finalTest = `import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import { authorizeReviewCandidateForPersistence, persistedStateToUiState } from '../cloudflare/runtime/csv-recommendation-human-review-api.js';
+import { buildRecommendationReviewBinding } from '../cloudflare/runtime/csv-recommendation-human-review-contract.js';
+import { summarizeDecisionQueueReviewState } from '../cloudflare/runtime/data-health-api.js';
+
+const migration0019 = readFileSync(new URL('../cloudflare/foundation/migrations/store/0019_store_advisory_review_workflow.sql', import.meta.url), 'utf8');
+const migration0025 = readFileSync(new URL('../cloudflare/foundation/migrations/store/0025_store_advisory_review_final_disposition.sql', import.meta.url), 'utf8');
+const db = new DatabaseSync(':memory:');
+db.exec(migration0019);
+const insert = db.prepare(\`INSERT INTO advisory_review_records(
+ review_id,source_kind,recommendation_fingerprint,entity_type,entity_id,recommendation_family,recommendation_action_type,state,
+ reviewer_user_id,reviewer_note,reviewed_at,snoozed_until,source_evidence_json,source_evidence_sha256,created_by,created_at,updated_at
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)\`);
+function row(id,state,hex,snoozedUntil=null){
+ insert.run(id,'csv_recommendation_inbox_v1',hex.repeat(64),'search_term',id,'waste_term','negative_keyword',state,
+   'user',null,'2026-06-01T00:00:00.000Z',snoozedUntil,JSON.stringify({descriptor:{sourceKind:'csv_recommendation_inbox_v1',inboxItemId:id,candidateType:'waste_term',actionType:'negative_keyword',matchScope:'exact',value:id}}),
+   hex.repeat(64),'user','2026-06-01T00:00:00.000Z','2026-06-01T00:00:00.000Z');
+}
+row('open','open','1'); row('ack','acknowledged','2'); row('dismissed','dismissed','3'); row('snoozed','snoozed','4','2026-07-01T00:00:00.000Z');
+db.exec(migration0025);
+assert.deepEqual(db.prepare('SELECT review_id,state FROM advisory_review_records ORDER BY review_id').all(), [
+ {review_id:'ack',state:'acknowledged'}, {review_id:'dismissed',state:'dismissed'}, {review_id:'open',state:'open'}, {review_id:'snoozed',state:'snoozed'}
+]);
+row('approved','approved','5'); row('rejected','rejected','6');
+assert.throws(() => row('bad-snooze','snoozed','7',null));
+assert.throws(() => db.prepare("UPDATE advisory_review_records SET entity_id='changed' WHERE review_id='approved'").run(), /ADVISORY_REVIEW_BINDING_IMMUTABLE/);
+assert.throws(() => db.prepare("DELETE FROM advisory_review_records WHERE review_id='approved'").run(), /ADVISORY_REVIEW_DELETE_FORBIDDEN/);
+const schemaObjects = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type IN ('index','trigger')").all().map((x)=>x.name));
+for (const name of ['uq_advisory_review_source_recommendation','idx_advisory_review_state_updated','idx_advisory_review_entity','trg_advisory_review_binding_immutable','trg_advisory_review_no_delete']) assert.ok(schemaObjects.has(name), name);
+assert.equal(persistedStateToUiState('dismissed'),'rejected');
+assert.equal(persistedStateToUiState('snoozed'),null);
+
+function candidate(clicks=44){ return authorizeReviewCandidateForPersistence({
+ inboxItemId:'csv-inbox:negative_keyword:exact:bad term', itemClass:'recommendation_candidate', candidateType:'waste_term', actionType:'negative_keyword', matchScope:'exact', value:'bad term', priority:'high',
+ evidenceSummary:{spendMicros:1,salesMicros:0,orders:0,clicks,acos:null,cvr:0,analysisWindow:{startDate:'2026-06-01',endDate:'2026-06-30'},sourceImportIds:['i1'],rootStates:['toxic'],recommendationGoverned:true,provenanceGate:'exact_source_object',identityConfidence:{state:'observed_only'}},
+ review:{persistenceAuthorized:false}, authority:{governancePersistenceAllowed:false,executionAuthorized:false,amazonMutationAuthorized:false}
+ }, {candidateEmissionAuthorized:true}); }
+const current = candidate(44); const old = candidate(43);
+const currentBinding = await buildRecommendationReviewBinding(current); const oldBinding = await buildRecommendationReviewBinding(old);
+const evidence = JSON.parse(oldBinding.sourceEvidenceJson);
+const storedOldApproved = {review_id:'old-approved',recommendation_fingerprint:oldBinding.recommendationFingerprint,state:'approved',source_evidence_json:JSON.stringify(evidence)};
+const inbox = {items:[current],summary:{blockedByGovernanceCount:0,blockedByScopeCount:0}};
+const staleSummary = await summarizeDecisionQueueReviewState({inbox,analysisScope:{complete:true,financiallyComparable:true,candidateEmissionAuthorized:true},storedReviews:[storedOldApproved]});
+assert.equal(staleSummary.unreviewedCount,1);
+assert.equal(staleSummary.approvedCount,0);
+assert.equal(staleSummary.resolvedCount,0);
+assert.equal(staleSummary.staleReviewEvidenceCount,1);
+const storedCurrentApproved = {...storedOldApproved,review_id:'current-approved',recommendation_fingerprint:currentBinding.recommendationFingerprint,source_evidence_json:currentBinding.sourceEvidenceJson};
+const exactSummary = await summarizeDecisionQueueReviewState({inbox,analysisScope:{complete:true,financiallyComparable:true,candidateEmissionAuthorized:true},storedReviews:[storedCurrentApproved]});
+assert.equal(exactSummary.unreviewedCount,0);
+assert.equal(exactSummary.approvedCount,1);
+assert.equal(exactSummary.resolvedCount,1);
+assert.equal(exactSummary.staleReviewEvidenceCount,0);
+
+const packetSource = readFileSync(new URL('../cloudflare/runtime/recommendation-decision-packet.js', import.meta.url), 'utf8');
+const librarySource = readFileSync(new URL('../cloudflare/runtime/governed-keyword-negative-candidate-library.js', import.meta.url), 'utf8');
+assert.match(packetSource,/priorReviewState/);
+assert.match(librarySource,/currentReviewState/);
+for (const source of [packetSource,librarySource]) {
+ assert.doesNotMatch(source,/optimizationActionApprovalAllowed:\\s*true|executionAuthorized:\\s*true|amazonMutationAuthorized:\\s*true/);
+}
+console.log('human review final disposition: PASS');
+`;
+          write('scripts/test-human-review-final-disposition.mjs', finalTest);
+
+          const workflow = '.github/workflows/human-review-contract-ci.yml';
+          once(workflow,
+`      - 'cloudflare/runtime/csv-recommendation-human-review-contract.js'`,
+`      - 'cloudflare/foundation/migrations/store/0025_store_advisory_review_final_disposition.sql'
+      - 'cloudflare/runtime/csv-recommendation-human-review-contract.js'`);
+          once(workflow,
+`      - 'scripts/test-recommendation-human-review-contract.mjs'`,
+`      - 'scripts/test-human-review-final-disposition.mjs'
+      - 'scripts/test-recommendation-human-review-contract.mjs'`);
+          once(workflow,
+`          node --check scripts/test-recommendation-human-review-contract.mjs`,
+`          node --check scripts/test-human-review-final-disposition.mjs
+          node --check scripts/test-recommendation-human-review-contract.mjs`);
+          once(workflow,
+`          node scripts/test-recommendation-human-review-contract.mjs`,
+`          node scripts/test-human-review-final-disposition.mjs
+          node scripts/test-recommendation-human-review-contract.mjs`);
+
+          fs.rmSync('.github/workflows/tmp-final-disposition-bootstrap.yml');
+          NODE
+      - name: Run focused regression suite
+        run: |
+          node --check cloudflare/runtime/csv-recommendation-human-review-contract.js
+          node --check cloudflare/runtime/csv-recommendation-human-review-api.js
+          node --check cloudflare/runtime/historical-review-learning.js
+          node --check cloudflare/runtime/data-health-api.js
+          node --check cloudflare/runtime/operator-work-queue.js
+          node --check assets/cloudflare-native-csv-recommendation-human-review-v1.js
+          node scripts/test-human-review-final-disposition.mjs
+          node scripts/test-recommendation-human-review-contract.mjs
+          node scripts/test-recommendation-human-review-persistence.mjs
+          node scripts/test-recommendation-human-review-ui.mjs
+          node scripts/test-historical-review-learning.mjs
+          node scripts/test-historical-review-learning-integration.mjs
+          node scripts/test-historical-review-learning-ui.mjs
+          node scripts/test-operator-work-queue-contract.mjs
+      - name: Commit implementation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add review-only final dispositions'
+          git push origin HEAD:feature/human-review-final-disposition-v1
