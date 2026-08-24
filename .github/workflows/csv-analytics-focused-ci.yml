@@ -63,6 +63,7 @@ jobs:
           node --check scripts/test-csv-recommendation-inbox-ui.mjs
           node --check scripts/test-csv-root-lifecycle-usability-ui.mjs
           node --check scripts/test-csv-root-lifecycle-accessibility.mjs
+          node --check scripts/test-csv-history-ledger-module-identity.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
@@ -81,3 +82,5 @@ jobs:
         run: node scripts/test-csv-root-lifecycle-usability-ui.mjs
       - name: Validate Root and Lifecycle keyboard accessibility
         run: node scripts/test-csv-root-lifecycle-accessibility.mjs
+      - name: Validate History Ledger module identity convergence
+        run: node scripts/test-csv-history-ledger-module-identity.mjs
