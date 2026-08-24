@@ -10,7 +10,7 @@ const drilldownSource = await readFile(path.join(repoRoot, 'assets/cloudflare-na
 const exportSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-csv-analysis-export-v1.js'), 'utf8');
 new vm.Script(source, { filename: 'cloudflare-native-csv-analytics-dashboard-v1.js' });
 new vm.Script(drilldownSource, { filename: 'cloudflare-native-csv-analytics-drilldown-v1.js' });
-new vm.SourceTextModule(exportSource, { identifier: 'cloudflare-native-csv-analysis-export-v1.js' });
+new vm.Script(exportSource.replace(/^export /gm, ''), { filename: 'cloudflare-native-csv-analysis-export-v1.js' });
 
 const handlerStart = source.indexOf("for (const id of ['#cfCsvAnalyticsStart', '#cfCsvAnalyticsEnd'])");
 const handlerEnd = source.indexOf("root.querySelector('#cfCsvAnalyticsQuery')", handlerStart);
