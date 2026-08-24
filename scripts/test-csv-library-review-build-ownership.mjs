@@ -24,6 +24,10 @@ const hierarchyQualitySource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-hierarchy-quality-v1.js'),
   'utf8',
 );
+const productUiSource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-product-ui-v2.js'),
+  'utf8',
+);
 
 assert.match(source, /mounted: false,\s*building: false,\s*requestSeq: 0,\s*queue: null/,
   'CSV Library Review must track build generation ownership');
@@ -163,6 +167,52 @@ assert.match(hierarchyQualitySource, /data-csv-joint-files[^\n]*addEventListener
 assert.match(hierarchyQualitySource, /data-csv-joint-clear[^\n]*addEventListener\('click', \(\) => clear\(/,
   'Clear must route through Hierarchy Quality generation invalidation');
 
+assert.match(productUiSource, /loading: false,\s*reviewRequestGeneration: 0,/,
+  'Advisory Review must track request-generation ownership');
+const revokeReviewStart = productUiSource.indexOf('function revokeReviewRequest()');
+const revokeReviewEnd = productUiSource.indexOf('\n  function syncStore()', revokeReviewStart);
+assert(revokeReviewStart >= 0 && revokeReviewEnd > revokeReviewStart,
+  'Advisory Review request revocation lifecycle must remain present');
+const revokeReview = productUiSource.slice(revokeReviewStart, revokeReviewEnd);
+assert.match(revokeReview, /state\.reviewRequestGeneration \+= 1;\s*state\.loading = false;/,
+  'store invalidation must revoke old Advisory Review ownership and release stale loading state');
+
+const syncStoreStart = productUiSource.indexOf('function syncStore()');
+const syncStoreEnd = productUiSource.indexOf('\n  function onStoreChange(event)', syncStoreStart);
+assert(syncStoreStart >= 0 && syncStoreEnd > syncStoreStart,
+  'Advisory Review syncStore lifecycle must remain present');
+const productSyncStore = productUiSource.slice(syncStoreStart, syncStoreEnd);
+assert.match(productSyncStore, /revokeReviewRequest\(\);\s*state\.storeId = next;/,
+  'implicit store synchronization must revoke the old review lifecycle before changing store ownership');
+
+const productStoreChangeStart = productUiSource.indexOf('function onStoreChange(event)');
+const productStoreChangeEnd = productUiSource.indexOf('\n  function ensureDataNavigation()', productStoreChangeStart);
+assert(productStoreChangeStart >= 0 && productStoreChangeEnd > productStoreChangeStart,
+  'Advisory Review explicit store-change lifecycle must remain present');
+const productStoreChange = productUiSource.slice(productStoreChangeStart, productStoreChangeEnd);
+assert.match(productStoreChange, /revokeReviewRequest\(\);\s*state\.storeId = next;/,
+  'explicit store changes must revoke old Advisory Review ownership before changing store state');
+assert.match(productStoreChange, /state\.reviews = \[\];[\s\S]*?state\.selectedReviewId = '';[\s\S]*?state\.authority = null;[\s\S]*?state\.message = null;/,
+  'store changes must clear stale Advisory Review evidence before reloading the new store');
+
+const productRefreshStart = productUiSource.indexOf('async function refreshAdvisoryReview()');
+const productRefreshEnd = productUiSource.indexOf('\n  async function transitionReview(nextState)', productRefreshStart);
+assert(productRefreshStart >= 0 && productRefreshEnd > productRefreshStart,
+  'Advisory Review refresh lifecycle must remain present');
+const productRefresh = productUiSource.slice(productRefreshStart, productRefreshEnd);
+assert.match(productRefresh, /const generation = \+\+state\.reviewRequestGeneration;\s*const storeId = state\.storeId;/,
+  'each Advisory Review refresh must claim a fresh generation and immutable store snapshot');
+assert.doesNotMatch(productRefresh, /state\.loading\) return/,
+  'a stale prior store loading flag must not block the new store refresh');
+assert.match(productRefresh, /requestJson\(`\/api\/v1\/stores\/\$\{encodeURIComponent\(storeId\)\}\/advisory-reviews/,
+  'Advisory Review requests must use the immutable store snapshot');
+assert.match(productRefresh, /const payload = await requestJson[\s\S]*?if \(generation !== state\.reviewRequestGeneration \|\| storeId !== state\.storeId\) return;\s*state\.reviews =/,
+  'stale cross-store Advisory Review responses must not take result ownership');
+assert.match(productRefresh, /catch \(error\) \{\s*if \(generation !== state\.reviewRequestGeneration \|\| storeId !== state\.storeId\) return;/,
+  'stale cross-store Advisory Review failures must not overwrite the active store');
+assert.match(productRefresh, /finally \{\s*if \(generation !== state\.reviewRequestGeneration \|\| storeId !== state\.storeId\) return;\s*state\.loading = false;/,
+  'stale Advisory Review finally blocks must not release a newer store request busy state');
+
 assert.match(source, /authority: 'csv_library_review_local_only'/);
 assert.match(source, /persistenceReady: false/);
 assert.match(source, /executionReady: false/);
@@ -171,6 +221,7 @@ for (const [name, candidate] of [
   ['local-diagnostics', diagnosticsSource],
   ['hierarchy-drilldown', hierarchySource],
   ['hierarchy-quality', hierarchyQualitySource],
+  ['csv-product-ui', productUiSource],
 ]) {
   assert.doesNotMatch(
     candidate,
@@ -189,6 +240,8 @@ assert.match(hierarchyQualitySource, /authority: 'browser_local_observation_only
 assert.match(hierarchyQualitySource, /read-only · advisory/);
 assert.match(hierarchyQualitySource, /No persistence or execution authority\./);
 assert.match(hierarchyQualitySource, /persistence, execution and Amazon mutation remain disabled\./);
+assert.match(productUiSource, /CSV ADVISORY ONLY/);
+assert.match(productUiSource, /Amazon execution and mutation disabled/);
 
 console.log(JSON.stringify({
   ok: true,
@@ -196,14 +249,17 @@ console.log(JSON.stringify({
   localDiagnosticsInvalidScopeGenerationOwned: true,
   hierarchyDrilldownBuildGenerationOwned: true,
   hierarchyQualityRefreshGenerationOwned: true,
+  advisoryReviewStoreGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleJointResultSuppressed: true,
   staleBridgeResultSuppressed: true,
   staleHierarchyResultSuppressed: true,
   staleHierarchyQualityResultSuppressed: true,
+  staleCrossStoreReviewSuppressed: true,
   staleFailureSuppressed: true,
   selectionChangeRevokesGeneration: true,
   invalidScopeRevokesGeneration: true,
   clearRevokesGeneration: true,
+  storeChangeRevokesReviewGeneration: true,
   amazonExecutionAuthorized: false,
 }));
