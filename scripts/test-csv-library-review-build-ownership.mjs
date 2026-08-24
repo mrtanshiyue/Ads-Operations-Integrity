@@ -8,6 +8,14 @@ const source = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-library-review-v1.js'),
   'utf8',
 );
+const diagnosticsSource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-local-diagnostics-v1.js'),
+  'utf8',
+);
+const dashboardSource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-analytics-dashboard-v1.js'),
+  'utf8',
+);
 
 assert.match(source, /mounted: false,\s*building: false,\s*requestSeq: 0,\s*queue: null/,
   'CSV Library Review must track build generation ownership');
@@ -47,23 +55,65 @@ assert.match(reset, /body\.innerHTML = '';/,
 assert.match(reset, /querySelector\('\[data-cflr-build\]'\)\.disabled = false;/,
   'Library Review invalidation must immediately release the Build control');
 
+const dashboardDateStart = dashboardSource.indexOf("for (const id of ['#cfCsvAnalyticsStart', '#cfCsvAnalyticsEnd'])");
+const dashboardDateEnd = dashboardSource.indexOf("root.querySelector('#cfCsvAnalyticsQuery')", dashboardDateStart);
+assert(dashboardDateStart >= 0 && dashboardDateEnd > dashboardDateStart, 'Dashboard manual date lifecycle must remain present');
+const dashboardDateChange = dashboardSource.slice(dashboardDateStart, dashboardDateEnd);
+assert.match(dashboardDateChange, /state\.startDate = String[\s\S]*?state\.endDate = String/,
+  'Dashboard manual date changes must publish the currently edited scope values');
+assert.match(dashboardDateChange, /state\.requestSeq \+= 1;/,
+  'Dashboard manual date changes must revoke its own old analytics request');
+assert.match(dashboardDateChange, /renderEmpty\('Date scope changed\. Click Load to refresh\.'\);/,
+  'Dashboard manual date changes must clear stale analytics instead of silently loading');
+assert.match(dashboardDateChange, /broadcastScope\(\);/,
+  'Dashboard manual date changes must broadcast even when a date input is temporarily incomplete');
+
+const diagnosticsRefreshStart = diagnosticsSource.indexOf('async function refresh()');
+const diagnosticsRefreshEnd = diagnosticsSource.indexOf('\n  function generateDiagnostics(input = {})', diagnosticsRefreshStart);
+assert(diagnosticsRefreshStart >= 0 && diagnosticsRefreshEnd > diagnosticsRefreshStart, 'Local Diagnostics refresh lifecycle must remain present');
+const diagnosticsRefresh = diagnosticsSource.slice(diagnosticsRefreshStart, diagnosticsRefreshEnd);
+assert.match(diagnosticsRefresh, /if \(!state\.root\) return;\s*const seq = \+\+state\.requestSeq;\s*const scope = dashboardScope\(\);/,
+  'Local Diagnostics must capture a new generation before validating a broadcast scope');
+assert.match(diagnosticsRefresh, /if \(!scope\.storeId \|\| !scope\.startDate \|\| !scope\.endDate \|\| scope\.endDate < scope\.startDate\) \{[\s\S]*?state\.loading = false;[\s\S]*?setBusy\(false\);[\s\S]*?renderResult\(null\);/,
+  'incomplete or reversed date scope must revoke busy state and clear stale diagnostics without a request');
+assert(
+  diagnosticsRefresh.indexOf("api().csvAnalytics(scope.storeId, 'diagnostics', common)") > diagnosticsRefresh.indexOf('scope.endDate < scope.startDate'),
+  'Diagnostics API access must remain after invalid-scope fail-closed validation',
+);
+assert.match(diagnosticsRefresh, /const result = await api\(\)\.csvAnalytics\(scope\.storeId, 'diagnostics', common\);\s*if \(seq !== state\.requestSeq\) return;/,
+  'an old diagnostics response must not repaint after a newer scope event');
+assert.match(diagnosticsRefresh, /catch \(error\) \{\s*if \(seq !== state\.requestSeq\) return;/,
+  'an old diagnostics failure must not overwrite the current scope state');
+assert.match(diagnosticsRefresh, /finally \{\s*if \(seq === state\.requestSeq\) \{\s*state\.loading = false;\s*setBusy\(false\);/,
+  'an old diagnostics finally block must not release a newer request busy state');
+
 assert.match(source, /authority: 'csv_library_review_local_only'/);
 assert.match(source, /persistenceReady: false/);
 assert.match(source, /executionReady: false/);
-assert.doesNotMatch(
-  source,
-  /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
-  'CSV Library Review must remain Amazon-execution free',
-);
+for (const [name, candidate] of [
+  ['library-review', source],
+  ['local-diagnostics', diagnosticsSource],
+]) {
+  assert.doesNotMatch(
+    candidate,
+    /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
+    `${name} must remain Amazon-execution free`,
+  );
+}
+assert.match(diagnosticsSource, /authoritative: false/);
+assert.match(diagnosticsSource, /recommendationAuthorized: false/);
+assert.match(diagnosticsSource, /amazonExecutionAuthorized: false/);
 
 console.log(JSON.stringify({
   ok: true,
   libraryReviewBuildGenerationOwned: true,
+  localDiagnosticsInvalidScopeGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleJointResultSuppressed: true,
   staleBridgeResultSuppressed: true,
   staleFailureSuppressed: true,
   selectionChangeRevokesGeneration: true,
+  invalidScopeRevokesGeneration: true,
   clearRevokesGeneration: true,
   amazonExecutionAuthorized: false,
 }));
