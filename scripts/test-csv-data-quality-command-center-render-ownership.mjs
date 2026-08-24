@@ -20,6 +20,10 @@ const monthlySource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-monthly-workspace-v1.js'),
   'utf8',
 );
+const historyLedgerSource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js'),
+  'utf8',
+);
 
 assert.match(
   source,
@@ -175,11 +179,54 @@ assert.match(monthlyReset, /body\.hidden = true;/,
 assert.match(monthlyReset, /body\.innerHTML = '';/,
   'Monthly Workspace invalidation must remove stale monthly markup');
 
+assert.match(historyLedgerSource, /busy: false,\s*evidenceSeq: 0,\s*comparisonSeq: 0,/,
+  'Historical Ledger must track independent evidence and comparison interaction generations');
+const historyEvidenceStart = historyLedgerSource.indexOf('async function selectHistoricalEvidence(body, ledger, trigger)');
+const historyEvidenceEnd = historyLedgerSource.indexOf('\nasync function renderComparisonState(body, ledger)', historyEvidenceStart);
+assert(historyEvidenceStart >= 0 && historyEvidenceEnd > historyEvidenceStart, 'Historical evidence selection lifecycle must remain present');
+const historyEvidence = historyLedgerSource.slice(historyEvidenceStart, historyEvidenceEnd);
+assert.match(historyEvidence, /const seq = \+\+state\.evidenceSeq;/,
+  'each Historical Evidence selection must capture a fresh generation');
+assert.match(historyEvidence, /const evidence = await buildHistoricalEvidenceDrilldown[\s\S]*?if \(seq !== state\.evidenceSeq\) return;/,
+  'older Historical Evidence promises must not repaint a newer selection');
+assert.match(historyEvidence, /catch \(error\) \{\s*if \(seq !== state\.evidenceSeq\) return;/,
+  'older Historical Evidence failures must not overwrite a newer selection');
+
+const historyComparisonStart = historyLedgerSource.indexOf('async function renderComparisonState(body, ledger)');
+const historyComparisonEnd = historyLedgerSource.indexOf('\nfunction renderSelectedEvidence(evidence)', historyComparisonStart);
+assert(historyComparisonStart >= 0 && historyComparisonEnd > historyComparisonStart, 'Historical Period Comparison lifecycle must remain present');
+const historyComparison = historyLedgerSource.slice(historyComparisonStart, historyComparisonEnd);
+assert.match(historyComparison, /const seq = \+\+state\.comparisonSeq;/,
+  'each Historical Period Comparison render must capture a fresh generation');
+assert.match(historyComparison, /const comparison = await buildHistoricalPeriodComparison[\s\S]*?if \(seq !== state\.comparisonSeq\) return;/,
+  'older Historical Period Comparison promises must not repaint newer selections');
+assert.match(historyComparison, /catch \(error\) \{\s*if \(seq !== state\.comparisonSeq\) return;/,
+  'older Historical Period Comparison failures must not overwrite newer selections');
+
+const historyClearStart = historyLedgerSource.indexOf('function clearLedger(root)');
+const historyClearEnd = historyLedgerSource.indexOf('\nfunction renderLedger(root, ledger)', historyClearStart);
+assert(historyClearStart >= 0 && historyClearEnd > historyClearStart, 'Historical Ledger clear lifecycle must remain present');
+const historyClear = historyLedgerSource.slice(historyClearStart, historyClearEnd);
+assert.match(historyClear, /state\.evidenceSeq \+= 1;/,
+  'clearing the Historical Ledger must revoke any old evidence selection');
+assert.match(historyClear, /state\.comparisonSeq \+= 1;/,
+  'clearing the Historical Ledger must revoke any old period comparison');
+
+const historyRenderStart = historyLedgerSource.indexOf('function renderLedger(root, ledger)');
+const historyRenderEnd = historyLedgerSource.indexOf('\nfunction renderMonthlyWorkspace(workspace)', historyRenderStart);
+assert(historyRenderStart >= 0 && historyRenderEnd > historyRenderStart, 'Historical Ledger render lifecycle must remain present');
+const historyRender = historyLedgerSource.slice(historyRenderStart, historyRenderEnd);
+assert.match(historyRender, /state\.evidenceSeq \+= 1;/,
+  'rendering a new Historical Ledger must revoke old evidence selection ownership');
+assert.match(historyRender, /state\.comparisonSeq \+= 1;/,
+  'rendering a new Historical Ledger must revoke old comparison ownership');
+
 for (const [name, candidate] of [
   ['data-quality', source],
   ['joint-analysis', jointSource],
   ['period-over-period', periodSource],
   ['monthly-workspace', monthlySource],
+  ['history-ledger', historyLedgerSource],
 ]) {
   assert.doesNotMatch(
     candidate,
@@ -198,6 +245,10 @@ assert.match(monthlySource, /authority: 'browser_local_monthly_workspace_only'/)
 assert.match(monthlySource, /governancePersistenceAllowed: false/);
 assert.match(monthlySource, /executionAuthorized: false/);
 assert.match(monthlySource, /amazonMutationAuthorized: false/);
+assert.match(historyLedgerSource, /authority: 'local_file_history_ledger_only'/);
+assert.match(historyLedgerSource, /governancePersistenceAllowed: false/);
+assert.match(historyLedgerSource, /executionAuthorized: false/);
+assert.match(historyLedgerSource, /amazonMutationAuthorized: false/);
 
 console.log(JSON.stringify({
   ok: true,
@@ -205,6 +256,7 @@ console.log(JSON.stringify({
   jointRunGenerationOwned: true,
   periodRefreshGenerationOwned: true,
   monthlyWorkspaceRefreshGenerationOwned: true,
+  historyLedgerInteractionGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleAnalysisResultSuppressed: true,
   staleFailureSuppressed: true,
