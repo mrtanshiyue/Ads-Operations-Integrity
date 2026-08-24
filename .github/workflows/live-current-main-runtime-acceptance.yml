@@ -1,0 +1,77 @@
+name: Current Main Live Runtime Acceptance
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/live-current-main-runtime-acceptance.mjs'
+      - '.github/workflows/live-current-main-runtime-acceptance.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: current-main-live-runtime-acceptance-${{ github.head_ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-runtime:
+    name: Live Dev and Production Chromium acceptance
+    if: github.head_ref == 'acceptance/current-main-live-runtime-65f57145'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EXPECTED_MAIN_SHA: 65f57145e576f2e4d7ab85042dd2c6540111aa3a
+      CLOUDFLARE_ACCOUNT_ID: 19cd528b5c32e8da423da3cf66a9f05d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN }}
+      ACCEPTANCE_CREDENTIAL_PRESENT: ${{ secrets.CLOUDFLARE_HUMAN_REVIEW_ACCEPTANCE_TOKEN != '' }}
+      DEV_BASE_URL: https://ads-operations-web-dev.tanshiyuesir.workers.dev
+      PROD_BASE_URL: https://ads-operations-web-prod.tanshiyuesir.workers.dev
+      PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
+    steps:
+      - name: Checkout acceptance-only branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Require exact canonical main
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          ACTUAL_MAIN_SHA="$(git rev-parse FETCH_HEAD)"
+          echo "Canonical main: $ACTUAL_MAIN_SHA"
+          test "$ACTUAL_MAIN_SHA" = "$EXPECTED_MAIN_SHA" || {
+            echo "BLOCKED_BY_MAIN_DRIFT: expected $EXPECTED_MAIN_SHA got $ACTUAL_MAIN_SHA"
+            exit 1
+          }
+
+      - name: Require dedicated live-acceptance credential
+        run: |
+          test "$ACCEPTANCE_CREDENTIAL_PRESENT" = 'true' || {
+            echo 'BLOCKED_BY_CLOUDFLARE_ACCEPTANCE_CREDENTIAL'
+            exit 1
+          }
+
+      - name: Syntax check acceptance harness
+        run: node --check scripts/live-current-main-runtime-acceptance.mjs
+
+      - name: Install isolated Chromium runtime
+        run: |
+          npm install --no-save --ignore-scripts playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Execute live current-main acceptance
+        run: node scripts/live-current-main-runtime-acceptance.mjs
+
+      - name: Upload live acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-current-main-runtime-acceptance-${{ github.run_id }}
+          path: artifacts/live-current-main-runtime-acceptance
+          if-no-files-found: error
+          retention-days: 90
