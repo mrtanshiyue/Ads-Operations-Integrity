@@ -16,6 +16,10 @@ const periodSource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-period-ui-v1.js'),
   'utf8',
 );
+const monthlySource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-monthly-workspace-v1.js'),
+  'utf8',
+);
 
 assert.match(
   source,
@@ -134,7 +138,49 @@ assert.match(periodClear, /body\.hidden = true;/,
 assert.match(periodClear, /body\.innerHTML = '';/,
   'Period invalidation must remove stale comparison markup');
 
-for (const [name, candidate] of [['data-quality', source], ['joint-analysis', jointSource], ['period-over-period', periodSource]]) {
+assert.match(
+  monthlySource,
+  /const state = \{ mounted: false, busy: false, requestSeq: 0, workspace: null \}/,
+  'Monthly Workspace must track local refresh generation ownership',
+);
+const monthlyRefreshStart = monthlySource.indexOf('async function refresh(root, joint)');
+const monthlyRefreshEnd = monthlySource.indexOf('\nfunction populateMonthSelect(root)', monthlyRefreshStart);
+assert(monthlyRefreshStart >= 0 && monthlyRefreshEnd > monthlyRefreshStart, 'Monthly Workspace refresh lifecycle must remain present');
+const monthlyRefresh = monthlySource.slice(monthlyRefreshStart, monthlyRefreshEnd);
+assert.doesNotMatch(monthlyRefresh, /if \(state\.busy\) return;/,
+  'a newer Monthly Workspace generation must not be dropped solely because an older Promise is still running');
+assert.match(monthlyRefresh, /const seq = \+\+state\.requestSeq;/,
+  'each Monthly Workspace refresh must capture a fresh generation');
+assert.match(monthlyRefresh, /const inputs = await Promise\.all[\s\S]*?if \(seq !== state\.requestSeq\) return;/,
+  'stale Monthly Workspace file reads must not advance into local recomputation');
+assert.match(monthlyRefresh, /const result = await window\.CloudflareCsvJointAnalysis\.analyzeLocalCsvInputs\(inputs\);\s*if \(seq !== state\.requestSeq\) return;\s*state\.workspace = buildCsvMonthlyOperatingWorkspace\(result\);/,
+  'stale Monthly Workspace recomputation must not take workspace ownership');
+assert.match(monthlyRefresh, /catch \(error\) \{\s*if \(seq !== state\.requestSeq\) return;/,
+  'stale Monthly Workspace failures must not overwrite the active generation');
+assert.match(monthlyRefresh, /finally \{\s*if \(seq !== state\.requestSeq\) return;\s*state\.busy = false;/,
+  'stale Monthly Workspace finally blocks must not release a newer generation busy state');
+
+const monthlyResetStart = monthlySource.indexOf('function reset(root, message)');
+const monthlyResetEnd = monthlySource.indexOf('\nfunction status(root, message, kind = \'\')', monthlyResetStart);
+assert(monthlyResetStart >= 0 && monthlyResetEnd > monthlyResetStart, 'Monthly Workspace reset lifecycle must remain present');
+const monthlyReset = monthlySource.slice(monthlyResetStart, monthlyResetEnd);
+assert.match(monthlyReset, /state\.requestSeq \+= 1;/,
+  'Monthly Workspace file change and Clear must revoke the active generation');
+assert.match(monthlyReset, /state\.busy = false;/,
+  'Monthly Workspace invalidation must allow the next valid Joint success to refresh immediately');
+assert.match(monthlyReset, /state\.workspace = null;/,
+  'Monthly Workspace invalidation must release old local workspace ownership');
+assert.match(monthlyReset, /body\.hidden = true;/,
+  'Monthly Workspace invalidation must hide stale monthly evidence');
+assert.match(monthlyReset, /body\.innerHTML = '';/,
+  'Monthly Workspace invalidation must remove stale monthly markup');
+
+for (const [name, candidate] of [
+  ['data-quality', source],
+  ['joint-analysis', jointSource],
+  ['period-over-period', periodSource],
+  ['monthly-workspace', monthlySource],
+]) {
   assert.doesNotMatch(
     candidate,
     /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
@@ -148,12 +194,17 @@ assert.match(source, /amazonMutationAuthorized: false/);
 assert.match(jointSource, /authority: 'csv_advisory_only'/);
 assert.match(jointSource, /No upload, D1 write, Amazon request, persistence, or execution is performed\./);
 assert.match(periodSource, /authority: 'browser_local_observation_only'/);
+assert.match(monthlySource, /authority: 'browser_local_monthly_workspace_only'/);
+assert.match(monthlySource, /governancePersistenceAllowed: false/);
+assert.match(monthlySource, /executionAuthorized: false/);
+assert.match(monthlySource, /amazonMutationAuthorized: false/);
 
 console.log(JSON.stringify({
   ok: true,
   localRenderGenerationOwned: true,
   jointRunGenerationOwned: true,
   periodRefreshGenerationOwned: true,
+  monthlyWorkspaceRefreshGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleAnalysisResultSuppressed: true,
   staleFailureSuppressed: true,
