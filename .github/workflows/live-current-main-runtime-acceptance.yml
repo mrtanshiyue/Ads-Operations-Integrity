@@ -7,6 +7,8 @@ on:
     paths:
       - 'scripts/promote-current-main-live-runtime.mjs'
       - 'scripts/live-current-main-runtime-acceptance.mjs'
+      - 'scripts/live-current-main-dev-access-hook.cjs'
+      - 'scripts/run-live-current-main-runtime-acceptance.mjs'
       - '.github/workflows/live-current-main-runtime-acceptance.yml'
 
 permissions:
@@ -61,6 +63,8 @@ jobs:
         run: |
           node --check scripts/promote-current-main-live-runtime.mjs
           node --check scripts/live-current-main-runtime-acceptance.mjs
+          node --check scripts/live-current-main-dev-access-hook.cjs
+          node --check scripts/run-live-current-main-runtime-acceptance.mjs
 
       - name: Promote exact canonical main to Dev and Production web workers
         run: node scripts/promote-current-main-live-runtime.mjs
@@ -71,7 +75,7 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: Execute live current-main acceptance
-        run: node scripts/live-current-main-runtime-acceptance.mjs
+        run: node scripts/run-live-current-main-runtime-acceptance.mjs
 
       - name: Upload live acceptance evidence
         if: always()
