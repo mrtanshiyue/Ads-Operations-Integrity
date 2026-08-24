@@ -2,7 +2,7 @@ export const CSV_ANALYSIS_EXPORT_SCHEMA_VERSION = 'csv-analysis-export-v1';
 export const CSV_ANALYSIS_EXPORT_UI_VERSION = '1.0.0';
 export const CSV_OPERATOR_PACKAGE_SCHEMA_VERSION = 'csv-operator-package-v1';
 
-const state = { mounted: false, busy: false };
+const state = { mounted: false, busy: false, exportGeneration: 0 };
 const ZIP_UTF8_FLAG = 0x0800;
 const ZIP_STORE_METHOD = 0;
 const ZIP_DOS_TIME = 0;
@@ -271,10 +271,14 @@ function mount() {
     sync();
   }
   joint.querySelector('[data-csv-joint-files]')?.addEventListener('change', () => {
+    state.exportGeneration += 1;
+    state.busy = false;
     setEnabled(root, false);
     status(root, 'CSV selection changed. Run Joint CSV Analysis again before exporting.');
   });
   joint.querySelector('[data-csv-joint-clear]')?.addEventListener('click', () => {
+    state.exportGeneration += 1;
+    state.busy = false;
     setEnabled(root, false);
     status(root, 'Local export state cleared.');
   });
@@ -285,12 +289,15 @@ async function exportCurrent(root, joint, kind) {
   if (state.busy) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return status(root, 'Joint CSV inputs are unavailable.', 'bad');
+  const generation = ++state.exportGeneration;
   state.busy = true;
   setEnabled(root, false);
   status(root, `Building ${kind} export locally…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
+    if (generation !== state.exportGeneration) return;
     const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (generation !== state.exportGeneration) return;
     const fingerprint = String(result.source.inputSetFingerprint || '').slice(0, 12) || 'local';
     if (kind === 'package') {
       const packageFiles = buildCsvOperatorPackageFiles(result);
@@ -303,8 +310,10 @@ async function exportCurrent(root, joint, kind) {
     else throw exportError('CSV_ANALYSIS_EXPORT_KIND_UNSUPPORTED');
     status(root, `${kind} export created locally for input set ${fingerprint}. Remote persistence and Amazon mutation remain disabled.`, 'ok');
   } catch (error) {
+    if (generation !== state.exportGeneration) return;
     status(root, `Local export failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
+    if (generation !== state.exportGeneration) return;
     state.busy = false;
     setEnabled(root, true);
   }
