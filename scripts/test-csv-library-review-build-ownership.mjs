@@ -20,6 +20,10 @@ const hierarchySource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-hierarchy-drilldown-v1.js'),
   'utf8',
 );
+const hierarchyQualitySource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-hierarchy-quality-v1.js'),
+  'utf8',
+);
 
 assert.match(source, /mounted: false,\s*building: false,\s*requestSeq: 0,\s*queue: null/,
   'CSV Library Review must track build generation ownership');
@@ -125,6 +129,40 @@ assert.match(hierarchySource, /data-csv-joint-files[^\n]*addEventListener\('chan
 assert.match(hierarchySource, /data-csv-joint-clear[^\n]*addEventListener\('click', \(\) => reset\(/,
   'Clear must route through hierarchy generation invalidation');
 
+assert.match(hierarchyQualitySource, /mounted: false,\s*rendering: false,\s*renderGeneration: 0,\s*result: null/,
+  'Hierarchy Quality must track refresh generation ownership');
+const hierarchyQualityRefreshStart = hierarchyQualitySource.indexOf('async function refresh(root, joint)');
+const hierarchyQualityRefreshEnd = hierarchyQualitySource.indexOf("\nfunction clear(root, message, kind = '')", hierarchyQualityRefreshStart);
+assert(hierarchyQualityRefreshStart >= 0 && hierarchyQualityRefreshEnd > hierarchyQualityRefreshStart,
+  'Hierarchy Quality refresh lifecycle must remain present');
+const hierarchyQualityRefresh = hierarchyQualitySource.slice(hierarchyQualityRefreshStart, hierarchyQualityRefreshEnd);
+assert.match(hierarchyQualityRefresh, /const generation = \+\+state\.renderGeneration;/,
+  'each Hierarchy Quality refresh must capture a fresh generation');
+assert.match(hierarchyQualityRefresh, /const inputs = await Promise\.all[\s\S]*?if \(generation !== state\.renderGeneration\) return;/,
+  'stale Hierarchy Quality file reads must not advance into Joint CSV analysis');
+assert.match(hierarchyQualityRefresh, /const result = await window\.CloudflareCsvJointAnalysis\.analyzeLocalCsvInputs\(inputs\);\s*if \(generation !== state\.renderGeneration\) return;\s*state\.result = result;/,
+  'stale Hierarchy Quality analysis results must not take render ownership');
+assert.match(hierarchyQualityRefresh, /catch \(error\) \{\s*if \(generation !== state\.renderGeneration\) return;[\s\S]*?state\.result = null;[\s\S]*?body\.hidden = true;[\s\S]*?body\.innerHTML = '';/,
+  'stale Hierarchy Quality failures must not overwrite the active selection, while current-generation failures clear stale evidence');
+assert.match(hierarchyQualityRefresh, /finally \{\s*if \(generation !== state\.renderGeneration\) return;\s*state\.rendering = false;/,
+  'stale Hierarchy Quality finally blocks must not mutate a newer generation rendering state');
+
+const hierarchyQualityClearStart = hierarchyQualitySource.indexOf("function clear(root, message, kind = '')");
+const hierarchyQualityClearEnd = hierarchyQualitySource.indexOf('\nfunction render(root)', hierarchyQualityClearStart);
+assert(hierarchyQualityClearStart >= 0 && hierarchyQualityClearEnd > hierarchyQualityClearStart,
+  'Hierarchy Quality clear lifecycle must remain present');
+const hierarchyQualityClear = hierarchyQualitySource.slice(hierarchyQualityClearStart, hierarchyQualityClearEnd);
+assert.match(hierarchyQualityClear, /state\.renderGeneration \+= 1;\s*state\.rendering = false;/,
+  'CSV selection change and Clear must revoke Hierarchy Quality ownership and immediately release stale rendering state');
+assert.match(hierarchyQualityClear, /state\.result = null;/,
+  'Hierarchy Quality invalidation must release old result ownership');
+assert.match(hierarchyQualityClear, /body\.hidden = true;\s*body\.innerHTML = '';/,
+  'Hierarchy Quality invalidation must remove stale rendered evidence');
+assert.match(hierarchyQualitySource, /data-csv-joint-files[^\n]*addEventListener\('change', \(\) => clear\(/,
+  'CSV selection changes must route through Hierarchy Quality generation invalidation');
+assert.match(hierarchyQualitySource, /data-csv-joint-clear[^\n]*addEventListener\('click', \(\) => clear\(/,
+  'Clear must route through Hierarchy Quality generation invalidation');
+
 assert.match(source, /authority: 'csv_library_review_local_only'/);
 assert.match(source, /persistenceReady: false/);
 assert.match(source, /executionReady: false/);
@@ -132,6 +170,7 @@ for (const [name, candidate] of [
   ['library-review', source],
   ['local-diagnostics', diagnosticsSource],
   ['hierarchy-drilldown', hierarchySource],
+  ['hierarchy-quality', hierarchyQualitySource],
 ]) {
   assert.doesNotMatch(
     candidate,
@@ -146,16 +185,22 @@ assert.match(hierarchySource, /mode: 'browser_local_hierarchy_drilldown_only'/);
 assert.match(hierarchySource, /authoritative: false/);
 assert.match(hierarchySource, /executionAuthorized: false/);
 assert.match(hierarchySource, /amazonMutationAuthorized: false/);
+assert.match(hierarchyQualitySource, /authority: 'browser_local_observation_only'/);
+assert.match(hierarchyQualitySource, /read-only · advisory/);
+assert.match(hierarchyQualitySource, /No persistence or execution authority\./);
+assert.match(hierarchyQualitySource, /persistence, execution and Amazon mutation remain disabled\./);
 
 console.log(JSON.stringify({
   ok: true,
   libraryReviewBuildGenerationOwned: true,
   localDiagnosticsInvalidScopeGenerationOwned: true,
   hierarchyDrilldownBuildGenerationOwned: true,
+  hierarchyQualityRefreshGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleJointResultSuppressed: true,
   staleBridgeResultSuppressed: true,
   staleHierarchyResultSuppressed: true,
+  staleHierarchyQualityResultSuppressed: true,
   staleFailureSuppressed: true,
   selectionChangeRevokesGeneration: true,
   invalidScopeRevokesGeneration: true,

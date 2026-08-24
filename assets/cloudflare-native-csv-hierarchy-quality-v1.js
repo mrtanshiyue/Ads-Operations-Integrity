@@ -1,6 +1,6 @@
 export const CSV_HIERARCHY_QUALITY_UI_VERSION = '1.0.0';
 const MAX_ROWS = 100;
-const state = { mounted: false, rendering: false, result: null, level: 'campaigns' };
+const state = { mounted: false, rendering: false, renderGeneration: 0, result: null, level: 'campaigns' };
 
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'CloudflareCsvHierarchyQualityUi', {
@@ -59,23 +59,35 @@ async function refresh(root, joint) {
   if (state.rendering) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return;
+  const generation = ++state.renderGeneration;
   state.rendering = true;
   status(root, `Recomputing quality and hierarchy locally from ${files.length} file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
-    state.result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (generation !== state.renderGeneration) return;
+    const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (generation !== state.renderGeneration) return;
+    state.result = result;
     state.level = 'campaigns';
     render(root);
     const quality = state.result.dataQuality;
     status(root, `${qualityLabel(quality)} · aggregation ${quality.safeForNaiveAggregation ? 'safe' : 'blocked'} · period ${quality.contiguousCoverage ? 'contiguous' : 'incomplete'}. No persistence or execution authority.`, quality.safeForNaiveAggregation ? 'ok' : 'bad');
   } catch (error) {
-    clear(root, `Hierarchy/quality rendering failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
+    if (generation !== state.renderGeneration) return;
+    state.result = null;
+    const body = root.querySelector('[data-cfhq-body]');
+    body.hidden = true;
+    body.innerHTML = '';
+    status(root, `Hierarchy/quality rendering failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
+    if (generation !== state.renderGeneration) return;
     state.rendering = false;
   }
 }
 
 function clear(root, message, kind = '') {
+  state.renderGeneration += 1;
+  state.rendering = false;
   state.result = null;
   const body = root.querySelector('[data-cfhq-body]');
   body.hidden = true;
