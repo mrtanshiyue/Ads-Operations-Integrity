@@ -16,6 +16,7 @@ const DISMISS_REASON_CODES = new Set(['irrelevant_or_duplicate', 'operator_other
 const state = {
   mounted: false,
   building: false,
+  requestSeq: 0,
   queue: null,
   states: new Map(),
   annotations: new Map(),
@@ -238,28 +239,37 @@ async function build(root) {
   if (!files.length) return status(root, 'Select Search Term CSV files above first.', 'bad');
   if (typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return status(root, 'Joint CSV analysis is unavailable.', 'bad');
 
+  const seq = ++state.requestSeq;
   state.building = true;
   const buildButton = root.querySelector('[data-cflr-build]');
   buildButton.disabled = true;
   status(root, `Building from ${files.length} local CSV file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
+    if (seq !== state.requestSeq) return;
     const joint = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
-    state.queue = await buildCsvLibraryReviewBridge(joint);
+    if (seq !== state.requestSeq) return;
+    const queue = await buildCsvLibraryReviewBridge(joint);
+    if (seq !== state.requestSeq) return;
+    state.queue = queue;
     state.states = new Map(state.queue.items.map((item) => [item.reviewId, item.initialReviewState]));
     state.annotations = new Map(state.queue.items.map((item) => [item.reviewId, Object.freeze({ reasonCode: '', note: '' })]));
     resetViewControls(root);
     render(root);
     status(root, `${state.queue.summary.reviewItemCount} local items built. No library write occurred.`, 'ok');
   } catch (error) {
+    if (seq !== state.requestSeq) return;
     reset(root, `Review queue failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
+    if (seq !== state.requestSeq) return;
     state.building = false;
     buildButton.disabled = false;
   }
 }
 
 function reset(root, message, kind = '') {
+  state.requestSeq += 1;
+  state.building = false;
   state.queue = null;
   state.states = new Map();
   state.annotations = new Map();
@@ -267,6 +277,7 @@ function reset(root, message, kind = '') {
   const body = root.querySelector('[data-cflr-body]');
   body.hidden = true;
   body.innerHTML = '';
+  root.querySelector('[data-cflr-build]').disabled = false;
   status(root, message, kind);
 }
 
