@@ -16,6 +16,10 @@ const dashboardSource = await readFile(
   path.join(repoRoot, 'assets/cloudflare-native-csv-analytics-dashboard-v1.js'),
   'utf8',
 );
+const hierarchySource = await readFile(
+  path.join(repoRoot, 'assets/cloudflare-native-csv-hierarchy-drilldown-v1.js'),
+  'utf8',
+);
 
 assert.match(source, /mounted: false,\s*building: false,\s*requestSeq: 0,\s*queue: null/,
   'CSV Library Review must track build generation ownership');
@@ -87,12 +91,47 @@ assert.match(diagnosticsRefresh, /catch \(error\) \{\s*if \(seq !== state\.reque
 assert.match(diagnosticsRefresh, /finally \{\s*if \(seq === state\.requestSeq\) \{\s*state\.loading = false;\s*setBusy\(false\);/,
   'an old diagnostics finally block must not release a newer request busy state');
 
+assert.match(hierarchySource, /mounted: false,\s*building: false,\s*buildGeneration: 0,\s*result: null/,
+  'Hierarchy Drilldown must track rebuild generation ownership');
+const hierarchyBuildStart = hierarchySource.indexOf('async function rebuild(root, joint)');
+const hierarchyBuildEnd = hierarchySource.indexOf('\nfunction renderFromState(root)', hierarchyBuildStart);
+assert(hierarchyBuildStart >= 0 && hierarchyBuildEnd > hierarchyBuildStart,
+  'Hierarchy Drilldown rebuild lifecycle must remain present');
+const hierarchyBuild = hierarchySource.slice(hierarchyBuildStart, hierarchyBuildEnd);
+assert.match(hierarchyBuild, /const generation = \+\+state\.buildGeneration;/,
+  'each Hierarchy Drilldown rebuild must capture a fresh generation');
+assert.match(hierarchyBuild, /const inputs = await Promise\.all[\s\S]*?if \(generation !== state\.buildGeneration\) return;/,
+  'stale hierarchy file reads must not advance into Joint CSV analysis');
+assert.match(hierarchyBuild, /const result = await window\.CloudflareCsvJointAnalysis\.analyzeLocalCsvInputs\(inputs\);\s*if \(generation !== state\.buildGeneration\) return;\s*state\.result = result;/,
+  'stale hierarchy analysis results must not take render ownership');
+assert.match(hierarchyBuild, /catch \(error\) \{\s*if \(generation !== state\.buildGeneration\) return;/,
+  'stale hierarchy failures must not overwrite the current selection state');
+assert.match(hierarchyBuild, /finally \{\s*if \(generation !== state\.buildGeneration\) return;\s*state\.building = false;/,
+  'stale hierarchy finally blocks must not release a newer generation busy state');
+
+const hierarchyResetStart = hierarchySource.indexOf("function reset(root, message, kind = '')");
+const hierarchyResetEnd = hierarchySource.indexOf('\nfunction status(root, message, kind =', hierarchyResetStart);
+assert(hierarchyResetStart >= 0 && hierarchyResetEnd > hierarchyResetStart,
+  'Hierarchy Drilldown reset lifecycle must remain present');
+const hierarchyReset = hierarchySource.slice(hierarchyResetStart, hierarchyResetEnd);
+assert.match(hierarchyReset, /state\.buildGeneration \+= 1;\s*state\.building = false;/,
+  'CSV selection change and Clear must revoke hierarchy ownership and immediately release stale building state');
+assert.match(hierarchyReset, /state\.result = null;/,
+  'Hierarchy invalidation must release old result ownership');
+assert.match(hierarchyReset, /body\.hidden = true;\s*body\.innerHTML = '';/,
+  'Hierarchy invalidation must remove stale rendered evidence');
+assert.match(hierarchySource, /data-csv-joint-files[^\n]*addEventListener\('change', \(\) => reset\(/,
+  'CSV selection changes must route through hierarchy generation invalidation');
+assert.match(hierarchySource, /data-csv-joint-clear[^\n]*addEventListener\('click', \(\) => reset\(/,
+  'Clear must route through hierarchy generation invalidation');
+
 assert.match(source, /authority: 'csv_library_review_local_only'/);
 assert.match(source, /persistenceReady: false/);
 assert.match(source, /executionReady: false/);
 for (const [name, candidate] of [
   ['library-review', source],
   ['local-diagnostics', diagnosticsSource],
+  ['hierarchy-drilldown', hierarchySource],
 ]) {
   assert.doesNotMatch(
     candidate,
@@ -103,14 +142,20 @@ for (const [name, candidate] of [
 assert.match(diagnosticsSource, /authoritative: false/);
 assert.match(diagnosticsSource, /recommendationAuthorized: false/);
 assert.match(diagnosticsSource, /amazonExecutionAuthorized: false/);
+assert.match(hierarchySource, /mode: 'browser_local_hierarchy_drilldown_only'/);
+assert.match(hierarchySource, /authoritative: false/);
+assert.match(hierarchySource, /executionAuthorized: false/);
+assert.match(hierarchySource, /amazonMutationAuthorized: false/);
 
 console.log(JSON.stringify({
   ok: true,
   libraryReviewBuildGenerationOwned: true,
   localDiagnosticsInvalidScopeGenerationOwned: true,
+  hierarchyDrilldownBuildGenerationOwned: true,
   staleFileReadSuppressed: true,
   staleJointResultSuppressed: true,
   staleBridgeResultSuppressed: true,
+  staleHierarchyResultSuppressed: true,
   staleFailureSuppressed: true,
   selectionChangeRevokesGeneration: true,
   invalidScopeRevokesGeneration: true,
