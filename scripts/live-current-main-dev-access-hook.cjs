@@ -31,6 +31,14 @@ chromium.launch = async (...args) => {
     context.newPage = async (...pageArgs) => {
       const page = await originalNewPage(...pageArgs);
       const originalGoto = page.goto.bind(page);
+      const originalLocator = page.locator.bind(page);
+
+      page.locator = (selector, locatorOptions) => {
+        if (selector === '#cfAdvisoryReviewPanel [data-review-action="close"]') {
+          return originalLocator('#cfAdvisoryReviewPanel button[data-review-action="close"]', locatorOptions);
+        }
+        return originalLocator(selector, locatorOptions);
+      };
 
       page.goto = async (url, gotoOptions) => {
         const response = await originalGoto(url, gotoOptions);
