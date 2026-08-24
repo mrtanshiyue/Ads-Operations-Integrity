@@ -1,7 +1,7 @@
 (function initCloudflareCsvProductUi(global) {
   'use strict';
 
-  const VERSION = '2.0.1';
+  const VERSION = '2.0.2';
   const REVIEW_STATES = Object.freeze(['open', 'acknowledged', 'dismissed', 'snoozed']);
   const state = {
     mounted: false,
@@ -13,6 +13,7 @@
     selectedReviewId: '',
     authority: null,
     loading: false,
+    reviewRequestGeneration: 0,
     message: null,
     reviewRoot: null,
     observer: null,
@@ -85,9 +86,15 @@
     renderReview();
   }
 
+  function revokeReviewRequest() {
+    state.reviewRequestGeneration += 1;
+    state.loading = false;
+  }
+
   function syncStore() {
     const next = String(global.CloudflareOperatorWorkspace?.currentStoreId?.() || state.storeId || '').trim();
     if (!next || next === state.storeId) return;
+    revokeReviewRequest();
     state.storeId = next;
     state.reviews = [];
     state.selectedReviewId = '';
@@ -97,6 +104,7 @@
   function onStoreChange(event) {
     const next = String(event?.detail?.storeId || '').trim();
     if (!next || next === state.storeId) return;
+    revokeReviewRequest();
     state.storeId = next;
     state.reviews = [];
     state.selectedReviewId = '';
@@ -211,7 +219,9 @@
 
   async function refreshAdvisoryReview() {
     syncStore();
-    if (!state.storeId || !state.canAnalyticsRead || state.loading) return;
+    if (!state.storeId || !state.canAnalyticsRead) return;
+    const generation = ++state.reviewRequestGeneration;
+    const storeId = state.storeId;
     state.loading = true;
     state.message = null;
     renderReview();
@@ -219,15 +229,18 @@
       const filter = String(state.reviewRoot?.querySelector('#cfAdvisoryStateFilter')?.value || '').trim();
       const params = new URLSearchParams({ sourceKind: 'csv_import', limit: '100' });
       if (filter) params.set('state', filter);
-      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(state.storeId)}/advisory-reviews?${params}`);
+      const payload = await requestJson(`/api/v1/stores/${encodeURIComponent(storeId)}/advisory-reviews?${params}`);
+      if (generation !== state.reviewRequestGeneration || storeId !== state.storeId) return;
       state.reviews = Array.isArray(payload?.items) ? payload.items : [];
       state.authority = payload?.authority || null;
       if (!state.reviews.some((item) => item.reviewId === state.selectedReviewId)) state.selectedReviewId = state.reviews[0]?.reviewId || '';
     } catch (error) {
+      if (generation !== state.reviewRequestGeneration || storeId !== state.storeId) return;
       state.message = { kind: 'bad', text: error.message || 'Advisory Review request failed.' };
       state.reviews = [];
       state.selectedReviewId = '';
     } finally {
+      if (generation !== state.reviewRequestGeneration || storeId !== state.storeId) return;
       state.loading = false;
       renderReview();
     }
