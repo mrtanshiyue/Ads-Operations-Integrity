@@ -7,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(path.join(repoRoot, 'assets/cloudflare-native-csv-analytics-dashboard-v1.js'), 'utf8');
 const drilldownSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-csv-analytics-drilldown-v1.js'), 'utf8');
+const exportSource = await readFile(path.join(repoRoot, 'assets/cloudflare-native-csv-analysis-export-v1.js'), 'utf8');
 new vm.Script(source, { filename: 'cloudflare-native-csv-analytics-dashboard-v1.js' });
 new vm.Script(drilldownSource, { filename: 'cloudflare-native-csv-analytics-drilldown-v1.js' });
+new vm.SourceTextModule(exportSource, { identifier: 'cloudflare-native-csv-analysis-export-v1.js' });
 
 const handlerStart = source.indexOf("for (const id of ['#cfCsvAnalyticsStart', '#cfCsvAnalyticsEnd'])");
 const handlerEnd = source.indexOf("root.querySelector('#cfCsvAnalyticsQuery')", handlerStart);
@@ -47,6 +49,52 @@ assert.match(source, /if \(seq !== state\.requestSeq\) return;/,
   'analytics responses must remain generation-owned');
 assert.doesNotMatch(source, /AMAZON_ADS_ENABLED|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
   'CSV Analytics dashboard must remain read-only and Amazon-execution free');
+
+assert.match(exportSource, /const state = \{ mounted: false, busy: false, exportGeneration: 0 \};/,
+  'local analysis export must track generation ownership');
+const exportSelectionStart = exportSource.indexOf("joint.querySelector('[data-csv-joint-files]')?.addEventListener('change'");
+const exportSelectionEnd = exportSource.indexOf("joint.querySelector('[data-csv-joint-clear]')", exportSelectionStart);
+assert(exportSelectionStart >= 0 && exportSelectionEnd > exportSelectionStart,
+  'local analysis export file-selection invalidation handler must remain present');
+const exportSelectionHandler = exportSource.slice(exportSelectionStart, exportSelectionEnd);
+assert.match(exportSelectionHandler, /state\.exportGeneration \+= 1;\s*state\.busy = false;\s*setEnabled\(root, false\)/,
+  'file selection changes must revoke stale export ownership and release stale busy state before disabling exports');
+
+const exportClearStart = exportSource.indexOf("joint.querySelector('[data-csv-joint-clear]')?.addEventListener('click'");
+const exportClearEnd = exportSource.indexOf('state.mounted = true;', exportClearStart);
+assert(exportClearStart >= 0 && exportClearEnd > exportClearStart,
+  'local analysis export Clear invalidation handler must remain present');
+const exportClearHandler = exportSource.slice(exportClearStart, exportClearEnd);
+assert.match(exportClearHandler, /state\.exportGeneration \+= 1;\s*state\.busy = false;\s*setEnabled\(root, false\)/,
+  'Clear must revoke stale export ownership and release stale busy state before disabling exports');
+
+const exportCurrentStart = exportSource.indexOf('async function exportCurrent(root, joint, kind)');
+const exportCurrentEnd = exportSource.indexOf('function assertAdvisoryOnly(result)', exportCurrentStart);
+assert(exportCurrentStart >= 0 && exportCurrentEnd > exportCurrentStart,
+  'local analysis export async workflow must remain present');
+const exportCurrent = exportSource.slice(exportCurrentStart, exportCurrentEnd);
+assert.match(exportCurrent, /const generation = \+\+state\.exportGeneration;/,
+  'fresh local exports must claim a new generation');
+const exportOwnershipChecks = exportCurrent.match(/if \(generation !== state\.exportGeneration\) return;/g) || [];
+assert(exportOwnershipChecks.length >= 4,
+  'local export must gate file-read completion, analysis completion, stale errors, and stale finally by generation');
+const inputRead = exportCurrent.indexOf('const inputs = await Promise.all');
+const firstOwnershipGate = exportCurrent.indexOf('if (generation !== state.exportGeneration) return;', inputRead);
+const analysisRead = exportCurrent.indexOf('await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs)', firstOwnershipGate);
+const downloadOwnershipGate = exportCurrent.indexOf('if (generation !== state.exportGeneration) return;', analysisRead);
+const firstDownload = Math.min(
+  ...['downloadBytes(', 'downloadText(']
+    .map((needle) => exportCurrent.indexOf(needle, downloadOwnershipGate))
+    .filter((index) => index >= 0),
+);
+assert(inputRead >= 0 && firstOwnershipGate > inputRead && analysisRead > firstOwnershipGate && downloadOwnershipGate > analysisRead && firstDownload > downloadOwnershipGate,
+  'stale file reads and analysis results must lose ownership before any download can start');
+assert.match(exportCurrent, /catch \(error\) \{\s*if \(generation !== state\.exportGeneration\) return;\s*status\(/,
+  'stale export errors must not overwrite the active scope status');
+assert.match(exportCurrent, /finally \{\s*if \(generation !== state\.exportGeneration\) return;\s*state\.busy = false;\s*setEnabled\(root, true\);/,
+  'stale export finally blocks must not release the active generation busy controls');
+assert.doesNotMatch(exportSource, /AMAZON_ADS_ENABLED|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
+  'local analysis export must remain browser-local and Amazon-execution free');
 
 assert.match(drilldownSource,
   /global\.addEventListener\?\.\('cloudflare-csv-analytics-scope-change', handleSharedScopeChange\)/,
@@ -104,6 +152,9 @@ console.log(JSON.stringify({
   ok: true,
   csvAnalyticsManualDateScope: true,
   staleResponseInvalidation: true,
+  analysisExportGenerationOwnership: true,
+  staleAnalysisExportDownloadSuppressed: true,
+  staleAnalysisExportFinalizationSuppressed: true,
   drilldownBaseScopeInvalidation: true,
   drilldownDashboardQuerySync: true,
   drilldownSelfEventLoopSuppressed: true,
