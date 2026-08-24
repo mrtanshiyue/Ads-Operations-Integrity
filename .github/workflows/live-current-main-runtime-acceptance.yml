@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - 'scripts/promote-current-main-live-runtime.mjs'
       - 'scripts/live-current-main-runtime-acceptance.mjs'
       - '.github/workflows/live-current-main-runtime-acceptance.yml'
 
@@ -56,8 +57,13 @@ jobs:
             exit 1
           }
 
-      - name: Syntax check acceptance harness
-        run: node --check scripts/live-current-main-runtime-acceptance.mjs
+      - name: Syntax check acceptance harnesses
+        run: |
+          node --check scripts/promote-current-main-live-runtime.mjs
+          node --check scripts/live-current-main-runtime-acceptance.mjs
+
+      - name: Promote exact canonical main to Dev and Production web workers
+        run: node scripts/promote-current-main-live-runtime.mjs
 
       - name: Install isolated Chromium runtime
         run: |
