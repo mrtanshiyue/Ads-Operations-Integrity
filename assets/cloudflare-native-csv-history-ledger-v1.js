@@ -25,6 +25,8 @@ export const CSV_HISTORY_TREND_METRICS = Object.freeze([
 const state = {
   mounted: false,
   busy: false,
+  evidenceSeq: 0,
+  comparisonSeq: 0,
   ledger: null,
   importedFileName: null,
   comparisonA: null,
@@ -508,6 +510,8 @@ function downloadLedger(root) {
 }
 
 function clearLedger(root) {
+  state.evidenceSeq += 1;
+  state.comparisonSeq += 1;
   state.ledger = null;
   state.importedFileName = null;
   state.comparisonA = null;
@@ -520,6 +524,8 @@ function clearLedger(root) {
 }
 
 function renderLedger(root, ledger) {
+  state.evidenceSeq += 1;
+  state.comparisonSeq += 1;
   state.comparisonA = null;
   state.comparisonB = null;
   const body = root.querySelector('[data-cfhl-body]');
@@ -642,6 +648,7 @@ function bindComparisonControls(body, ledger) {
 async function selectHistoricalEvidence(body, ledger, trigger) {
   const target = body.querySelector('[data-cfhl-selected-evidence]');
   if (!target) return;
+  const seq = ++state.evidenceSeq;
   target.dataset.kind = 'loading';
   target.innerHTML = '<div class="cfhl-evidence-empty">Validating exact historical evidence…</div>';
   try {
@@ -651,9 +658,11 @@ async function selectHistoricalEvidence(body, ledger, trigger) {
       month: trigger.dataset.evidenceMonth,
       metricKey: trigger.dataset.metricKey || 'adContributionMicros',
     });
+    if (seq !== state.evidenceSeq) return;
     target.dataset.kind = 'ok';
     target.innerHTML = renderSelectedEvidence(evidence);
   } catch (error) {
+    if (seq !== state.evidenceSeq) return;
     target.dataset.kind = 'bad';
     target.innerHTML = `<div class="cfhl-evidence-empty">Evidence selection blocked: ${esc(String(error?.code || error?.message || 'unknown_error'))}</div>`;
   }
@@ -662,6 +671,7 @@ async function selectHistoricalEvidence(body, ledger, trigger) {
 async function renderComparisonState(body, ledger) {
   const target = body.querySelector('[data-cfhl-history-comparison]');
   if (!target) return;
+  const seq = ++state.comparisonSeq;
   if (!state.comparisonA || !state.comparisonB) {
     target.dataset.kind = '';
     target.innerHTML = `
@@ -673,9 +683,11 @@ async function renderComparisonState(body, ledger) {
   target.innerHTML = '<div class="cfhl-comparison-empty">Validating comparability gate…</div>';
   try {
     const comparison = await buildHistoricalPeriodComparison(ledger, state.comparisonA, state.comparisonB);
+    if (seq !== state.comparisonSeq) return;
     target.dataset.kind = comparison.comparisonAllowed ? 'ok' : 'blocked';
     target.innerHTML = renderComparisonResult(comparison);
   } catch (error) {
+    if (seq !== state.comparisonSeq) return;
     target.dataset.kind = 'bad';
     target.innerHTML = `<div class="cfhl-comparison-empty">Comparison blocked: ${esc(String(error?.code || error?.message || 'unknown_error'))}</div>`;
   }
