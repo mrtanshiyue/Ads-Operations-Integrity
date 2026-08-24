@@ -59,12 +59,17 @@
 
   async function refresh() {
     if (!state.root) return;
+    const seq = ++state.requestSeq;
     const scope = dashboardScope();
-    if (!scope.storeId || !scope.startDate || !scope.endDate) {
-      renderStatus('Store and date range are required before diagnostics.', 'warn');
+    if (!scope.storeId || !scope.startDate || !scope.endDate || scope.endDate < scope.startDate) {
+      state.loading = false;
+      setBusy(false);
+      renderResult(null);
+      renderStatus(scope.startDate && scope.endDate && scope.endDate < scope.startDate
+        ? 'End date must not be earlier than start date before diagnostics.'
+        : 'Store and date range are required before diagnostics.', 'warn');
       return;
     }
-    const seq = ++state.requestSeq;
     state.loading = true;
     setBusy(true);
     renderStatus('Reading full governed analytics and computing diagnostics server-side…', 'loading');
