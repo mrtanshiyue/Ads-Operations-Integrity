@@ -6,6 +6,7 @@ const PERFORMANCE_BANDS = Object.freeze(['', 'at_or_below_target_acos', 'above_t
 const state = {
   mounted: false,
   building: false,
+  buildGeneration: 0,
   result: null,
   campaignKey: '',
   adGroupKey: '',
@@ -200,11 +201,15 @@ async function rebuild(root, joint) {
   if (state.building) return;
   const files = [...(joint.querySelector('[data-csv-joint-files]')?.files || [])];
   if (!files.length || typeof window.CloudflareCsvJointAnalysis?.analyzeLocalCsvInputs !== 'function') return;
+  const generation = ++state.buildGeneration;
   state.building = true;
   status(root, `Building hierarchy drilldown locally from ${files.length} file${files.length === 1 ? '' : 's'}…`, 'loading');
   try {
     const inputs = await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() })));
-    state.result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (generation !== state.buildGeneration) return;
+    const result = await window.CloudflareCsvJointAnalysis.analyzeLocalCsvInputs(inputs);
+    if (generation !== state.buildGeneration) return;
+    state.result = result;
     state.campaignKey = '';
     state.adGroupKey = '';
     state.targetingKey = '';
@@ -215,10 +220,12 @@ async function rebuild(root, joint) {
     const hierarchy = state.result.hierarchy;
     status(root, `${hierarchy.summary.campaignCount} campaign(s) · ${hierarchy.summary.adGroupCount} ad group(s) · ${hierarchy.summary.targetingCount} targeting row(s). Analytical decision use: ${hierarchy.reliability.analyticalDecisionUse}.`, hierarchy.reliability.analyticalDecisionUse === 'blocked' ? 'bad' : hierarchy.reliability.analyticalDecisionUse === 'review_only' ? 'ok' : 'warn');
   } catch (error) {
+    if (generation !== state.buildGeneration) return;
     state.result = null;
     root.querySelector('[data-cfhd-body]').hidden = true;
     status(root, `Hierarchy drilldown failed: ${String(error?.code || error?.message || 'unknown_error')}`, 'bad');
   } finally {
+    if (generation !== state.buildGeneration) return;
     state.building = false;
   }
 }
@@ -356,7 +363,7 @@ function num(value) { const number = Number(value); return Number.isFinite(numbe
 function money(value) { const number = Number(value); return value == null || !Number.isFinite(number) ? '—' : (number / 1_000_000).toFixed(2); }
 function pct(value) { const number = Number(value); return value == null || !Number.isFinite(number) ? '—' : `${(number * 100).toFixed(1)}%`; }
 function dec(value) { const number = Number(value); return value == null || !Number.isFinite(number) ? '—' : number.toFixed(2); }
-function reset(root, message, kind = '') { state.result = null; state.campaignKey = ''; state.adGroupKey = ''; state.targetingKey = ''; const body = root.querySelector('[data-cfhd-body]'); body.hidden = true; body.innerHTML = ''; status(root, message, kind); }
+function reset(root, message, kind = '') { state.buildGeneration += 1; state.building = false; state.result = null; state.campaignKey = ''; state.adGroupKey = ''; state.targetingKey = ''; const body = root.querySelector('[data-cfhd-body]'); body.hidden = true; body.innerHTML = ''; status(root, message, kind); }
 function status(root, message, kind = '') { const node = root.querySelector('[data-cfhd-status]'); node.textContent = message; node.dataset.kind = kind; }
 function esc(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
 function drilldownError(code) { const error = new Error(code); error.name = 'CsvHierarchyDrilldownError'; error.code = code; return error; }
