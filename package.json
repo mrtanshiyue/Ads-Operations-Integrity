@@ -9,7 +9,7 @@
     "build:cf-native": "node scripts/build-cloudflare-native.mjs",
     "test:csv-r12-chronology-receipt": "node scripts/test-csv-history-rolling-12-transition-chronology-receipt-contract.mjs",
     "test:cf-access": "node scripts/test-access-contract.mjs && node scripts/test-dev-read-only-access-bypass-contract.mjs",
-    "test:cf-native-ui": "node scripts/test-native-ui-contract.mjs && node scripts/test-recommendation-drawer-focus-contract.mjs && node scripts/test-csv-analytics-dashboard-scope-contract.mjs && node scripts/test-csv-data-quality-command-center-render-ownership.mjs",
+    "test:cf-native-ui": "node scripts/test-native-ui-contract.mjs && node scripts/test-recommendation-drawer-focus-contract.mjs && node scripts/test-csv-analytics-dashboard-scope-contract.mjs && node scripts/test-csv-data-quality-command-center-render-ownership.mjs && node scripts/test-csv-library-review-build-ownership.mjs",
     "test:cf-keyword-console": "node scripts/test-keyword-governance-console-contract.mjs",
     "test:cf-product-console": "node scripts/test-product-governance-console-contract.mjs",
     "test:cf-ops-health-console": "node scripts/test-operations-health-console-contract.mjs",
