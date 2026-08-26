@@ -34,13 +34,15 @@ jobs:
       PROD_CONTROL_DB_ID: 2122248c-1fd4-4ccd-b611-9f9d2f3decbf
     steps:
       - name: Checkout acceptance-only branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node 22 for acceptance harnesses
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
+          package-manager-cache: false
 
       - name: Require exact canonical main
         run: |
@@ -79,7 +81,7 @@ jobs:
 
       - name: Upload live acceptance evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-current-main-runtime-acceptance-${{ github.run_id }}
           path: artifacts/live-current-main-runtime-acceptance
