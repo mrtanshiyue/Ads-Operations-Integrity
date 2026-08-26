@@ -307,7 +307,11 @@ async function runProductionBrowser() {
 
     const authorityText = await page.locator('#cfAdvisoryReviewPanel .cfAdvisoryAuthority').textContent();
     assert.match(authorityText || '', /CSV ADVISORY ONLY/i);
-    assert.match(authorityText || '', /Amazon execution and mutation disabled/i);
+    assert.match(authorityText || '', /optimization_actions/i);
+    assert.match(
+      authorityText || '',
+      /Amazon execution and mutation disabled|Amazon 执行与变更均禁用/i,
+    );
     receipt.production.checks.advisoryAuthorityBoundary = true;
     await page.screenshot({ path: `${OUT}/production-live.png`, fullPage: true });
   } finally {
