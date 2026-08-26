@@ -37,6 +37,7 @@ assert.equal(isDevReadOnlyBootstrapEnabled({ APP_ENV: 'development', ACCESS_MODE
 
 assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/stores'), true);
 assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/capabilities'), true);
+assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/session'), true);
 assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/analytics/overview'), true);
 assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/stores/store-dev-01/campaigns'), true);
 assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/stores/store-dev-01/imports'), true);
@@ -48,15 +49,19 @@ assert.equal(isDevReadOnlyAccessBypassRoute('/api/v1/unknown'), false);
 
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/stores', 'GET', devBypassEnv), true);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/capabilities', 'GET', devBypassEnv), true);
+assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/session', 'GET', devBypassEnv), true);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/analytics/overview', 'GET', devBypassEnv), true);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/analytics/overview', 'HEAD', devBypassEnv), true);
+assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/session', 'POST', devBypassEnv), false);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/analytics/overview', 'POST', devBypassEnv), false);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/stores/store-dev-01/sync', 'GET', devBypassEnv), false);
+assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/session', 'GET', { APP_ENV: 'production', ACCESS_MODE: 'off' }), false);
 assert.equal(isDevReadOnlyAccessBypassRequest('/api/v1/analytics/overview', 'GET', { APP_ENV: 'production', ACCESS_MODE: 'off' }), false);
 
 for (const allowedUrl of [
   'https://example.test/api/v1/stores',
   'https://example.test/api/v1/capabilities',
+  'https://example.test/api/v1/session',
   'https://example.test/api/v1/analytics/overview',
 ]) {
   const request = new Request(allowedUrl);
@@ -66,6 +71,7 @@ for (const allowedUrl of [
 for (const writeUrl of [
   'https://example.test/api/v1/stores',
   'https://example.test/api/v1/capabilities',
+  'https://example.test/api/v1/session',
   'https://example.test/api/v1/analytics/overview',
 ]) {
   const request = new Request(writeUrl, { method: 'POST' });
@@ -152,6 +158,7 @@ assert.match(webEntrySource, /dev_read_only_bypass_route_blocked/);
 assert.match(webEntrySource, /DEV_READ_ONLY_BYPASS_ACTOR_ID = 'user-dev-owner'/);
 assert.match(webEntrySource, /'\/api\/v1\/stores'/);
 assert.match(webEntrySource, /'\/api\/v1\/capabilities'/);
+assert.match(webEntrySource, /'\/api\/v1\/session'/);
 assert.match(observedEntrySource, /handleDevReadOnlyBootstrapRoute/);
 assert.match(observedEntrySource, /devBootstrapResponse \|\| await application\.fetch/);
 assert.match(bootstrapSource, /APP_ENV/);
@@ -162,13 +169,14 @@ assert.doesNotMatch(bootstrapSource, /SYNC_TRIGGER_ENABLED\s*===\s*'true'.*creat
 
 console.log(JSON.stringify({
   ok: true,
-  contract: 'dev-read-only-access-bypass-v2',
+  contract: 'dev-read-only-access-bypass-v3',
   devAccessModeOff: true,
   productionAccessModeEnforce: true,
   devOnly: true,
   operatorBootstrapReadOnlyRoutesAllowed: [
     '/api/v1/stores',
     '/api/v1/capabilities',
+    '/api/v1/session',
   ],
   bootstrapRoutesInterceptedBeforeLegacyAuth: true,
   anonymousReadOnlyRoutesAllowlisted: true,
