@@ -66,6 +66,7 @@ const DEV_READ_ONLY_BYPASS_METHODS = new Set(['GET', 'HEAD']);
 const DEV_READ_ONLY_BOOTSTRAP_ROUTES = new Set([
   '/api/v1/stores',
   '/api/v1/capabilities',
+  '/api/v1/session',
 ]);
 
 export default {
