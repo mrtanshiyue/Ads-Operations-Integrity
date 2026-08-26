@@ -43,22 +43,21 @@ async function validateIdentityConvergence(target) {
     readFile(implementationPath, 'utf8'),
   ]);
 
-  const escapedImplementationAsset = escapeRegExp(target.implementationAsset);
-  assert.match(
-    publicSource,
-    new RegExp(`export \\* from '\\.\\/${escapedImplementationAsset}';`),
+  assert.equal(
+    publicSource.includes(`export * from './${target.implementationAsset}';`),
+    true,
     `${target.label} public module must converge every URL identity on one implementation module`,
   );
 
-  const registrationPattern = new RegExp(`Object\\.defineProperty\\(window, '${target.globalName}'`, 'g');
+  const registrationAnchor = `Object.defineProperty(window, '${target.globalName}'`;
   assert.equal(
-    (implementationSource.match(registrationPattern) || []).length,
+    implementationSource.split(registrationAnchor).length - 1,
     1,
     `${target.label} canonical implementation must register ${target.globalName} exactly once in source`,
   );
   assert.doesNotMatch(
     publicSource,
-    /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\\s*\\(/,
+    /AMAZON_ADS_ENABLED|AMAZON_ADS_CLIENT|AMAZON_SYNC_WORKFLOW|SYNC_TRIGGER_ENABLED|startSync\s*\(/,
     `${target.label} module-identity wrapper must not create Amazon execution authority`,
   );
 
@@ -90,8 +89,4 @@ async function validateIdentityConvergence(target) {
     if (priorWindow === undefined) delete globalThis.window;
     else globalThis.window = priorWindow;
   }
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&');
 }
