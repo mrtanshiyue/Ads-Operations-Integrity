@@ -30,14 +30,12 @@ jobs:
                   raise SystemExit(f'{path}: expected one match, found {count}: {old!r}')
               p.write_text(s.replace(old, new, 1))
 
-          # 1) Canonical native artifact must retain the implementation module.
           replace_once(
               'scripts/enforce-cloudflare-native-asset-allowlist.mjs',
               "  'cloudflare-native-csv-history-ledger-v1.js',\n",
               "  'cloudflare-native-csv-history-ledger-v1.js',\n  'cloudflare-native-csv-history-ledger-impl-v1.js',\n",
           )
 
-          # 2) Existing History Ledger contract: public wrapper owns routing; implementation owns UI/source assertions.
           replace_once(
               'scripts/test-csv-history-ledger-contract.mjs',
               "const uiRelative = 'assets/cloudflare-native-csv-history-ledger-v1.js';\n",
@@ -59,22 +57,13 @@ jobs:
               "assert.equal(pattern.test(`${engineSource}\\n${uiPublicSource}\\n${uiSource}`), false, `History ledger must remain transport/storage/execution free: ${pattern}`);",
           )
 
-          # 3) Module-identity regression must inspect the real canonical built artifact.
           replace_once(
               'scripts/test-csv-history-ledger-module-identity.mjs',
               "const publicPath = path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js');\nconst implementationPath = path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-impl-v1.js');\nconst indexPath = path.join(repoRoot, 'index.html');\n",
               "const distRoot = path.join(repoRoot, 'dist-cloudflare-native');\nconst publicPath = path.join(distRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js');\nconst implementationPath = path.join(distRoot, 'assets/cloudflare-native-csv-history-ledger-impl-v1.js');\nconst indexPath = path.join(distRoot, 'index.html');\n",
           )
-
-          # 4) Focused CI must build the same canonical surface before inspecting it.
-          replace_once(
-              '.github/workflows/csv-analytics-focused-ci.yml',
-              "      - name: Validate History Ledger module identity convergence\n        run: node scripts/test-csv-history-ledger-module-identity.mjs\n",
-              "      - name: Build canonical native artifact for History Ledger identity\n        run: npm run build:cf-native\n      - name: Validate History Ledger module identity convergence\n        run: node scripts/test-csv-history-ledger-module-identity.mjs\n",
-          )
           PY
 
-          rm .github/workflows/tmp-fix-334-history-ledger-ci.yml
           git diff --check
           git status --short
       - name: Commit and push narrow fix
@@ -84,8 +73,6 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add scripts/enforce-cloudflare-native-asset-allowlist.mjs \
                   scripts/test-csv-history-ledger-contract.mjs \
-                  scripts/test-csv-history-ledger-module-identity.mjs \
-                  .github/workflows/csv-analytics-focused-ci.yml \
-                  .github/workflows/tmp-fix-334-history-ledger-ci.yml
+                  scripts/test-csv-history-ledger-module-identity.mjs
           git commit -m "test(csv): align history ledger canonical packaging contracts"
           git push origin HEAD:fix/csv-history-ledger-reentrant-global
