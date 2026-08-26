@@ -60,6 +60,8 @@ jobs:
           node --check assets/cloudflare-native-csv-history-rolling-12-operating-review-impl-v1.js
           node --check assets/cloudflare-native-csv-history-rolling-12-window-transition-review-impl-v1.js
           node --check assets/cloudflare-native-csv-history-rolling-12-window-transition-receipt-impl-v1.js
+          node --check assets/cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-impl-v1.js
+          node --check assets/cloudflare-native-csv-history-rolling-12-window-transition-review-board-impl-v1.js
           node --check assets/cloudflare-native-csv-history-comparison-receipt-impl-v1.js
           node --check assets/cloudflare-native-csv-history-comparison-receipt-verification-impl-v1.js
           node --check assets/cloudflare-native-api-v1.js

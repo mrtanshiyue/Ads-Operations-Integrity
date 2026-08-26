@@ -44,6 +44,22 @@ const targets = [
     version: '1.0.0',
     exportedFunction: 'buildHistoricalRolling12WindowTransitionReceipt',
   },
+  {
+    label: 'Rolling-12 Window Transition Receipt Verification',
+    publicAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-v1.js',
+    implAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-impl-v1.js',
+    globalName: 'CloudflareCsvHistoryRolling12WindowTransitionReceiptVerification',
+    version: '1.0.0',
+    exportedFunction: 'verifyHistoricalRolling12WindowTransitionReceiptAgainstLedgers',
+  },
+  {
+    label: 'Rolling-12 Window Transition Review Board',
+    publicAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-review-board-v1.js',
+    implAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-review-board-impl-v1.js',
+    globalName: 'CloudflareCsvHistoryRolling12WindowTransitionReviewBoard',
+    version: '1.0.0',
+    exportedFunction: 'buildHistoricalRolling12WindowTransitionReviewBoard',
+  },
 ];
 
 for (const target of targets) await validate(target);
