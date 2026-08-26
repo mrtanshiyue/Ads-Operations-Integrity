@@ -7,8 +7,10 @@ import { canonicalJson } from '../cloudflare/runtime/canonical-json.js';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distRoot = path.join(repoRoot, 'dist-cloudflare-native');
 const engineRelative = 'assets/csv-analysis-engine/csv-history-ledger.js';
-const uiRelative = 'assets/cloudflare-native-csv-history-ledger-v1.js';
+const uiPublicRelative = 'assets/cloudflare-native-csv-history-ledger-v1.js';
+const uiRelative = 'assets/cloudflare-native-csv-history-ledger-impl-v1.js';
 const engineSource = await readFile(path.join(distRoot, engineRelative), 'utf8');
+const uiPublicSource = await readFile(path.join(distRoot, uiPublicRelative), 'utf8');
 const uiSource = await readFile(path.join(distRoot, uiRelative), 'utf8');
 const indexSource = await readFile(path.join(distRoot, 'index.html'), 'utf8');
 const monthlyTag = '<script type="module" src="assets/cloudflare-native-csv-monthly-workspace-v1.js?v=1.0.0"></script>';
@@ -18,6 +20,7 @@ const provenanceTag = '<script type="module" src="assets/cloudflare-native-csv-p
 assert.equal(indexSource.split(historyTag).length - 1, 1, 'History ledger UI must be injected exactly once');
 assert.ok(indexSource.indexOf(monthlyTag) < indexSource.indexOf(historyTag), 'History ledger must load after monthly workspace');
 assert.ok(indexSource.indexOf(historyTag) < indexSource.indexOf(provenanceTag), 'History ledger must load before provenance audit');
+assert.match(uiPublicSource, /export \* from '\.\/cloudflare-native-csv-history-ledger-impl-v1\.js';/, 'History ledger public path must remain a thin canonical implementation wrapper');
 assert.match(uiSource, /Historical Local-Data Ledger/);
 assert.match(uiSource, /Explicit local-file ownership/);
 assert.match(uiSource, /Overlap or gaps are recorded, never silently normalized/);
@@ -62,7 +65,7 @@ for (const pattern of [
   /optimization-actions/,
   /execution-permits/,
 ]) {
-  assert.equal(pattern.test(`${engineSource}\n${uiSource}`), false, `History ledger must remain transport/storage/execution free: ${pattern}`);
+  assert.equal(pattern.test(`${engineSource}\n${uiPublicSource}\n${uiSource}`), false, `History ledger must remain transport/storage/execution free: ${pattern}`);
 }
 
 const mod = await import(`${pathToFileURL(path.join(distRoot, engineRelative)).href}?contract=${Date.now()}`);

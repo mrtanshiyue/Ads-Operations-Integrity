@@ -56,6 +56,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-period-ui-v1.js',
   'cloudflare-native-csv-monthly-workspace-v1.js',
   'cloudflare-native-csv-history-ledger-v1.js',
+  'cloudflare-native-csv-history-ledger-impl-v1.js',
   'cloudflare-native-csv-history-quarterly-operating-review-v1.js',
   'cloudflare-native-csv-history-quarter-over-quarter-comparison-v1.js',
   'cloudflare-native-csv-history-quarter-over-quarter-comparison-receipt-v1.js',
