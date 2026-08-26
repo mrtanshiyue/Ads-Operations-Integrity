@@ -37,12 +37,14 @@ chromium.launch = async (...args) => {
       const originalGoto = page.goto.bind(page);
       const originalLocator = page.locator.bind(page);
 
-      page.on('response', (response) => {
+      page.on('response', async (response) => {
         if (response.status() < 400) return;
         const request = response.request();
         let environment = 'other';
+        let parsedUrl = null;
         try {
-          const host = new URL(response.url()).hostname.toLowerCase();
+          parsedUrl = new URL(response.url());
+          const host = parsedUrl.hostname.toLowerCase();
           if (host === new URL(process.env.DEV_BASE_URL || 'https://invalid.example').hostname.toLowerCase()) environment = 'development';
           if (host === new URL(process.env.PROD_BASE_URL || 'https://invalid.example').hostname.toLowerCase()) environment = 'production';
         } catch {}
@@ -55,6 +57,17 @@ chromium.launch = async (...args) => {
           contentType: response.headers()['content-type'] || '',
           cfRay: response.headers()['cf-ray'] || '',
         };
+        if (environment === 'development' && response.status() === 403 && parsedUrl?.pathname === '/api/v1/session' && record.contentType.includes('application/json')) {
+          try {
+            const payload = await response.json();
+            record.session = {
+              error: typeof payload?.error === 'string' ? payload.error : '',
+              authenticated: payload?.authenticated === true,
+              provisioned: payload?.provisioned === true,
+              principalType: typeof payload?.identity?.principalType === 'string' ? payload.identity.principalType : '',
+            };
+          } catch {}
+        }
         appendFileSync(diagnosticPath, `${JSON.stringify(record)}\n`, 'utf8');
         console.log(`LIVE_HTTP_ERROR ${JSON.stringify(record)}`);
       });
