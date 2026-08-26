@@ -1,0 +1,80 @@
+name: Temporary prepare #333 for 9b99e7aa
+
+on:
+  push:
+    branches:
+      - prepare-live-runtime-9b99e7aa
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build one normal merge commit for final acceptance
+        shell: bash
+        env:
+          OLD_ACCEPTANCE_HEAD: 221f97d3f2403ce19a780bade9023adc4eb88378
+          NEW_MAIN_SHA: 9b99e7aa659961aefd8cde308318e8227206007a
+          OLD_MAIN_SHA: 65f57145e576f2e4d7ab85042dd2c6540111aa3a
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git merge-base --is-ancestor "$OLD_ACCEPTANCE_HEAD" HEAD
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$NEW_MAIN_SHA"
+          git checkout --detach "$OLD_ACCEPTANCE_HEAD"
+          git merge --no-commit --no-ff "$NEW_MAIN_SHA"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          old_sha = '65f57145e576f2e4d7ab85042dd2c6540111aa3a'
+          new_sha = '9b99e7aa659961aefd8cde308318e8227206007a'
+          files = [
+              Path('.github/workflows/live-current-main-runtime-acceptance.yml'),
+              Path('scripts/live-current-main-dev-access-hook.cjs'),
+              Path('scripts/live-current-main-runtime-acceptance.mjs'),
+              Path('scripts/promote-current-main-live-runtime.mjs'),
+              Path('scripts/run-live-current-main-runtime-acceptance.mjs'),
+          ]
+          for path in files:
+              text = path.read_text()
+              if old_sha in text:
+                  path.write_text(text.replace(old_sha, new_sha))
+
+          path = Path('scripts/live-current-main-runtime-acceptance.mjs')
+          text = path.read_text()
+          old = "    assert.match(authorityText || '', /Amazon execution and mutation disabled/i);"
+          new = "    assert.match(authorityText || '', /optimization_actions/i);\n    assert.match(\n      authorityText || '',\n      /Amazon execution and mutation disabled|Amazon 执行与变更均禁用/i,\n    );"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one English-only safety assertion, found {text.count(old)}')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+
+          for path in files:
+              text = path.read_text()
+              if old_sha in text:
+                  raise SystemExit(f'stale canonical SHA remains in {path}')
+          patched = path.read_text()
+          for marker in ['CSV ADVISORY ONLY', 'optimization_actions', 'Amazon execution and mutation disabled', 'Amazon 执行与变更均禁用']:
+              if marker not in patched:
+                  raise SystemExit(f'missing safety marker: {marker}')
+          PY
+
+          git diff --check
+          git status --short
+          git add .github/workflows/live-current-main-runtime-acceptance.yml \
+                  scripts/live-current-main-dev-access-hook.cjs \
+                  scripts/live-current-main-runtime-acceptance.mjs \
+                  scripts/promote-current-main-live-runtime.mjs \
+                  scripts/run-live-current-main-runtime-acceptance.mjs
+          git commit -m "test(acceptance): retarget live runtime to canonical main 9b99e7aa"
+          test "$(git rev-parse HEAD^1)" = "$OLD_ACCEPTANCE_HEAD"
+          test "$(git rev-parse HEAD^2)" = "$NEW_MAIN_SHA"
+          git push origin HEAD:refs/heads/prepared-live-runtime-9b99e7aa
+          echo "PREPARED_HEAD=$(git rev-parse HEAD)"
