@@ -6,6 +6,29 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const distRoot = path.join(repoRoot, 'dist-cloudflare-native');
 
+const forbiddenImplementationPatterns = [
+  /\bfetch\s*\(/,
+  /XMLHttpRequest/,
+  /navigator\.sendBeacon/,
+  /\bWebSocket\b/,
+  /\bEventSource\b/,
+  /\blocalStorage\b/,
+  /\bsessionStorage\b/,
+  /\bindexedDB\b/,
+  /CloudflareNativeAPI/,
+  /\/api\/v1\//,
+  /CONTROL_DB/,
+  /STORE_01_DB/,
+  /DATA_BUCKET/,
+  /AMAZON_ADS_ENABLED/,
+  /optimization-actions/,
+  /execution-permits/,
+  /AMAZON_ADS_CLIENT/,
+  /AMAZON_SYNC_WORKFLOW/,
+  /SYNC_TRIGGER_ENABLED/,
+  /startSync\s*\(/,
+];
+
 const targets = [
   {
     label: 'Quarterly Operating Review',
@@ -14,6 +37,21 @@ const targets = [
     globalName: 'CloudflareCsvHistoryQuarterlyOperatingReview',
     version: '1.0.0',
     exportedFunction: 'buildHistoricalQuarterlyOperatingReview',
+    requiredAnchors: [
+      'csv-history-quarterly-operating-review-v1',
+      'Quarterly Operating Review',
+      'all three exact calendar months pass the evidence gate',
+      'same-month duplicate evidence',
+      'Raw monthly evidence remains visible',
+      'Ad Contribution = Sales - Ad Spend only; it is not Net Profit',
+      'crossQuarterAggregationApplied: false',
+      'sameMonthAggregationApplied: false',
+      'businessRowDeduplicationApplied: false',
+      'overlapCollapseApplied: false',
+      'gapRepairApplied: false',
+      'partialPeriodsHidden: false',
+      'missingMonthsHidden: false',
+    ],
   },
   {
     label: 'Historical Comparison Receipt',
@@ -22,6 +60,14 @@ const targets = [
     globalName: 'CloudflareCsvHistoryComparisonReceipt',
     version: '1.0.0',
     exportedFunction: 'buildHistoricalComparisonReceipt',
+    requiredAnchors: [
+      'Historical Comparison Receipt',
+      'local replay · deterministic',
+      'Blocked comparisons remain exportable as raw-evidence-only receipts with deltas withheld',
+      'Ad Contribution = Sales - Ad Spend only; it is not Net Profit',
+      'generatedTimestampIncluded: false',
+      'comparisonRecomputedFromLedger: true',
+    ],
   },
 ];
 
@@ -30,6 +76,8 @@ for (const target of targets) await validateIdentityConvergence(target);
 console.log(JSON.stringify({
   ok: true,
   validatedGlobals: targets.map((target) => target.globalName),
+  implementationSourceContractsVerified: true,
+  localOnlyExecutionFreeVerified: true,
   cacheBustedAndUnversionedModuleIdentityConverged: true,
   immutableGlobalRegistrationPreserved: true,
   amazonExecutionAuthorized: false,
@@ -48,6 +96,22 @@ async function validateIdentityConvergence(target) {
     true,
     `${target.label} public module must converge every URL identity on one implementation module`,
   );
+
+  for (const anchor of target.requiredAnchors) {
+    assert.equal(
+      implementationSource.includes(anchor),
+      true,
+      `${target.label} canonical implementation must retain source-contract anchor: ${anchor}`,
+    );
+  }
+
+  for (const pattern of forbiddenImplementationPatterns) {
+    assert.equal(
+      pattern.test(implementationSource),
+      false,
+      `${target.label} canonical implementation must remain explicit-local and execution-free: ${pattern}`,
+    );
+  }
 
   const registrationAnchor = `Object.defineProperty(window, '${target.globalName}'`;
   assert.equal(
