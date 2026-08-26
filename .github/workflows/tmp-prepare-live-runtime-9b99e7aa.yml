@@ -56,11 +56,11 @@ jobs:
           text = text.replace(old, new, 1)
           path.write_text(text)
 
-          for path in files:
-              text = path.read_text()
-              if old_sha in text:
-                  raise SystemExit(f'stale canonical SHA remains in {path}')
-          patched = path.read_text()
+          for candidate in files:
+              candidate_text = candidate.read_text()
+              if old_sha in candidate_text:
+                  raise SystemExit(f'stale canonical SHA remains in {candidate}')
+          patched = Path('scripts/live-current-main-runtime-acceptance.mjs').read_text()
           for marker in ['CSV ADVISORY ONLY', 'optimization_actions', 'Amazon execution and mutation disabled', 'Amazon 执行与变更均禁用']:
               if marker not in patched:
                   raise SystemExit(f'missing safety marker: {marker}')
