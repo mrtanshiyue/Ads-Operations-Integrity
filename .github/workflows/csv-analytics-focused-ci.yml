@@ -52,6 +52,8 @@ jobs:
           node --check assets/cloudflare-native-csv-recommendation-inbox-usability-v1.js
           node --check assets/cloudflare-native-csv-recommendation-operator-triage-v1.js
           node --check assets/cloudflare-native-csv-root-lifecycle-usability-v1.js
+          node --check assets/cloudflare-native-csv-history-quarterly-operating-review-impl-v1.js
+          node --check assets/cloudflare-native-csv-history-comparison-receipt-impl-v1.js
           node --check assets/cloudflare-native-api-v1.js
           node --check assets/generated/inline-script-10.js
           node --check cloudflare/runtime/web-entry.js
@@ -64,6 +66,7 @@ jobs:
           node --check scripts/test-csv-root-lifecycle-usability-ui.mjs
           node --check scripts/test-csv-root-lifecycle-accessibility.mjs
           node --check scripts/test-csv-history-ledger-module-identity.mjs
+          node --check scripts/test-csv-history-remaining-module-identities.mjs
       - name: Validate existing analytics contract
         run: node scripts/test-csv-analytics-dashboard.mjs
       - name: Validate server-side full diagnostics contract
@@ -86,3 +89,5 @@ jobs:
         run: npm run build:cf-native
       - name: Validate History Ledger module identity convergence
         run: node scripts/test-csv-history-ledger-module-identity.mjs
+      - name: Validate remaining History module identity convergence
+        run: node scripts/test-csv-history-remaining-module-identities.mjs
