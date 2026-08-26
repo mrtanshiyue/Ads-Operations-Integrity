@@ -21,7 +21,7 @@ const monthlySource = await readFile(
   'utf8',
 );
 const historyLedgerSource = await readFile(
-  path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js'),
+  path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-impl-v1.js'),
   'utf8',
 );
 
