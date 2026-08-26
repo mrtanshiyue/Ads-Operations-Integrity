@@ -36,6 +36,14 @@ const targets = [
     version: '1.0.0',
     exportedFunction: 'buildHistoricalRolling12WindowTransitionReview',
   },
+  {
+    label: 'Rolling-12 Window Transition Receipt',
+    publicAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js',
+    implAsset: 'cloudflare-native-csv-history-rolling-12-window-transition-receipt-impl-v1.js',
+    globalName: 'CloudflareCsvHistoryRolling12WindowTransitionReceipt',
+    version: '1.0.0',
+    exportedFunction: 'buildHistoricalRolling12WindowTransitionReceipt',
+  },
 ];
 
 for (const target of targets) await validate(target);

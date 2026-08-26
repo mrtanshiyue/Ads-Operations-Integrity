@@ -74,6 +74,7 @@ const allowedAssets = new Set([
   'cloudflare-native-csv-history-rolling-12-window-transition-review-v1.js',
   'cloudflare-native-csv-history-rolling-12-window-transition-review-impl-v1.js',
   'cloudflare-native-csv-history-rolling-12-window-transition-receipt-v1.js',
+  'cloudflare-native-csv-history-rolling-12-window-transition-receipt-impl-v1.js',
   'cloudflare-native-csv-history-rolling-12-window-transition-receipt-verification-v1.js',
   'cloudflare-native-csv-history-rolling-12-window-transition-review-board-v1.js',
   'cloudflare-native-csv-history-rolling-12-transition-chronology-v1.js',
