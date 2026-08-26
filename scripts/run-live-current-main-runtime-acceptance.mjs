@@ -40,6 +40,7 @@ let childExitCode = null;
 
 try {
   await provisionDevelopmentAccess();
+  await new Promise((resolve) => setTimeout(resolve, 15_000));
   await diagnoseDevelopmentSurface();
   childExitCode = await runCanonicalAcceptanceHarness();
   wrapperReceipt.childExitCode = childExitCode;
