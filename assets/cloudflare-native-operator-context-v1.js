@@ -130,6 +130,17 @@
     });
   }
 
+  function canReadProductCatalog(capabilities) {
+    if (!capabilities || typeof capabilities !== 'object') return false;
+    const globalPermissions = Array.isArray(capabilities.globalPermissions) ? capabilities.globalPermissions : [];
+    if (globalPermissions.includes('products.read')) return true;
+    const storePermissions = capabilities.storePermissions && typeof capabilities.storePermissions === 'object'
+      ? capabilities.storePermissions
+      : {};
+    return Object.values(storePermissions)
+      .some((permissions) => Array.isArray(permissions) && permissions.includes('products.read'));
+  }
+
   if (!global.document) return;
   if (global.document.readyState === 'loading') {
     global.document.addEventListener('DOMContentLoaded', mount, { once: true });
@@ -188,6 +199,15 @@
 
   async function refreshProducts() {
     const serial = ++state.productLoadSerial;
+    if (!canReadProductCatalog(state.capabilities)) {
+      state.products = [];
+      state.keywords = [];
+      state.context.productId = '';
+      state.context.keywordId = '';
+      render();
+      applyToControls();
+      return;
+    }
     try {
       const payload = await api().listProducts({ limit: PRODUCT_LIMIT, status: 'active' });
       if (serial !== state.productLoadSerial) return;

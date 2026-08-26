@@ -1,0 +1,41 @@
+name: Operator Context Permission CI
+
+on:
+  push:
+    branches:
+      - 'fix/**'
+    paths:
+      - 'assets/cloudflare-native-operator-context-v1.js'
+      - 'scripts/test-operator-context-product-permission-gate.mjs'
+      - '.github/workflows/operator-context-permission-ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'assets/cloudflare-native-operator-context-v1.js'
+      - 'scripts/test-operator-context-product-permission-gate.mjs'
+      - '.github/workflows/operator-context-permission-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operator-context-permission-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Operator context product permission gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax check
+        run: |
+          node --check assets/cloudflare-native-operator-context-v1.js
+          node --check scripts/test-operator-context-product-permission-gate.mjs
+      - name: Validate product catalog permission gate
+        run: node scripts/test-operator-context-product-permission-gate.mjs
