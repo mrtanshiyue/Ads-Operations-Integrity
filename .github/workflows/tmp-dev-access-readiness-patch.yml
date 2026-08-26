@@ -16,83 +16,23 @@ jobs:
         with:
           ref: prepare-dev-access-readiness-32929560329
           fetch-depth: 0
-      - name: Patch bounded Dev Access propagation readiness
+      - name: Add bounded Access propagation delay
         shell: bash
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p = Path('scripts/run-live-current-main-runtime-acceptance.mjs')
           s = p.read_text()
-          old = """    const nav = await page.goto(DEV_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    wrapperReceipt.diagnostics.navigation = {
-      status: nav?.status() ?? null,
-      url: page.url(),
-      contentType: nav?.headers()?.['content-type'] || '',
-    };
-    assert(nav, 'Development diagnostic root returned no navigation response');
-    assert.equal(nav.status(), 200, `Development diagnostic root expected 200, got ${nav.status()}`);
-
-    try {
-"""
-          new = """    const nav = await navigateDevelopmentThroughServiceAuth(page);
-    wrapperReceipt.diagnostics.navigation = {
-      status: nav?.status() ?? null,
-      url: page.url(),
-      contentType: nav?.headers()?.['content-type'] || '',
-    };
-    assert(nav, 'Development diagnostic root returned no navigation response');
-    assert.equal(nav.status(), 200, `Development diagnostic root expected 200, got ${nav.status()}`);
-    assert.equal(await isCloudflareAccessInterstitial(page), false,
-      'Development diagnostic remained on Cloudflare Access after bounded service-auth readiness retries');
-
-    try {
-"""
+          old = "  await provisionDevelopmentAccess();\n  await diagnoseDevelopmentSurface();"
+          new = "  await provisionDevelopmentAccess();\n  await new Promise((resolve) => setTimeout(resolve, 15_000));\n  await diagnoseDevelopmentSurface();"
           if s.count(old) != 1:
-              raise SystemExit(f'expected one Development navigation block, found {s.count(old)}')
-          s = s.replace(old, new, 1)
-
-          anchor = """async function captureDevelopmentFingerprint(page) {
-"""
-          helper = """async function navigateDevelopmentThroughServiceAuth(page) {
-  const attempts = [];
-  wrapperReceipt.diagnostics.accessReadinessAttempts = attempts;
-  let nav = null;
-  for (let attempt = 1; attempt <= 20; attempt += 1) {
-    nav = await page.goto(DEV_BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    const accessLike = await isCloudflareAccessInterstitial(page);
-    attempts.push({
-      attempt,
-      status: nav?.status() ?? null,
-      url: page.url(),
-      accessLike,
-    });
-    if (nav && nav.status() === 200 && !accessLike) return nav;
-    if (attempt < 20) await page.waitForTimeout(2_000);
-  }
-  return nav;
-}
-
-async function isCloudflareAccessInterstitial(page) {
-  return page.evaluate(() => {
-    const bodyText = String(document.body?.innerText || '');
-    const title = String(document.title || '');
-    return /cloudflare access|sign in|one-time pin|cloudflare zero trust/i.test(`${title}\n${bodyText}`)
-      || /cloudflareaccess\\.com/i.test(location.href);
-  });
-}
-
-"""
-          if s.count(anchor) != 1:
-              raise SystemExit(f'expected one fingerprint anchor, found {s.count(anchor)}')
-          s = s.replace(anchor, helper + anchor, 1)
-          p.write_text(s)
+              raise SystemExit(f'expected one Dev Access provision/diagnose sequence, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
           PY
-
           node --check scripts/run-live-current-main-runtime-acceptance.mjs
           git diff --check
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add scripts/run-live-current-main-runtime-acceptance.mjs
-          git commit -m "test(acceptance): retry Dev Access service-auth readiness"
+          git commit -m "test(acceptance): wait for Dev Access policy propagation"
           git push origin HEAD:prepare-dev-access-readiness-32929560329
