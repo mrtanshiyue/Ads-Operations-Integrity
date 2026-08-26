@@ -82,5 +82,7 @@ jobs:
         run: node scripts/test-csv-root-lifecycle-usability-ui.mjs
       - name: Validate Root and Lifecycle keyboard accessibility
         run: node scripts/test-csv-root-lifecycle-accessibility.mjs
+      - name: Build canonical native artifact for History Ledger identity
+        run: npm run build:cf-native
       - name: Validate History Ledger module identity convergence
         run: node scripts/test-csv-history-ledger-module-identity.mjs
