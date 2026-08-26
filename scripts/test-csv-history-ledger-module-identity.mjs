@@ -4,9 +4,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const publicPath = path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js');
-const implementationPath = path.join(repoRoot, 'assets/cloudflare-native-csv-history-ledger-impl-v1.js');
-const indexPath = path.join(repoRoot, 'index.html');
+const distRoot = path.join(repoRoot, 'dist-cloudflare-native');
+const publicPath = path.join(distRoot, 'assets/cloudflare-native-csv-history-ledger-v1.js');
+const implementationPath = path.join(distRoot, 'assets/cloudflare-native-csv-history-ledger-impl-v1.js');
+const indexPath = path.join(distRoot, 'index.html');
 
 const [publicSource, implementationSource, indexSource] = await Promise.all([
   readFile(publicPath, 'utf8'),
